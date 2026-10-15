@@ -88,7 +88,7 @@ cargo run --locked -- --api api.describe
 cargo run --locked -- --api projects.list
 ```
 
-MCP 客户端使用已编译的 `target/release/dev-start --mcp` 通过 stdio 连接本地服务。所有配置都由后端校验与持久化。完整方法、参数、日志分页与编辑器协议见 [API 文档](docs/api.md) 和 [Schema](docs/api-schema.json)。
+MCP 客户端使用已编译的 `target/release/dev-start --mcp` 通过 stdio 连接本地服务。所有配置都由后端校验与持久化。完整方法、参数、日志分页与编辑器协议见 [API 文档](docs/api.md) 和 [Schema](docs/api-schema.json)。文档开头提供 AI 执行约定、任务调用顺序、ID 与状态说明及失败重试策略；客户端首次接入请先调用 `api.describe`，以当前二进制契约为准。
 
 ## 数据与隐私
 

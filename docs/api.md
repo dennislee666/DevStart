@@ -1,13 +1,88 @@
-# Dev Start 本地 API v1
+# DevStart 本地 API v1
 
 面向 Codex、Cursor、其它编程 AI 和本机软件。所有接口由正在运行的 Dev Start 实例执行，与界面共用配置、进程状态及日志。无需安装 SDK 或新增依赖。
+
+## 0. 人与 AI 的阅读入口
+
+本文既是人工使用手册，也是 AI 调用契约。**参数与方法名保持原样，示例 ID 仅为占位值，必须换成查询返回的实际 ID。**
+
+- 首次接入：阅读本节 → [连接方式](#1-连接方式) → 调用 `api.describe` 获取当前二进制的参数 Schema。
+- 日常操作：按下方任务流程选择方法；需要完整字段时查 [接口清单](#2-接口清单) 和 [启动项配置](#3-启动项配置)。
+- 启停与排错：阅读 [启动与状态](#4-启动与状态)、[日志跟踪](#5-日志分页与实时跟踪) 和 [错误与限制](#8-错误与限制)。
+- 自动化入口：CLI `--api`、本地 JSON-RPC、MCP `dev_start` 工具均使用相同的方法和参数。GUI 或 `--serve` 必须先运行，客户端必须指向同一工作空间。
+
+### 给 AI 的最小执行约定
+
+1. 先调用 `api.describe`，再查询 `projects.list` / `scripts.list` / `runs.list`；不要编造 ID、路径、参数或端口，不以显示名作为唯一标识。多项同名时用项目路径、所属项目及入口参数确认目标。
+2. 只有获得用户授权的启动、停止、重启才执行；创建项目或启动项不会自动启动。部署、打包、上传不能因“启动项目”而顺带执行，禁用入口也不能擅自启用。
+3. 使用后端 API 修改配置，不直接覆盖 catalog；配置成功后读取对应对象确认。添加/刷新读取项目自己的启动文件，不依赖 IDE 配置。
+4. 启动/重启返回后继续查询 `runs.get` 和日志。`state:running` 只证明进程已创建，业务就绪需要项目自身日志或用户指定健康检查；不要宣称数据库/API 可用。监听端口同样不代表健康检查成功。
+5. 停止返回后查询 `active:false` 才确认结束；重启使用返回的**新 run_id**跟踪，使用稳定的 console_id 关联原标签。
+6. 超时、断线或响应不明时先查询实际状态，不能盲目重发增删改或启停请求。保留真实 error.message，向用户解释失败对象、原因与下一步。
+7. 日志分页只传上一页 next_offset，不按字符数推算。查看日志无需打开外部程序；`logs.open_target` 仅在用户要求打开时调用。
+8. 批量操作先生成计划，展示 targets/blocked 并获得确认，随后原样提交计划；配置或状态变化时重新生成并确认，不能伪造 confirmed 或重建计划。
+
+### 常见任务与调用顺序
+
+| 用户目标 | 调用顺序与完成条件 |
+|---|---|
+| 新建/修改/删除分组 | `groups.list` → `groups.create/update/delete` → 再读列表；默认组不可删除，删其它组仅把项目移回默认组 |
+| 添加项目 | 检查绝对路径 → `projects.create` → `scripts.list`；未传 group 使用默认组，不自动运行 |
+| 修改项目名、描述或分组 | `projects.get` → `projects.update` → 再读项目；展示更新不改变路径、不重启 |
+| 增加或修改执行入口 | `scripts.list/get` → 必要时停止目标并等 active:false → `scripts.create/update` → 再读；只提交要变更的字段 |
+| 修改显示名和简介 | `scripts.update` 的一个 patch 同时传 display_name/description → 再读；允许运行中修改，不改变 argv/PID |
+| 启动或重启 | 找到 script_id → `runs.start/restart` → 保存返回 run_id/console_id → 查询状态并增量读取日志 |
+| 停止 | 从 runs.list 确定当前实例 → `runs.stop` → 轮询 runs.get，直到 active:false；保留实际退出状态 |
+| 查错误日志 | `logs.search` 查询当前有界缓存；需要历史/完整内容时 `logs.list` → `logs.read` 分页，不全量灌入 AI 上下文 |
+| 删除启动项/移除项目 | 先查关联活动实例 → 停止并等退出 → `scripts.delete/projects.delete` → 再读列表；不会删除原项目目录或原脚本 |
+| 批量启停 | `runs.bulk_plan` → 展示目标并确认 → `runs.bulk_apply` → 检查 errors 并跟踪返回的 run_ids |
+
+### 标识、精度与工作空间
+
+| 字段 | 含义 | 使用位置 |
+|---|---|---|
+| group / 分组 id | 分组身份，默认组为 1 | projects.create/update 的 group |
+| project_id / 项目 id | 项目登记身份 | projects.get/update/delete/refresh，scripts.list/create |
+| script_id / 启动项 id | 启动入口身份 | runs.start/restart、editor.*；scripts.get/update/delete/status/ports 参数名为 id |
+| run_id / 运行实例 id | 一次执行的身份；重启后变化 | runs.get/stop/open/close 参数名为 id；logs.* 通常为 run_id |
+| console_id | 标签/Console 的稳定身份 | 用于客户端关联；不能代替 runs.get/stop 的 id |
+| revision / version_id | 乐观并发摘要 / 文件备份版本 | 编辑器按原样传回；不要自行生成 |
+
+运行/Console ID 可能超过 JavaScript 安全整数范围。普通 id/run_id 参数目前要求**精确 JSON 整数**，不接受随意改成字符串；Python 标准 json 保留整数精度。Node.js 普通 JSON.parse 会损失大整数，运行接口应使用无损 JSON 解析/序列化方案，或委托下文 Python 客户端处理。批量计划的 targets[].run_id 与编辑器版本 id 明确为十进制字符串，必须保持原类型。
+
+个人版默认 macOS 数据目录末级名称为 `dev-start`；开源版为 `devstart`（均位于 `~/Library/Application Support/` 下）。调用 `api.describe` 查看 edition；使用 `DEV_START_DATA_DIR` 时 GUI、headless、CLI、MCP 必须一致。两版不会自动共享配置，调用到空工作空间不代表个人配置丢失。下文默认目录示例以当前文档对应的版本为准；显式覆盖时使用真实目录。
+
+### 状态与结果判定
+
+| state | active | AI 应如何处理 |
+|---|---|---|
+| starting | true | 预检或启动中，继续查询和读取日志 |
+| running | true | 进程已创建；结合项目日志确认业务就绪 |
+| stopping | true | 正在退出，继续查询，不开始依赖“已停止”的修改 |
+| succeeded | false | 进程正常结束；对一次性任务可成功，对常驻服务应说明其已退出 |
+| failed | false | 失败；读取日志与 exit_code，不自动循环重启 |
+| stopped | false | 停止完成，可进行需停机的配置修改 |
+
+`scripts.status.label` 是界面简化列，仅为“运行中”或 `--`，不能代替完整运行状态。停止使用 TERM 宽限 5 秒，未退出再 KILL 并复核；相关事件进入 Console。未知归属的端口占用会报错，不应由 AI 另行按端口盲目杀进程。外部运行实例原终端的历史 stdout 无法补取，重启接管后才有新输出。
+
+### 重试与失败处理
+
+| 情况 | 处理策略 |
+|---|---|
+| 字段校验失败/未知字段 | 对照当前 api.describe 修正参数；不要原样重复提交 |
+| 请求超时、断线、CLI 非零退出 | 检查 JSON error 和 stderr；先查询对象及 runs.list 判断是否已执行 |
+| 创建请求结果不明 | 先按路径/分组/来源入口查询，避免重复创建；API 没有通用幂等键 |
+| 启停结果不明 | 查询原 run_id 及关联 script_id 的新实例；确认后再决定后续动作 |
+| 编辑冲突 | 保留草稿，重新读取 revision/磁盘状态并解决冲突；不能自动 discard=true |
+| 批量计划失效 | 重新获取计划并核对目标；不得修改旧 revision 以绕过检查 |
+| 多目标部分失败 | 分别报告已提交、同步 errors 和后续异步失败；批量执行不是全有或全无事务 |
 
 ## 1. 连接方式
 
 正式可执行文件：
 
 ```bash
-DEV_START='/path/to/DevStart/dist/DevStart.app/Contents/MacOS/dev-start'
+DEV_START='/absolute/path/DevStart.app/Contents/MacOS/dev-start'
 "$DEV_START" --api api.describe
 "$DEV_START" --api api.docs
 "$DEV_START" --api config.get
@@ -22,7 +97,7 @@ DEV_START_DATA_DIR=/tmp/dev-start-agent "$DEV_START" --serve
 `--serve` 与GUI都是服务所有者；同一工作空间只允许一个所有者，客户端不占工作空间锁。SIGINT/SIGTERM会正常退出headless服务并清理受管进程。API/CLI/MCP均继承 `DEV_START_DATA_DIR`，默认macOS工作空间为 `~/Library/Application Support/devstart`，Linux为 `~/.local/share/devstart`。API错误时CLI退出码1，成功为0；JSON响应写stdout，诊断写stderr。
 
 ```bash
-"$DEV_START" --api groups.create '{"name":"示例"}'
+"$DEV_START" --api groups.create '{"name":"示例工作区"}'
 "$DEV_START" --api projects.create @/absolute/path/request.json
 # 从stdin读取，避免环境变量等配置进入shell历史/命令行参数：
 "$DEV_START" --api scripts.update - < /absolute/path/request.json
@@ -44,7 +119,7 @@ DEV_START_DATA_DIR=/tmp/dev-start-agent "$DEV_START" --serve
 
 ## 2. 接口清单
 
-所有params必须是对象，未知字段报错。返回值包装在JSON-RPC的result内；错误在error内。`id`参数指分组、项目、启动项或运行实例的对应id，不能混用。返回的id由服务分配，调用者不指定。
+所有 params 必须是对象，未知字段报错。下表列出主要管理方法；editor.* 的完整参数表见下方“内置启动文件编辑器”，所有 46 个方法的机器可读参数以 api.describe 为准。返回值包装在JSON-RPC的result内；错误在error内。`id`参数指分组、项目、启动项或运行实例的对应id，不能混用。返回的id由服务分配，调用者不指定。
 
 | 方法 | params | result / 行为 |
 |---|---|---|
@@ -66,6 +141,7 @@ DEV_START_DATA_DIR=/tmp/dev-start-agent "$DEV_START" --serve
 | `projects.refresh` | `{"id":10}` | 重新读取项目清单，返回项目对象 |
 | `scripts.list` | `{"project_id":10}` 或 `{}` | 指定项目或全部启动项数组 |
 | `scripts.ports` | `{"id":12}` | 启动前配置/推导端口、实际端口、显示值与来源 |
+| `scripts.status` | `{"id":12}` | `{id,label}`；仅确认运行中显示“运行中”，其它为 `--`，完整状态见 runs.get |
 | `scripts.get` | `{"id":12}` | 启动项对象 |
 | `scripts.create` | `{"project_id":10,"spec":{…}}` | 新启动项对象；spec见下文 |
 | `scripts.update` | `{"id":12,"patch":{…}}` | 修改后的启动项对象；字段见下文 |
@@ -75,8 +151,13 @@ DEV_START_DATA_DIR=/tmp/dev-start-agent "$DEV_START" --serve
 | `runs.start` | `{"script_id":12}` | `{run_id,state:"starting",asynchronous:true}` |
 | `runs.restart` | `{"script_id":12}` | 在原console_id内替换进程，返回新run_id；无历史时启动 |
 | `runs.stop` | `{"id":123}` | 请求优雅停止，已停止时幂等；异步确认见runs.get |
+| `runs.open` | `{"id":123}` | 重新打开保留的运行历史标签 |
+| `runs.close` | `{"id":123,"stop":true}` | 活动标签须明确 stop:true，退出后关闭；结束标签可省略 stop |
+| `runs.bulk_plan` | `{"action":"stop"}` / `start` / `restart` | 只读生成当前打开标签的目标与阻止原因 |
+| `runs.bulk_apply` | `{"confirmed":true,"plan":原样计划对象}` | 确认并验证计划后执行；结果含 run_ids 和 errors，继续查询异步结果 |
 | `runs.stop_all` | `{}` | 请求停止全部受管/已核实运行实例 |
 | `logs.search` | `{"run_id":123,"keyword":"error","case_sensitive":false,"offset":0,"limit":100}` | 搜索当前Console缓存，分页返回匹配行与高亮范围 |
+| `logs.open_target` | `{"run_id":123,"target":"./src/main.rs:20"}` | 打开外部浏览器/文件程序；仅用户明确要求时调用 |
 | `logs.list` | `{"after_id":0,"limit":100}` | 持久化日志索引，含logs、next_after_id、has_more |
 | `logs.read` | `{"run_id":123,"offset":0,"limit":16384}` | 有界日志页与下一字节游标 |
 
@@ -160,7 +241,7 @@ scripts.update的patch可包含spec的全部字段，额外支持favorite布尔�
 
 启动项增删改会写回该项目根目录.dev-start.json，再重新校验，成功才提交应用配置。首次编辑无清单项目时，会把当前登记的启动项写为明确清单。之后刷新读取此清单，不再自动附加其它发现项。删除最后一项保留空清单，避免刷新重新发现被删项。删除项目登记不删除清单。
 
-运行中的目标启动项禁止编辑/删除，运行中的项目禁止移除登记；先runs.stop并轮询active:false。新增其它启动项、修改项目元数据、移动分组不需要停止。应用刷新后保留API编辑与id；重新命名仍保留id。清单校验失败回滚原字节；并发外部编辑检测到时拒绝覆盖，先refresh再重试。跨进程崩溃不承诺多文件事务，恢复后以项目清单为权威并执行refresh。
+运行中的目标启动项禁止修改执行配置或删除，运行中的项目禁止移除登记；先 runs.stop 并轮询 active:false。纯 display_name/description 更新是例外：可在运行中原子修改，不改变启动清单、参数或 PID；混入任何其它字段时仍需停止。新增其它启动项、修改项目元数据、移动分组不需要停止。应用刷新后保留API编辑与id；重新命名仍保留id。清单校验失败回滚原字节；并发外部编辑检测到时拒绝覆盖，先refresh再重试。跨进程崩溃不承诺多文件事务，恢复后以项目清单为权威并执行refresh。
 
 ## 4. 启动与状态
 
@@ -209,13 +290,38 @@ def call(method, params=None):
 print(call("groups.list"))
 ```
 
-Node最简单的方式是调用同一个CLI，不经过shell：
+### 可复用的启动跟踪示例（Python）
+
+下面复用上面的 `call` 函数。仅在用户已授权启动时执行，`script_id` 必须来自前一步查询，不能直接使用示例值。客户端自己的等待超时不等于服务启动失败，也不会因此自动停止服务。
+
+```python
+import time
+
+def start_and_inspect(script_id, wait_seconds=20):
+    script = call("scripts.get", {"id": script_id})
+    started = call("runs.start", {"script_id": script["id"]})
+    run_id = started["run_id"]  # Python int 保留精确整数，不转 float。
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        run = call("runs.get", {"id": run_id})
+        if run["state"] != "starting" or time.monotonic() >= deadline:
+            break
+        time.sleep(0.3)
+    recent = call("logs.read", {"run_id": run_id, "tail_bytes": 16384})
+    return {"run": run, "recent_log": recent["text"],
+            "next_offset": recent["next_offset"],
+            "business_ready": "未验证：需按项目日志或指定健康检查判断"}
+```
+
+后续日志查询：`logs.read {"run_id":当前运行ID,"offset":上一页next_offset}`；停止：`runs.stop {"id":当前运行ID}` 后轮询 `runs.get` 至 `active:false`；重启：`runs.restart {"script_id":启动项ID,"id":原运行ID}`，并用返回的新 run_id 继续跟踪。示例不会自动停止、重启或修改启动项。
+
+Node 可用 execFile 调用同一个 CLI，不经过 shell。以下 groups.list 示例仅解析小整数分组 ID；涉及 run_id/console_id 时需使用无损整数解析与序列化，不能直接照搬 JSON.parse：
 
 ```javascript
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const exec = promisify(execFile);
-const binary = '/path/to/DevStart/dist/DevStart.app/Contents/MacOS/dev-start';
+const binary = '/absolute/path/DevStart.app/Contents/MacOS/dev-start';
 const { stdout } = await exec(binary, ['--api', 'groups.list', '{}'], { maxBuffer: 8*1024*1024 });
 const response = JSON.parse(stdout);
 console.log(response.result);
@@ -231,7 +337,7 @@ Cursor或采用mcpServers格式的客户端配置示例（合并到已有MCP配�
 {
   "mcpServers": {
     "dev-start": {
-      "command": "/path/to/DevStart/dist/DevStart.app/Contents/MacOS/dev-start",
+      "command": "/absolute/path/DevStart.app/Contents/MacOS/dev-start",
       "args": ["--mcp"]
     }
   }
@@ -242,14 +348,14 @@ Codex 使用 `~/.codex/config.toml` 中的配置：
 
 ```toml
 [mcp_servers.dev_start]
-command = "/path/to/DevStart/dist/DevStart.app/Contents/MacOS/dev-start"
+command = "/absolute/path/DevStart.app/Contents/MacOS/dev-start"
 args = ["--mcp"]
 ```
 
 也可以自行运行：
 
 ```bash
-codex mcp add dev_start -- "/path/to/DevStart/dist/DevStart.app/Contents/MacOS/dev-start" --mcp
+codex mcp add dev_start -- "/absolute/path/DevStart.app/Contents/MacOS/dev-start" --mcp
 ```
 
 格式依据[OpenAI官方MCP文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
@@ -271,7 +377,7 @@ codex mcp add dev_start -- "/path/to/DevStart/dist/DevStart.app/Contents/MacOS/d
 - -32001：socket请求解析/超时/队列繁忙；执行结果可能未知，先查询再重试。
 - -32002：响应超过8MiB，请缩小查询范围。
 
-CLI返回JSON-RPC结果并以退出码表示成功/失败；MCP工具执行失败通过isError:true返回原因。API不提供任意文件写入或删除原项目目录的操作；原脚本代码修改继续用编辑器。支持macOS与Linux的Unix socket，不提供Windows命名管道。没有新增外部下载源；当前功能使用Rust标准库和既有serde依赖。
+CLI返回JSON-RPC结果并以退出码表示成功/失败；MCP工具执行失败通过isError:true返回原因。API不提供任意文件写入或删除原项目目录的操作；原脚本代码修改继续用编辑器。传输使用 Unix socket；macOS 已验证，Linux 尚未完成端到端平台验证；不提供 Windows 命名管道。没有新增外部下载源；当前功能使用Rust标准库和既有serde依赖。
 
 无项目清单时的启动发现规则：名称按冒号/连字符/下划线拆段，首段为dev/start/serve/watch，且不含build/deploy/upload/publish/release/test/lint/format/install任务段。其它名称请用项目清单或scripts.create明确登记；现有显式清单不受命名过滤。读取本身不执行代码，命名约定不等于源码行为验证。
 
