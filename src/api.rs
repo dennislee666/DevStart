@@ -35,6 +35,7 @@ pub const METHODS: &[&str] = &[
     "scripts.list",
     "scripts.get",
     "scripts.ports",
+    "scripts.status",
     "scripts.create",
     "scripts.update",
     "scripts.delete",
@@ -43,8 +44,13 @@ pub const METHODS: &[&str] = &[
     "runs.start",
     "runs.restart",
     "runs.stop",
+    "runs.open",
+    "runs.close",
     "runs.stop_all",
+    "runs.bulk_plan",
+    "runs.bulk_apply",
     "logs.search",
+    "logs.open_target",
     "logs.read",
     "logs.list",
 ];
@@ -110,6 +116,12 @@ pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, Strin
                 )?
             ))
         }
+        "scripts.status" => {
+            config::fields(p, &["id"])?;
+            let id = config::id(p, "id")?;
+            s.script(id).ok_or("启动项不存在")?;
+            Ok(json!({"id":id,"label":s.script_status_label(id)}))
+        }
         "scripts.ports" => {
             config::fields(p, &["id"])?;
             let id = config::id(p, "id")?;
@@ -141,11 +153,29 @@ pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, Strin
             Ok(run_value(run(s, config::id(p, "id")?)?))
         }
         "runs.start" | "runs.restart" => {
-            config::fields(p, &["script_id"])?;
+            config::fields(
+                p,
+                if method == "runs.restart" {
+                    &["script_id", "id"]
+                } else {
+                    &["script_id"]
+                },
+            )?;
             let sid = config::id(p, "script_id")?;
-            // Checked launch already closes the verified old instance before starting the new one.
-            let id = s.launch(sid)?;
-            Ok(json!({"run_id":id,"state":"starting","asynchronous":true}))
+            let id = if method == "runs.restart" && p.get("id").is_some() {
+                s.restart_run(config::id(p, "id")?, sid)?
+            } else if method == "runs.restart"
+                && s.runtime
+                    .runs
+                    .iter()
+                    .any(|r| r.associated_scripts.contains(&sid) && !r.superseded)
+            {
+                s.restart(sid)?
+            } else {
+                s.launch(sid)?
+            };
+            let console_id = run(s, id)?.console_id;
+            Ok(json!({"run_id":id,"console_id":console_id,"state":"starting","asynchronous":true}))
         }
         "runs.stop" => {
             config::fields(p, &["id"])?;
@@ -156,10 +186,56 @@ pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, Strin
             }
             Ok(json!({"run_id":id,"stop_requested":active}))
         }
+        "runs.open" | "runs.close" => {
+            config::fields(
+                p,
+                if method == "runs.close" {
+                    &["id", "stop"]
+                } else {
+                    &["id"]
+                },
+            )?;
+            let id = config::id(p, "id")?;
+            if method == "runs.open" {
+                s.runtime.open_tab(id)?;
+            } else {
+                let stop = p
+                    .get("stop")
+                    .map(|v| v.as_bool().ok_or("stop需要布尔值"))
+                    .transpose()?
+                    .unwrap_or(false);
+                s.runtime.close_tab(id, stop)?;
+            }
+            Ok(run_value(run(s, id)?))
+        }
+        "runs.bulk_plan" => {
+            config::fields(p, &["action"])?;
+            let action: crate::bulk::Action =
+                serde_json::from_value(p.get("action").ok_or("缺少批量动作")?.clone())
+                    .map_err(|e| format!("无效批量动作：{e}"))?;
+            Ok(json!(s.bulk_plan(action)))
+        }
+        "runs.bulk_apply" => {
+            config::fields(p, &["plan", "confirmed"])?;
+            let plan: crate::bulk::Plan =
+                serde_json::from_value(p.get("plan").ok_or("缺少批量计划")?.clone())
+                    .map_err(|e| format!("无效批量计划：{e}"))?;
+            let confirmed = p
+                .get("confirmed")
+                .and_then(Value::as_bool)
+                .ok_or("confirmed需要布尔值")?;
+            Ok(json!(s.apply_bulk(&plan, confirmed)?))
+        }
         "runs.stop_all" => {
             config::fields(p, &[])?;
             s.runtime.stop_all();
             Ok(json!({"stop_requested":true}))
+        }
+        "logs.open_target" => {
+            config::fields(p, &["run_id", "target"])?;
+            let run = run(s, config::id(p, "run_id")?)?;
+            crate::console_text::open(config::text(p, "target")?, &run.cwd)?;
+            Ok(json!({"opened":true}))
         }
         "logs.search" => {
             config::fields(
@@ -308,9 +384,9 @@ fn run(s: &Service, id: u64) -> Result<&crate::runtime::Run, String> {
 fn run_value(run: &crate::runtime::Run) -> Value {
     let timing = run.timing();
     json!({"id":run.id,"script_id":run.script_id,"associated_scripts":run.associated_scripts,
-        "title":run.title,"launch_name":run.launch_name,"display_command":run.display_command,
+        "console_id":run.console_id,"superseded":run.superseded,"tab_open":run.tab_open,"close_requested":run.close_requested,"title":run.title,"launch_name":run.launch_name,"display_command":run.display_command,
         "state":match run.state { crate::runtime::State::Starting=>"starting",crate::runtime::State::Running=>"running",crate::runtime::State::Stopping=>"stopping",crate::runtime::State::Succeeded=>"succeeded",crate::runtime::State::Stopped=>"stopped",crate::runtime::State::Failed=>"failed" },
-        "pid":run.pid,"listening_ports":if run.state.active(){run.listening_ports.clone()}else{vec![]},"active":run.state.active(),"external":run.external.is_some(),"exit_code":run.exit,
+        "state_display":crate::presentation::run_state_display(run),"pid":run.pid,"listening_ports":if run.state.active(){run.listening_ports.clone()}else{vec![]},"active":run.state.active(),"external":run.external.is_some(),"exit_code":run.exit,
         "elapsed_seconds":timing.elapsed_seconds,"started_at":timing.started_at,"started_at_unix_ms":timing.started_at_unix_ms,
         "elapsed_display":timing.elapsed_display,"timing_display":timing.display,
         "log_path":run.log_path,"cwd":run.cwd})

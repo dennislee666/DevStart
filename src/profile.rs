@@ -81,6 +81,7 @@ pub fn merge(catalog: &Catalog, profile: Profile) -> Result<Catalog, String> {
                 .unwrap_or_else(|| path.clone());
             let mut script = Script {
                 display_name: None,
+                description_override: None,
                 enabled: spec.enabled,
                 display_command: spec.display_command,
                 id: 0,

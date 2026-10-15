@@ -38,6 +38,8 @@ pub enum Entry {
 pub struct Script {
     #[serde(default)]
     pub display_name: Option<String>,
+    #[serde(default)]
+    pub description_override: Option<String>,
     #[serde(default = "enabled_default")]
     pub enabled: bool,
     #[serde(default)]

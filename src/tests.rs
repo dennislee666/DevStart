@@ -44,6 +44,7 @@ impl Fixture {
         fs::write(&file, text).unwrap();
         Script {
             display_name: None,
+            description_override: None,
             enabled: true,
             display_command: None,
             id: 10,
@@ -86,7 +87,23 @@ fn wait(runtime: &mut Runtime, predicate: impl Fn(&Runtime) -> bool) {
         assert!(
             start.elapsed() < Duration::from_secs(12),
             "runtime timed out: {:?}",
-            runtime.runs.first().map(|r| r.state)
+            runtime
+                .runs
+                .iter()
+                .map(|r| (
+                    r.id,
+                    r.state,
+                    r.pid,
+                    (0..r.lines.len())
+                        .rev()
+                        .take(6)
+                        .filter_map(|i| r
+                            .lines
+                            .get(i)
+                            .map(|(_, line)| line.chars().take(256).collect::<String>()))
+                        .collect::<Vec<_>>()
+                ))
+                .collect::<Vec<_>>()
         );
         std::thread::sleep(Duration::from_millis(30));
     }
@@ -217,7 +234,7 @@ fn streaming_console_handles_utf8_and_ansi_across_chunks() {
     assert_eq!(d.push(&[0xe5]), "");
     assert_eq!(d.push(&[0x90, 0xaf]), "启");
     assert_eq!(d.push(b"\x1b[3"), "");
-    assert_eq!(d.push(b"1merror\x1b[0m\r\n"), "error\n");
+    assert_eq!(d.push(b"1merror\x1b[0m\r\n"), "\x1b[31merror\x1b[0m\n");
     assert_eq!(d.finish(), "");
 }
 #[test]
@@ -918,7 +935,7 @@ fn console_global_budget_limits_bytes_and_rows_across_history() {
     r.trim_console_budget();
     assert_eq!(
         r.runs.iter().map(|r| r.lines.len()).sum::<usize>(),
-        MAX_TOTAL_LINES
+        MAX_TOTAL_LINES.min(r.runs.len() * crate::console_buffer::MAX_LINES)
     );
 }
 
@@ -1774,7 +1791,7 @@ fn api_manifest_catalog_failure_restores_original_and_does_not_commit_memory() {
     api_call(
         &mut s,
         "scripts.update",
-        json!({"id":sid,"patch":{"description":"before"}}),
+        json!({"id":sid,"patch":{"description":"before","args":["before"]}}),
     );
     let manifest = fs::read(f.0.join(".dev-start.json")).unwrap();
     fs::create_dir(f.0.join("catalog.json.tmp")).unwrap();
@@ -1782,7 +1799,7 @@ fn api_manifest_catalog_failure_restores_original_and_does_not_commit_memory() {
         crate::api::dispatch(
             &mut s,
             "scripts.update",
-            &json!({"id":sid,"patch":{"description":"after"}})
+            &json!({"id":sid,"patch":{"description":"after","args":["after"]}})
         )
         .is_err()
     );
@@ -2408,4 +2425,525 @@ fn release_editions_use_separate_data_namespaces_with_an_empty_catalog() {
     assert!(catalog.projects.is_empty());
     assert_eq!(catalog.groups.len(), 1);
     assert_eq!(catalog.groups[0].name, "默认分组");
+}
+
+#[test]
+fn closing_tabs_requires_consent_and_history_can_reopen() {
+    let f = Fixture::new();
+    let script = f.script("echo ready; sleep 60");
+    let mut runtime = Runtime::default();
+    let id = runtime.start("Fixture", &script, f.0.join("logs")).unwrap();
+    assert!(runtime.close_tab(id, false).is_err());
+    assert!(runtime.runs[0].tab_open && runtime.runs[0].state.active());
+    runtime.close_tab(id, true).unwrap();
+    assert!(runtime.runs[0].tab_open && runtime.runs[0].close_requested);
+    assert!(runtime.open_tab(id).is_err());
+    wait(&mut runtime, |r| !r.runs[0].state.active());
+    assert!(!runtime.runs[0].tab_open);
+    assert!(!runtime.runs[0].close_requested);
+    runtime.open_tab(id).unwrap();
+    assert!(runtime.runs[0].tab_open);
+    runtime.close_tab(id, false).unwrap();
+    assert!(!runtime.runs[0].tab_open);
+}
+#[test]
+fn closed_history_retains_eight_without_losing_active_or_open_tabs() {
+    let f = Fixture::new();
+    let mut runtime = Runtime::default();
+    let mut active = f.script("sleep 60");
+    active.id = 500;
+    let active_file = f.0.join("active.sh");
+    fs::rename(&active.file, &active_file).unwrap();
+    active.file = active_file;
+    let running = runtime.start("Fixture", &active, f.0.join("logs")).unwrap();
+    for n in 0..10 {
+        let mut script = f.script("echo done");
+        script.id = n + 1;
+        runtime.start("Fixture", &script, f.0.join("logs")).unwrap();
+    }
+    wait(&mut runtime, |r| {
+        r.runs.iter().filter(|r| !r.state.active()).count() == 10
+            && r.runs.iter().filter(|r| r.state.active()).count() == 1
+    });
+    assert_eq!(runtime.runs.len(), 11);
+    let closed: Vec<_> = runtime
+        .runs
+        .iter()
+        .filter(|r| !r.state.active())
+        .map(|r| r.id)
+        .collect();
+    for id in closed {
+        runtime.close_tab(id, false).unwrap();
+    }
+    runtime.poll();
+    assert_eq!(runtime.runs.len(), 9);
+    assert!(
+        runtime
+            .runs
+            .iter()
+            .any(|r| r.id == running && r.state.active())
+    );
+}
+#[test]
+fn console_styles_are_streamed_bounded_and_searchable_as_plain_text() {
+    let mut decoder = crate::output::Decoder::default();
+    let mut buffer = crate::console_buffer::ConsoleBuffer::default();
+    buffer.append(false, &decoder.push(b"prefix \x1b[3"));
+    buffer.append(false, &decoder.push(b"1;1mERROR"));
+    buffer.append(false, &decoder.push(b" continuing\x1b[0m normal\n"));
+    assert_eq!(buffer.get(0).unwrap().1, "prefix ERROR continuing normal\n");
+    let span = &buffer.styles(0)[0];
+    assert!(span.style.bold && span.style.color.is_some());
+    assert_eq!(
+        &buffer.get(0).unwrap().1[span.range.clone()],
+        "ERROR continuing"
+    );
+    let q = crate::console_search::Query {
+        keyword: "ERROR".into(),
+        ..Default::default()
+    };
+    assert_eq!(buffer.query(&q, None, 0).unwrap().matched_lines, 1);
+    for _ in 0..4000 {
+        buffer.append(false, "plain\n");
+    }
+    assert_eq!(buffer.len(), crate::console_buffer::MAX_LINES);
+    assert!(buffer.styles(0).is_empty());
+    buffer.clear();
+    assert!(buffer.styles(0).is_empty());
+}
+#[test]
+fn console_targets_are_inert_bounded_and_resolve_compiler_locations() {
+    let f = Fixture::new();
+    let file = f.0.join("hello.rs");
+    fs::write(&file, "fn main() {};").unwrap();
+    let text = "url=https://localhost:8082/test?q=a, ./hello.rs:2:3 /tmp ~/Project";
+    let links = crate::console_text::links(text);
+    assert_eq!(links.len(), 4);
+    assert_eq!(links[0].target, "https://localhost:8082/test?q=a");
+    assert_eq!(
+        crate::console_text::local_path("./hello.rs:2:3", &f.0).unwrap(),
+        file.canonicalize().unwrap()
+    );
+    assert!(crate::console_text::open("javascript:alert(1)", &f.0).is_err());
+    assert!(crate::console_text::local_path("./missing.rs", &f.0).is_err());
+    assert_eq!(
+        crate::console_text::links(&"https://a.test ".repeat(100)).len(),
+        64
+    );
+}
+
+#[test]
+fn quoted_console_paths_and_file_urls_support_spaces_without_execution() {
+    let f = Fixture::new();
+    let file = f.0.join("hello world.rs");
+    fs::write(&file, "test").unwrap();
+    let path = format!("\"{}\"", file.display());
+    let links = crate::console_text::links(&path);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target, file.to_string_lossy());
+    let url = format!("file://{}", file.to_string_lossy().replace(' ', "%20"));
+    assert_eq!(
+        crate::console_text::local_path(&url, &f.0).unwrap(),
+        file.canonicalize().unwrap()
+    );
+    assert!(crate::console_text::local_path("file://remotehost/hello", &f.0).is_err());
+}
+
+#[test]
+fn restart_reuses_console_position_and_stopped_console_can_restart_repeatedly() {
+    let f = Fixture::new();
+    let store = Store::at(f.0.clone()).unwrap();
+    f.script("echo READY; trap 'exit 0' TERM; while true; do sleep 1; done");
+    let mut s = Service {
+        editor: Default::default(),
+        port_hints: Default::default(),
+        store,
+        catalog: Catalog::default(),
+        runtime: Runtime::default(),
+    };
+    s.import(&f.0, 1).unwrap();
+    let sid = s.catalog.projects[0].scripts[0].id;
+    let mut current = s.launch(sid).unwrap();
+    wait(&mut s.runtime, |r| {
+        r.runs
+            .iter()
+            .any(|r| r.id == current && r.state == State::Running)
+    });
+    let console = s
+        .runtime
+        .runs
+        .iter()
+        .find(|r| r.id == current)
+        .unwrap()
+        .console_id;
+    for pass in 0..3 {
+        let old = current;
+        let pid = s.runtime.runs.iter().find(|r| r.id == old).unwrap().pid;
+        if pass == 1 {
+            s.runtime.stop(old);
+            wait(&mut s.runtime, |r| {
+                !r.runs.iter().find(|r| r.id == old).unwrap().state.active()
+            });
+        }
+        current = s.restart(sid).unwrap();
+        assert_ne!(old, current);
+        assert_eq!(s.active_run(sid), Some(current));
+        assert_eq!(s.latest_state(sid), Some(State::Starting));
+        assert_eq!(s.run_tabs().len(), 1);
+        assert_eq!(s.session_tabs().len(), 1);
+        assert_eq!(s.run_tabs()[0].console_id, console);
+        assert_eq!(s.runtime.runs[0].id, current);
+        assert_eq!(s.current_console_run(old), Some(current));
+        wait(&mut s.runtime, |r| {
+            r.runs
+                .iter()
+                .any(|r| r.id == current && r.state == State::Running)
+        });
+        let run = s.runtime.runs.iter().find(|r| r.id == current).unwrap();
+        assert_ne!(run.pid, pid);
+        assert_eq!(unsafe { libc::kill(-(pid as i32), 0) }, -1);
+        assert!(run.lines.iter().any(|(_, t)| t.contains("原实例关闭完成")));
+    }
+}
+#[test]
+fn restart_from_old_duplicate_tab_collapses_duplicate_launch_tabs() {
+    let f = Fixture::new();
+    let store = Store::at(f.0.clone()).unwrap();
+    f.script("echo READY; while true; do sleep 1; done");
+    let mut s = Service {
+        editor: Default::default(),
+        port_hints: Default::default(),
+        store,
+        catalog: Catalog::default(),
+        runtime: Runtime::default(),
+    };
+    s.import(&f.0, 1).unwrap();
+    let sid = s.catalog.projects[0].scripts[0].id;
+    let old = s.launch(sid).unwrap();
+    wait(&mut s.runtime, |r| {
+        r.runs
+            .iter()
+            .any(|r| r.id == old && r.state == State::Running)
+    });
+    let newer = s.launch(sid).unwrap();
+    wait(&mut s.runtime, |r| {
+        r.runs
+            .iter()
+            .any(|r| r.id == newer && r.state == State::Running)
+    });
+    assert_eq!(s.run_tabs().len(), 2);
+    assert!(s.can_restart(old));
+    let current = s.restart_run(old, sid).unwrap();
+    assert_eq!(s.run_tabs().len(), 1);
+    assert_eq!(s.run_tabs()[0].console_id, old);
+    wait(&mut s.runtime, |r| {
+        r.runs
+            .iter()
+            .any(|r| r.id == current && r.state == State::Running)
+    });
+    assert_eq!(s.active_count(), 1);
+    assert_eq!(s.session_tabs().len(), 1);
+}
+
+#[test]
+fn in_console_restart_forces_term_ignoring_process_then_launches_replacement() {
+    let f = Fixture::new();
+    let script = f.script("trap '' TERM; echo FORCE_READY; while true; do sleep 1; done");
+    let project = crate::model::Project {
+        description: String::new(),
+        id: 1,
+        name: "Fixture".into(),
+        path: f.0.clone(),
+        group: 1,
+        favorite: false,
+        scripts: vec![script.clone()],
+        explicit_scripts: true,
+    };
+    let mut runtime = Runtime::default();
+    let old = runtime.start("Fixture", &script, f.0.join("logs")).unwrap();
+    wait(&mut runtime, |r| {
+        r.runs
+            .iter()
+            .any(|r| r.id == old && r.lines.iter().any(|(_, s)| s.contains("FORCE_READY")))
+    });
+    let pid = runtime.runs[0].pid;
+    let new = runtime
+        .restart_checked(old, &project, &script, f.0.join("logs"))
+        .unwrap();
+    wait(&mut runtime, |r| {
+        r.runs
+            .iter()
+            .any(|r| r.id == new && r.lines.iter().any(|(_, s)| s.contains("FORCE_READY")))
+    });
+    let current = runtime.runs.iter().find(|r| r.id == new).unwrap();
+    assert_eq!(current.console_id, old);
+    assert_eq!(unsafe { libc::kill(-(pid as i32), 0) }, -1);
+    let output = current
+        .lines
+        .iter()
+        .map(|(_, s)| s.as_str())
+        .collect::<String>();
+    assert!(output.contains("SIGTERM") && output.contains("SIGKILL"));
+    assert!(output.find("确认原实例").unwrap() < output.find("新实例已启动").unwrap());
+    assert_eq!(runtime.runs.iter().filter(|r| r.tab_open).count(), 1);
+}
+
+#[test]
+fn bulk_plans_require_confirmation_reject_changes_and_restore_only_the_stopped_batch() {
+    let f = Fixture::new();
+    let store = Store::at(f.0.clone()).unwrap();
+    f.script("echo BULK_READY; trap 'exit 0' TERM; while true; do sleep 1; done");
+    let mut s = Service {
+        editor: Default::default(),
+        port_hints: Default::default(),
+        store,
+        catalog: Catalog::default(),
+        runtime: Runtime::default(),
+    };
+    s.import(&f.0, 1).unwrap();
+    let sid = s.catalog.projects[0].scripts[0].id;
+    let first = s.launch(sid).unwrap();
+    wait(&mut s.runtime, |r| {
+        r.runs
+            .iter()
+            .any(|r| r.id == first && r.state == State::Running)
+    });
+    let plan = s.bulk_plan(crate::bulk::Action::Stop);
+    assert_eq!(plan.action, crate::bulk::Action::Stop);
+    assert!(s.apply_bulk(&plan, false).is_err());
+    let mut forged = plan.clone();
+    forged.targets[0].title.push_str(" changed");
+    assert!(s.apply_bulk(&forged, true).is_err());
+    assert_eq!(s.active_count(), 1);
+    s.catalog.projects[0].scripts[0]
+        .args
+        .push("changed-after-confirmation".into());
+    assert!(s.apply_bulk(&plan, true).is_err());
+    assert_eq!(s.active_count(), 1);
+    s.catalog.projects[0].scripts[0].args.clear();
+    s.apply_bulk(&plan, true).unwrap();
+    wait(&mut s.runtime, |r| r.runs.iter().all(|r| !r.state.active()));
+    let resume = s.bulk_plan(crate::bulk::Action::Start);
+    assert_eq!(resume.action, crate::bulk::Action::Start);
+    assert_eq!(resume.targets.len(), 1);
+    assert!(s.apply_bulk(&resume, false).is_err());
+    assert_eq!(s.active_count(), 0);
+    s.catalog.projects[0].scripts[0].enabled = false;
+    assert!(!s.bulk_plan(crate::bulk::Action::Start).enabled());
+    assert!(s.apply_bulk(&resume, true).is_err());
+    s.catalog.projects[0].scripts[0].enabled = true;
+    let mut disabled = s.catalog.projects[0].scripts[0].clone();
+    disabled.id = 9999;
+    disabled.enabled = false;
+    disabled.name = "disabled deployment".into();
+    s.catalog.projects[0].scripts.push(disabled);
+    let restored = s
+        .apply_bulk(&s.bulk_plan(crate::bulk::Action::Start), true)
+        .unwrap();
+    assert!(restored.errors.is_empty());
+    assert_eq!(restored.run_ids.len(), 1);
+    let next = restored.run_ids[0];
+    wait(&mut s.runtime, |r| {
+        r.runs
+            .iter()
+            .any(|r| r.id == next && r.state == State::Running)
+    });
+    assert_eq!(s.run_tabs().len(), 1);
+    assert_eq!(s.run_tabs()[0].console_id, first);
+    assert_eq!(s.active_count(), 1);
+}
+
+#[test]
+fn bulk_actions_select_current_tab_states_and_never_start_closed_history() {
+    use crate::bulk::Action;
+    let f = Fixture::new();
+    let other = Fixture::new();
+    f.script("echo SCOPE_A; trap 'exit 0' TERM; while true; do sleep 1; done");
+    other.script("echo SCOPE_B; trap 'exit 0' TERM; while true; do sleep 1; done");
+    let mut s = Service {
+        editor: Default::default(),
+        port_hints: Default::default(),
+        store: Store::at(f.0.clone()).unwrap(),
+        catalog: Catalog::default(),
+        runtime: Runtime::default(),
+    };
+    s.import(&f.0, 1).unwrap();
+    s.import(&other.0, 1).unwrap();
+    let a = s.catalog.projects[0].scripts[0].id;
+    let b = s.catalog.projects[1].scripts[0].id;
+    let first = s.launch(a).unwrap();
+    let second = s.launch(b).unwrap();
+    wait(&mut s.runtime, |r| {
+        r.runs.iter().filter(|r| r.state == State::Running).count() == 2
+    });
+    let first_pid = s.runtime.runs.iter().find(|r| r.id == first).unwrap().pid;
+    s.runtime.stop(second);
+    wait(&mut s.runtime, |r| {
+        !r.runs
+            .iter()
+            .find(|r| r.id == second)
+            .unwrap()
+            .state
+            .active()
+    });
+    assert_eq!(
+        s.bulk_plan(Action::Start)
+            .targets
+            .iter()
+            .map(|r| r.run_id)
+            .collect::<Vec<_>>(),
+        vec![second]
+    );
+    assert_eq!(
+        s.bulk_plan(Action::Stop)
+            .targets
+            .iter()
+            .map(|r| r.run_id)
+            .collect::<Vec<_>>(),
+        vec![first]
+    );
+    let stale_restart = s.bulk_plan(Action::Restart);
+    assert_eq!(stale_restart.targets.len(), 1);
+    // A stopped tab configured for an occupied port cannot steal it from a running tab.
+    for sid in [a, b] {
+        s.port_hints.insert(
+            sid,
+            Ok(Some(crate::configured_ports::Hint {
+                port: 55555,
+                source: "fixture".into(),
+            })),
+        );
+    }
+    let blocked = s.bulk_plan(Action::Start);
+    assert!(!blocked.enabled());
+    assert!(s.apply_bulk(&blocked, true).is_err());
+    for sid in [a, b] {
+        s.port_hints.remove(&sid);
+    }
+    let started = s.apply_bulk(&s.bulk_plan(Action::Start), true).unwrap();
+    let next_b = started.run_ids[0];
+    wait(&mut s.runtime, |r| {
+        r.runs
+            .iter()
+            .any(|r| r.id == next_b && r.state == State::Running)
+    });
+    assert_eq!(
+        s.runtime.runs.iter().find(|r| r.id == first).unwrap().pid,
+        first_pid
+    );
+    assert!(s.apply_bulk(&stale_restart, true).is_err());
+    let restart = s.bulk_plan(Action::Restart);
+    assert_eq!(restart.targets.len(), 2);
+    assert!(s.apply_bulk(&restart, false).is_err());
+    let restarted = s.apply_bulk(&restart, true).unwrap();
+    wait(&mut s.runtime, |r| {
+        restarted.run_ids.iter().all(|id| {
+            r.runs
+                .iter()
+                .any(|r| r.id == *id && r.state == State::Running)
+        })
+    });
+    assert_eq!(s.run_tabs().len(), 2);
+    let latest_b = s.active_run(b).unwrap();
+    s.runtime.stop(latest_b);
+    wait(&mut s.runtime, |r| {
+        !r.runs
+            .iter()
+            .find(|r| r.id == latest_b)
+            .unwrap()
+            .state
+            .active()
+    });
+    s.runtime.close_tab(latest_b, false).unwrap();
+    assert!(s.bulk_plan(Action::Start).targets.is_empty());
+    assert_eq!(s.bulk_plan(Action::Restart).targets.len(), 1);
+}
+
+#[test]
+fn bulk_stop_during_restart_also_stops_the_retiring_generation() {
+    use crate::bulk::Action;
+    let f = Fixture::new();
+    f.script("echo CANCEL_READY; trap 'exit 0' TERM; while true; do sleep 1; done");
+    let mut s = Service {
+        editor: Default::default(),
+        port_hints: Default::default(),
+        store: Store::at(f.0.clone()).unwrap(),
+        catalog: Catalog::default(),
+        runtime: Runtime::default(),
+    };
+    s.import(&f.0, 1).unwrap();
+    let sid = s.catalog.projects[0].scripts[0].id;
+    let first = s.launch(sid).unwrap();
+    wait(&mut s.runtime, |r| {
+        r.runs
+            .iter()
+            .any(|r| r.id == first && r.state == State::Running)
+    });
+    let pid = s.runtime.runs.iter().find(|r| r.id == first).unwrap().pid;
+    let next = s.restart_run(first, sid).unwrap();
+    let plan = s.bulk_plan(Action::Stop);
+    assert_eq!(plan.targets.len(), 1);
+    assert_eq!(plan.targets[0].run_id, next);
+    s.apply_bulk(&plan, true).unwrap();
+    wait(&mut s.runtime, |r| r.runs.iter().all(|r| !r.state.active()));
+    assert_eq!(unsafe { libc::kill(-(pid as i32), 0) }, -1);
+    assert_eq!(s.active_count(), 0);
+    assert_eq!(s.run_tabs().len(), 1);
+    assert_eq!(s.run_tabs()[0].id, next);
+}
+
+#[test]
+fn unified_script_information_is_atomic_and_does_not_change_execution_or_sources() {
+    let f = Fixture::new();
+    f.script("echo INFO_READY; while true; do sleep 1; done");
+    let mut s = Service {
+        editor: Default::default(),
+        port_hints: Default::default(),
+        store: Store::at(f.0.clone()).unwrap(),
+        catalog: Catalog::default(),
+        runtime: Runtime::default(),
+    };
+    s.import(&f.0, 1).unwrap();
+    let sid = s.catalog.projects[0].scripts[0].id;
+    let pid = s.catalog.projects[0].id;
+    let command = s.script(sid).unwrap().invocation();
+    let source = fs::read(&s.script(sid).unwrap().file).unwrap();
+    assert_eq!(s.script_status_label(sid), "--");
+    let run = s.launch(sid).unwrap();
+    wait(&mut s.runtime, |r| {
+        r.runs
+            .iter()
+            .any(|r| r.id == run && r.state == State::Running)
+    });
+    let process = s.runtime.runs[0].pid;
+    assert_eq!(s.script_status_label(sid), "运行中");
+    s.update_script_info(
+        sid,
+        Some(Some("Local API".into())),
+        Some("combined description".into()),
+    )
+    .unwrap();
+    assert_eq!(s.script(sid).unwrap().display_label(), "Local API");
+    assert_eq!(s.script(sid).unwrap().description, "combined description");
+    assert!(
+        s.update_script_info(
+            sid,
+            Some(Some("x".repeat(51))),
+            Some("must not save".into())
+        )
+        .is_err()
+    );
+    assert_eq!(s.script(sid).unwrap().description, "combined description");
+    s.rescan(pid).unwrap();
+    assert_eq!(s.script(sid).unwrap().description, "combined description");
+    assert_eq!(s.script(sid).unwrap().invocation(), command);
+    assert_eq!(fs::read(&s.script(sid).unwrap().file).unwrap(), source);
+    assert_eq!(s.runtime.runs[0].pid, process);
+    s.update_script_info(sid, Some(None), Some("reset and save".into()))
+        .unwrap();
+    assert!(s.script(sid).unwrap().display_name.is_none());
+    assert_eq!(s.script(sid).unwrap().description, "reset and save");
+    s.runtime.stop(run);
+    assert_eq!(s.script_status_label(sid), "--");
+    wait(&mut s.runtime, |r| r.runs.iter().all(|r| !r.state.active()));
 }

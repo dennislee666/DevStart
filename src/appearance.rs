@@ -96,6 +96,30 @@ pub fn fonts(p: &Preferences) -> egui::FontDefinitions {
             .insert(0, name);
     }
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    fonts.font_data.insert(
+        "phosphor-fill".into(),
+        egui_phosphor::Variant::Fill.font_data().into(),
+    );
+    let fallback = fonts
+        .families
+        .get(&FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
+    for (family, font) in [
+        ("action-fill", "phosphor-fill"),
+        ("action-outline", "phosphor"),
+    ] {
+        let mut names = vec![font.to_owned()];
+        names.extend(
+            fallback
+                .iter()
+                .filter(|name| name.as_str() != font)
+                .cloned(),
+        );
+        fonts
+            .families
+            .insert(FontFamily::Name(family.into()), names);
+    }
     fonts
 }
 pub fn style(p: &Preferences, light: bool) -> egui::Style {
@@ -164,7 +188,10 @@ pub fn style(p: &Preferences, light: bool) -> egui::Style {
     );
     style.spacing.button_padding = Vec2::new(7.0, 4.0);
     style.spacing.interact_size = Vec2::new(24.0, p.row_height());
-    style.interaction.tooltip_delay = 0.35;
+    // Apply one delay to all hover helpers, without extra velocity smoothing or instant switching.
+    style.interaction.tooltip_delay = 0.3;
+    style.interaction.tooltip_grace_time = 0.0;
+    style.interaction.show_tooltips_only_when_still = false;
     let family = if p.ui_font == UiFont::System {
         FontFamily::Proportional
     } else {

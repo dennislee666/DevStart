@@ -44,6 +44,11 @@ fn patch<T: serde::Serialize + serde::de::DeserializeOwned>(
     serde_json::from_value(value).map_err(|e| e.to_string())
 }
 /// The project manifest is authoritative. Validate it before committing the catalog and roll back failures.
+#[derive(Default)]
+struct PresentationPatch {
+    name: Option<(u64, Option<String>)>,
+    description: Option<(u64, String)>,
+}
 fn persist(
     s: &mut Service,
     pid: u64,
@@ -51,7 +56,7 @@ fn persist(
     ids: Vec<u64>,
     expected: Option<Vec<u8>>,
     favorite: Option<(u64, bool)>,
-    display_name: Option<(u64, Option<String>)>,
+    presentation: PresentationPatch,
 ) -> Result<(), String> {
     let old = project(s, pid)?.clone();
     let path = old.path.join(crate::project_manifest::FILE_NAME);
@@ -65,7 +70,8 @@ fn persist(
         let mut scripts = crate::project_manifest::discover(&old.path)?;
         for (script, id) in scripts.iter_mut().zip(ids) {
             script.id = id;
-            script.display_name = display_name
+            script.display_name = presentation
+                .name
                 .clone()
                 .filter(|(sid, _)| *sid == id)
                 .map(|(_, value)| value)
@@ -75,6 +81,20 @@ fn persist(
                         .find(|v| v.id == id)
                         .and_then(|v| v.display_name.clone())
                 });
+            script.description_override = presentation
+                .description
+                .as_ref()
+                .filter(|(sid, _)| *sid == id)
+                .map(|(_, text)| text.clone())
+                .or_else(|| {
+                    old.scripts
+                        .iter()
+                        .find(|v| v.id == id)
+                        .and_then(|v| v.description_override.clone())
+                });
+            if let Some(text) = &script.description_override {
+                script.description = text.clone();
+            }
             script.favorite = favorite
                 .filter(|(sid, _)| *sid == id)
                 .map(|(_, v)| v)
@@ -301,10 +321,23 @@ pub fn handle(s: &mut Service, method: &str, p: &Value) -> Result<Value, String>
                 } else {
                     None
                 };
-            if let Some((_, value)) = &display_name
-                && p["patch"].as_object().is_some_and(|v| v.len() == 1)
+            if method == "scripts.update"
+                && p["patch"].as_object().is_some_and(|v| {
+                    !v.is_empty()
+                        && v.keys()
+                            .all(|key| matches!(key.as_str(), "display_name" | "description"))
+                })
             {
-                s.set_display_name(sid, value.clone())?;
+                let name = display_name.as_ref().map(|(_, value)| value.clone());
+                let description = p["patch"]
+                    .get("description")
+                    .map(|v| v.as_str().map(str::to_owned).ok_or("description需要字符串"))
+                    .transpose()?;
+                if description.is_none() {
+                    s.set_display_name(sid, name.expect("display-name metadata patch"))?;
+                } else {
+                    s.update_script_info(sid, name, description)?;
+                }
                 return Ok(json!(s.script(sid)));
             }
             let proj = project(s, pid)?;
@@ -360,7 +393,21 @@ pub fn handle(s: &mut Service, method: &str, p: &Value) -> Result<Value, String>
                 .get("favorite")
                 .and_then(Value::as_bool)
                 .map(|v| (sid, v));
-            persist(s, pid, specs, ids, expected, favorite, display_name)?;
+            persist(
+                s,
+                pid,
+                specs,
+                ids,
+                expected,
+                favorite,
+                PresentationPatch {
+                    name: display_name,
+                    description: p["patch"]
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .map(|text| (sid, text.to_owned())),
+                },
+            )?;
             s.sync_display_names();
             if method == "scripts.delete" {
                 Ok(json!({"deleted":sid}))

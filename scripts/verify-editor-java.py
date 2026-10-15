@@ -37,12 +37,17 @@ with tempfile.TemporaryDirectory(prefix='devstart-java-editor-',dir='/tmp') as t
   failed=rpc('runs.restart',{'script_id':sid})['run_id']
   until('runs.get',{'id':failed},lambda r:r['state']=='failed')
   old=rpc('runs.get',{'id':first});assert old['active'] and old['pid']==pid
+  failure=rpc('runs.get',{'id':failed});assert old['tab_open'] and not old['superseded'] and not failure['tab_open']
+  assert old['console_id']==failure['console_id']
+  assert len([r for r in rpc('runs.list') if r['tab_open']])==1
   doc=rpc('editor.restore',{'script_id':sid,'expected_revision':doc['revision'],'version_id':baseline})
   second=rpc('runs.restart',{'script_id':sid})['run_id'];ready(second,'JAVA_ORIGINAL')
   save(original.replace('JAVA_ORIGINAL','JAVA_UPDATED'))
   third=rpc('runs.restart',{'script_id':sid})['run_id'];ready(third,'JAVA_UPDATED')
   doc=rpc('editor.restore',{'script_id':sid,'expected_revision':doc['revision'],'version_id':baseline})
   fourth=rpc('runs.restart',{'script_id':sid})['run_id'];ready(fourth,'JAVA_ORIGINAL')
+  assert rpc('runs.get',{'id':fourth})['console_id']==old['console_id']
+  assert len([r for r in rpc('runs.list') if r['tab_open']])==1
   report={'result':'passed','compiler':str(jdk/'bin/javac'),'invalid_source_keeps_original_service':True,'edited_source_changes_actual_output':True,'rollback_changes_next_actual_output':True,'versions':len(rpc('editor.versions',{'script_id':sid})),'scope':'isolated disposable Java source; no business project, Maven or deployment commands'}
   (repository/'docs/editor-java-integration.json').write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n');print(json.dumps(report,ensure_ascii=False))
  finally:

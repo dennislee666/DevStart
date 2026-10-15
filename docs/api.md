@@ -70,10 +70,10 @@ DEV_START_DATA_DIR=/tmp/dev-start-agent "$DEV_START" --serve
 | `scripts.create` | `{"project_id":10,"spec":{…}}` | 新启动项对象；spec见下文 |
 | `scripts.update` | `{"id":12,"patch":{…}}` | 修改后的启动项对象；字段见下文 |
 | `scripts.delete` | `{"id":12}` | 从项目清单删除该启动项，保留原脚本文件 |
-| `runs.list` | `{}` | 本次服务进程的全部运行记录（含已停止、外部识别实例） |
+| `runs.list` | `{}` | 本次服务的活动实例、全部打开标签及最近8条已关闭记录（含tab_open、close_requested） |
 | `runs.get` | `{"id":123}` | 运行实例详情 |
 | `runs.start` | `{"script_id":12}` | `{run_id,state:"starting",asynchronous:true}` |
-| `runs.restart` | `{"script_id":12}` | 同checked-start流程；无历史实例时也可启动 |
+| `runs.restart` | `{"script_id":12}` | 在原console_id内替换进程，返回新run_id；无历史时启动 |
 | `runs.stop` | `{"id":123}` | 请求优雅停止，已停止时幂等；异步确认见runs.get |
 | `runs.stop_all` | `{}` | 请求停止全部受管/已核实运行实例 |
 | `logs.search` | `{"run_id":123,"keyword":"error","case_sensitive":false,"offset":0,"limit":100}` | 搜索当前Console缓存，分页返回匹配行与高亮范围 |
@@ -366,3 +366,35 @@ GUI 的重命名入口复用 `projects.update {"id":项目ID,"patch":{"name":"ex
 本工具启动的进程以成功创建进程时为准，预检查时间不计入运行时长。外部进程从系统 `ps lstart` 获取实际启动时间，初始化其已运行时长，再用单调计时递增；无法确定时明确显示“启动时间未知 - 已监测 …”，不会把发现时间当作启动时间。编辑器版本日期与运行时间使用相同本地时间格式。
 
 `editor.list` 的已关闭历史上限为 10 个，所有打开缓冲区单独保留（最多 16 个），因此最多返回 26 条有效关联记录。关闭、打开和软件重新载入时，服务端按最近使用时间维护并持久化上限；历史淘汰只移除列表记录，不删除源文件或其备份版本。重开软件后未恢复的缓冲区都属于历史，同样只保留最近 10 个。
+
+## 标签关闭与 Console 交互
+
+`runs.close {"id":123}` 关闭已结束标签；活动实例拒绝无确认关闭。确认后调用 `runs.close {"id":123,"stop":true}`，使用原优雅停止/超时强制停止流程，退出后 `tab_open:false`。取消确认不调用该方法。`runs.open {"id":123}` 重新打开历史标签，停止并关闭的请求完成前不允许重新打开。
+
+左栏显示全部活动实例和最近8条已结束记录（历史图标），关闭不删除原日志。历史属于本次软件会话，重开软件后完整日志仍可经 `logs.list/read` 查询。
+
+Console 各视图自动换行，保留最多3000行/2MiB；可搜索纯文本。支持标准 ANSI SGR 前景色、256色/真彩色、强调、斜体及下划线；不执行终端控制序列或日志中的命令。链接与路径使用区别颜色和下划线，悬停提示 Control+点击打开。支持HTTP(S)、绝对路径、~/、相对路径及编译器行列号后缀；路径不存在会显示真实错误。
+
+`logs.open_target {"run_id":123,"target":"./src/main.rs:20"}` 使用该运行目录解析文件或目录，并用系统默认文本编辑器/文件管理器打开；HTTP(S)使用默认浏览器。此方法会打开外部程序，AI必须在用户明确要求打开时调用；查看日志本身不需要调用。
+
+### 原标签内重启
+
+`runs.restart` 与界面重启共用服务路径：原 Console 的 `console_id` 保持不变，新进程获得唯一 `run_id`。旧记录 `superseded:true,tab_open:false`，用于诊断，不再列入会话导航。`runs.start` 表示显式新启动，与原标签重启区分。实例详情包含 `console_id`、`superseded`；客户端应以 `console_id` 保持窗口/标签身份，以 `run_id` 追踪进程事件。重启仍执行原优雅/强制关闭流程，校验失败且原进程尚未关闭时恢复原 Console 并显示失败原因。
+
+### 项目信息状态
+
+`runs.list/get` 的 `state_display` 与项目信息容器一致，例如 `运行中：8082`，多端口 `运行中：3000, 3001`。仅采用实际探测的监听端口；未获取时为 `运行中：--`，停止后显示停止状态，不沿用旧端口。原始数据仍见 `state` 与 `listening_ports`。
+
+### 批量标签操作
+
+`runs.bulk_plan {"action":"stop"}` 只选择当前打开的活动标签（含启动中），`action:"start"` 只选择未运行的打开标签，`action:"restart"` 只选择运行中的打开标签。三种动作相互独立，不读取关闭的历史或恢复旧批次，也不扫描项目下所有脚本。重复启动项在原逻辑 Console 中合并。未启用/删除项、参数不明的外部实例以及已知端口/共享资源冲突会阻止启动或重启；全部启动不会停止已经运行的其他标签。
+
+计划返回 `action`、`targets`、`blocked` 与配置/源文件指纹 `revision`。向用户显示动作和对象并获得确认后，调用 `runs.bulk_apply {"confirmed":true,"plan":<原样计划>}`。未确认或过期计划不产生进程副作用。`targets[].run_id` 是十进制字符串，避免 JavaScript 精度损失；不要重建或修改计划。返回 `{action,run_ids,errors}`；启动/重启仍为异步，应跟踪新的 run_id。同步部分失败列在 errors，异步失败查看对应 Console。
+
+所有打开的标签都保留，已停止标签不会因历史上限被移除。左侧启动会话只展示最多8条结束历史；关闭历史记录另有8条缓存上限，完整日志保留在磁盘。原 `runs.stop_all` 是程序化的全实例停止；工具栏三种动作使用上述标签计划协议。
+
+### 启动项修改信息与状态列
+
+` scripts.update {"id":12,"patch":{"display_name":"Java-Starter","description":"本地调试后端"}} ` 同时原子保存展示名和简介；校验失败两项均不变。纯 `display_name/description` 更新在运行时也可调用，不改启动清单、argv 或 PID。`display_name:null` 恢复来源默认名。简介作为 `description_override` 展示覆盖值持久化，刷新项目仍保留覆盖；该字段为后端维护，客户端只编辑 description。
+
+` scripts.status {"id":12} ` 返回 `{id,label}`；label 仅为 `运行中` 或 `--`。启动中、停止中、已结束以及不能确认具体参数的外部实例显示 `--`，与项目列表的状态列一致。

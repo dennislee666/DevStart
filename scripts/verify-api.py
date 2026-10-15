@@ -136,6 +136,17 @@ with tempfile.TemporaryDirectory(prefix='ds-api-', dir='/tmp') as temporary:
         rpc('projects.update', {'id': pid, 'patch': {'name': before_project['name']}})
         checks.append('project/group rename during execution preserves PID, source manifest, paths and complete launch specs')
 
+        rpc('scripts.update', {'id': sid, 'patch': {'display_name': 'Unified Info', 'description': 'Unified description'}})
+        info=rpc('scripts.get', {'id':sid})
+        assert info['display_name']=='Unified Info' and info['description']=='Unified description'
+        assert rpc('runs.get',{'id':run_id})['pid']==before['pid']
+        assert rpc('scripts.status',{'id':sid})['label']=='运行中'
+        assert (project/'.dev-start.json').read_bytes()==manifest
+        rpc('scripts.update',{'id':sid,'patch':{'display_name':'好'*51,'description':'MUST_NOT_SAVE'}},fail=True)
+        assert rpc('scripts.get',{'id':sid})['description']=='Unified description'
+        rpc('projects.refresh',{'id':pid})
+        assert rpc('scripts.get',{'id':sid})['description']=='Unified description'
+        checks.append('atomic combined display-name/description edit during execution; no launch-manifest mutation; refresh preservation and shared status DTO')
         rpc('scripts.update', {'id': sid, 'patch': {'display_name': 'Java-Starter'}})
         after = rpc('runs.get', {'id': run_id})
         assert after['pid'] == before['pid'] and after['display_command'] == before['display_command']
@@ -157,8 +168,41 @@ with tempfile.TemporaryDirectory(prefix='ds-api-', dir='/tmp') as temporary:
         run2 = rpc('runs.restart', {'script_id': sid})['run_id']
         assert run2 != run_id
         until('runs.get', {'id': run2}, lambda r: r['state'] == 'running')
-        assert not rpc('runs.get', {'id': run_id})['active']
-        rpc('runs.stop', {'id': run2})
+        previous=rpc('runs.get', {'id':run_id})
+        current=rpc('runs.get', {'id':run2})
+        assert not previous['active'] and previous['superseded'] and not previous['tab_open']
+        assert current['console_id']==previous['console_id'] and current['tab_open']
+        checks.append('restart replaces process generation in the same logical console')
+        plan=rpc('runs.bulk_plan',{'action':'stop'})
+        assert plan['action']=='stop' and isinstance(plan['targets'][0]['run_id'],str)
+        rpc('runs.bulk_apply',{'plan':plan,'confirmed':False},fail=True)
+        assert rpc('runs.get',{'id':run2})['active']
+        rpc('runs.bulk_apply',{'plan':plan,'confirmed':True})
+        until('runs.get',{'id':run2},lambda r:not r['active'])
+        resume=rpc('runs.bulk_plan',{'action':'start'})
+        assert resume['action']=='start' and len(resume['targets'])==1
+        rpc('runs.bulk_apply',{'plan':resume,'confirmed':False},fail=True)
+        restored=rpc('runs.bulk_apply',{'plan':resume,'confirmed':True})
+        assert not restored['errors'] and len(restored['run_ids'])==1
+        run2=restored['run_ids'][0]
+        until('runs.get',{'id':run2},lambda r:r['state']=='running')
+        restart_plan=rpc('runs.bulk_plan',{'action':'restart'})
+        assert len(restart_plan['targets'])==1
+        rpc('runs.bulk_apply',{'plan':restart_plan,'confirmed':False},fail=True)
+        restarted=rpc('runs.bulk_apply',{'plan':restart_plan,'confirmed':True})
+        assert not restarted['errors'];run2=restarted['run_ids'][0]
+        until('runs.get',{'id':run2},lambda r:r['state']=='running')
+        checks.append('confirmed stop/start/restart use current tab states and stable consoles; string-safe plan IDs')
+        rpc('runs.close', {'id': run2}, fail=True)
+        assert rpc('runs.get', {'id': run2})['tab_open']
+        closing = rpc('runs.close', {'id': run2, 'stop': True})
+        assert closing['close_requested']
+        until('runs.get', {'id': run2}, lambda r: not r['active'])
+        assert not rpc('runs.get', {'id': run2})['tab_open']
+        assert rpc('runs.open', {'id': run2})['tab_open']
+        assert not rpc('runs.close', {'id': run2})['tab_open']
+        rpc('logs.open_target', {'run_id': run2, 'target': 'javascript:alert(1)'}, fail=True)
+        checks.append('explicit close consent, deferred close after exit, history reopen and rejected unsafe URI')
         until('runs.get', {'id': run2}, lambda r: not r['active'])
         cursor = 0
         combined = bytearray()

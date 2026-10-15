@@ -14,7 +14,7 @@ personal = []
 eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "accesskit"] }
 egui_extras = { version = "0.33", default-features = false, features = ["syntect"] }
 sha2 = "0.10"
-egui-phosphor = "0.11"
+egui-phosphor = { version = "0.11", features = ["fill"] }
 rfd = "0.16"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

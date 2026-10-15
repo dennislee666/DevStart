@@ -43,6 +43,11 @@ impl State {
 }
 pub struct Run {
     pub id: u64,
+    /// Stable presentation identity; process events always use the unique id above.
+    pub console_id: u64,
+    pub superseded: bool,
+    pub tab_open: bool,
+    pub close_requested: bool,
     pub script_id: u64,
     pub title: String,
     pub command: String,
@@ -164,6 +169,10 @@ impl Runtime {
         let control = Control::default();
         let journal = self.journal(id, &path);
         self.runs.push(Run {
+            console_id: id,
+            superseded: false,
+            tab_open: true,
+            close_requested: false,
             id,
             script_id: script.id,
             title: format!("{} / {}", project.name, script.display_label()),
@@ -207,6 +216,45 @@ impl Runtime {
         });
         Ok(id)
     }
+    /// A new process generation occupies the same logical console and visual position.
+    /// Keeping unique event ids prevents delayed old-process events from stopping the replacement.
+    pub fn restart_checked(
+        &mut self,
+        target: u64,
+        project: &Project,
+        script: &Script,
+        logs: PathBuf,
+    ) -> Result<u64, String> {
+        let index = self
+            .runs
+            .iter()
+            .position(|r| r.id == target)
+            .ok_or("运行记录不存在")?;
+        let console_id = self.runs[index].console_id;
+        let id = self.launch_checked(project, script, logs)?;
+        if id == target {
+            return Ok(id);
+        }
+        let new_index = self
+            .runs
+            .iter()
+            .position(|r| r.id == id)
+            .ok_or("重启记录不存在")?;
+        for run in &mut self.runs {
+            if run.id != id
+                && (run.console_id == console_id || run.associated_scripts.contains(&script.id))
+            {
+                run.tab_open = false;
+                run.superseded = true;
+                run.console_id = console_id;
+            }
+        }
+        let mut replacement = self.runs.remove(new_index);
+        replacement.console_id = console_id;
+        self.runs.insert(index.min(self.runs.len()), replacement);
+        self.note(id, "在当前 Console 中重启；确认原实例退出后启动新实例");
+        Ok(id)
+    }
     pub fn note(&self, id: u64, message: impl AsRef<str>) {
         if let Some(run) = self.runs.iter().find(|r| r.id == id) {
             self.journal(id, &run.log_path).note(message);
@@ -235,7 +283,10 @@ impl Runtime {
         slot: Option<u64>,
     ) -> Result<u64, String> {
         if self.runs.iter().any(|r| {
-            Some(r.id) != slot && r.associated_scripts.contains(&script.id) && r.state.active()
+            Some(r.id) != slot
+                && r.associated_scripts.contains(&script.id)
+                && r.state.active()
+                && !matches!(r.control.completion(), Some(Ok(())))
         }) {
             return Err("该脚本已经运行".into());
         }
@@ -244,7 +295,10 @@ impl Runtime {
         }
         if let Some(key) = &script.resource_key
             && let Some(existing) = self.runs.iter().find(|r| {
-                Some(r.id) != slot && r.state.active() && r.resource_key.as_ref() == Some(key)
+                Some(r.id) != slot
+                    && r.state.active()
+                    && !matches!(r.control.completion(), Some(Ok(())))
+                    && r.resource_key.as_ref() == Some(key)
             })
         {
             return Err(format!(
@@ -372,6 +426,10 @@ impl Runtime {
             run.state = State::Running;
         } else {
             self.runs.push(Run {
+                console_id: id,
+                superseded: false,
+                tab_open: true,
+                close_requested: false,
                 id,
                 script_id: script.id,
                 title: format!("{project} / {}", script.display_label()),
@@ -527,6 +585,88 @@ impl Runtime {
             run.state = State::Stopping;
         }
     }
+    /// Stop every still-active generation owned by one current logical tab.
+    pub fn stop_console(&mut self, id: u64) -> Result<(), String> {
+        let target = self
+            .runs
+            .iter()
+            .find(|r| r.id == id && !r.superseded)
+            .ok_or("当前标签不存在")?;
+        let console_id = target.console_id;
+        let journal = self.journal(id, &target.log_path);
+        let ids: Vec<_> = self
+            .runs
+            .iter()
+            .filter(|r| r.console_id == console_id && r.state.active())
+            .map(|r| r.id)
+            .collect();
+        for other in self
+            .runs
+            .iter()
+            .filter(|r| ids.contains(&r.id) && r.id != id)
+        {
+            other.control.observe(journal.clone());
+        }
+        journal.note("停止当前标签及其尚未退出的进程实例");
+        for id in ids {
+            self.stop(id);
+        }
+        Ok(())
+    }
+    /// Closing an active tab requires explicit consent and completes only after exit.
+    pub fn close_tab(&mut self, id: u64, stop: bool) -> Result<(), String> {
+        let run = self
+            .runs
+            .iter_mut()
+            .find(|r| r.id == id)
+            .ok_or("运行记录不存在")?;
+        if run.state.active() {
+            if !stop {
+                return Err("启动项仍在运行，需要确认停止并关闭".into());
+            }
+            run.close_requested = true;
+            self.stop(id);
+        } else {
+            run.tab_open = false;
+        }
+        Ok(())
+    }
+    pub fn open_tab(&mut self, id: u64) -> Result<(), String> {
+        let run = self
+            .runs
+            .iter_mut()
+            .find(|r| r.id == id)
+            .ok_or("运行记录不存在")?;
+        if run.superseded {
+            return Err("该记录已被重启替换，请打开当前 Console".into());
+        }
+        if run.close_requested {
+            return Err("正在停止并关闭，请等待完成".into());
+        }
+        run.tab_open = true;
+        Ok(())
+    }
+    fn trim_history(&mut self) {
+        // Explicit tabs and active generations survive; only closed history is capped at eight.
+        let mut completed: Vec<_> = self
+            .runs
+            .iter()
+            .filter(|r| !r.state.active() && (!r.tab_open || r.superseded))
+            .map(|r| r.id)
+            .collect();
+        completed.sort_unstable_by(|a, b| b.cmp(a));
+        let keep: HashSet<_> = completed
+            .into_iter()
+            .take(8)
+            .chain(
+                self.runs
+                    .iter()
+                    .filter(|r| r.state.active() || (r.tab_open && !r.superseded))
+                    .map(|r| r.id),
+            )
+            .collect();
+        self.runs.retain(|r| keep.contains(&r.id));
+    }
     pub fn stop_all(&mut self) {
         for r in &mut self.runs {
             if r.state.active() {
@@ -581,7 +721,26 @@ impl Runtime {
                         eprintln!("[dev start] 启动检查失败: {e}");
                         journal.error(format!("启动未执行：{e}"));
                         if let Some(run) = self.runs.iter().find(|r| r.id == id) {
-                            run.control.finish(Err(e));
+                            run.control.finish(Err(e.clone()));
+                        }
+                        let console_id =
+                            self.runs.iter().find(|r| r.id == id).map(|r| r.console_id);
+                        if let Some(old_index) = self.runs.iter().position(|r| {
+                            Some(r.console_id) == console_id
+                                && r.id != id
+                                && r.state.active()
+                                && !r.control.requested()
+                        }) {
+                            let old = &self.runs[old_index];
+                            self.journal(old.id, &old.log_path)
+                                .error("本次重启准备失败，原实例继续运行；失败详情见重启日志");
+                            self.journal(old.id, &old.log_path).error(&e);
+                            self.runs[old_index].tab_open = true;
+                            self.runs[old_index].superseded = false;
+                            if let Some(new) = self.runs.iter_mut().find(|r| r.id == id) {
+                                new.tab_open = false;
+                                new.superseded = true;
+                            }
                         }
                         let _ = self.state_tx.send(Event::Finished(
                             id,
@@ -597,6 +756,16 @@ impl Runtime {
                 Event::Finished(id, state, exit) => {
                     if let Some(r) = self.runs.iter_mut().find(|r| r.id == id) {
                         r.state = state;
+                        if r.close_requested {
+                            if state == State::Failed {
+                                self.error = Some(
+                                    "停止未成功，标签已保留；请检查 Console 中的具体原因".into(),
+                                );
+                            } else {
+                                r.tab_open = false;
+                            }
+                            r.close_requested = false;
+                        }
                         r.exit = exit;
                         r.elapsed = r.started.elapsed();
                         if r.external.is_none() && r.pid > 0 {
@@ -613,6 +782,7 @@ impl Runtime {
                 }
             }
         }
+        self.trim_history();
         self.trim_console_budget();
         self.ports.poll(&mut self.runs);
     }
@@ -700,6 +870,10 @@ impl Runtime {
             .and_then(|t| SystemTime::now().duration_since(t).ok())
             .unwrap_or_default();
         self.runs.push(Run {
+            console_id: id,
+            superseded: false,
+            tab_open: true,
+            close_requested: false,
             id,
             script_id: *candidate.scripts.first().ok_or("外部运行缺少启动项")?,
             associated_scripts: candidate.scripts,

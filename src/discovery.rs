@@ -75,6 +75,7 @@ fn scan(
                     .to_string();
                 result.push(Script {
                     display_name: None,
+                    description_override: None,
                     enabled: true,
                     display_command: None,
                     id: 0,
@@ -132,6 +133,7 @@ fn package(root: &Path, path: &Path, result: &mut Vec<Script>) -> Result<(), Str
             {
                 result.push(Script {
                     display_name: None,
+                    description_override: None,
                     enabled: true,
                     display_command: None,
                     id: 0,

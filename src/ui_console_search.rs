@@ -65,9 +65,10 @@ pub(super) fn controls(ui: &mut egui::Ui, state: &mut SearchUi, id: u64) -> Inpu
         if ui
             .selectable_label(
                 state.query.only_matches,
-                format!("{} 只看匹配", icon::FUNNEL),
+                button_label(ui, &format!("{} 只看匹配", icon::FUNNEL), ui.is_enabled()),
             )
             .on_hover_text("仅显示包含关键词的日志行")
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
         {
             state.query.only_matches = !state.query.only_matches;

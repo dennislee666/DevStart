@@ -33,7 +33,11 @@ impl DevStart {
             return;
         }
         ui.add_space(12.0);
-        ui.label(RichText::new("脚本").small().color(tone(self.light, MUTED)));
+        ui.label(
+            RichText::new("启动代码")
+                .small()
+                .color(tone(self.light, MUTED)),
+        );
         egui::ScrollArea::vertical()
             .id_salt("editor-files")
             .max_height((ui.available_height() - 96.0).clamp(0.0, 260.0))
@@ -44,11 +48,15 @@ impl DevStart {
                     let filename = record["filename"].as_str().unwrap_or("");
                     let selected =
                         self.filter == Filter::Editor && self.selected_editor == Some(sid);
-                    let button = egui::Button::new(format!(
-                        "{}   {}{}",
-                        icon::FILE_CODE,
-                        filename,
-                        if record["dirty"] == true { " •" } else { "" }
+                    let button = egui::Button::new(button_label(
+                        ui,
+                        &format!(
+                            "{}   {}{}",
+                            icon::FILE_CODE,
+                            filename,
+                            if record["dirty"] == true { " •" } else { "" }
+                        ),
+                        ui.is_enabled(),
                     ))
                     .right_text(if selected {
                         icon::EYE
@@ -67,6 +75,7 @@ impl DevStart {
                         } else {
                             record["tooltip"].as_str().unwrap_or("").to_owned()
                         })
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
                         self.open_editor(sid);

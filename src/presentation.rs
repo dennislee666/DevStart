@@ -2,6 +2,7 @@ use crate::runtime::State;
 use unicode_segmentation::UnicodeSegmentation;
 
 pub struct RunTab {
+    pub console_id: u64,
     pub id: u64,
     pub label: String,
     pub full_name: String,
@@ -47,4 +48,22 @@ pub fn launch_label(full: &str) -> String {
     } else {
         full.to_owned()
     }
+}
+
+/// Display actual monitored listeners only; configured ports do not prove a live listener.
+pub fn run_state_display(run: &crate::runtime::Run) -> String {
+    if run.state != State::Running {
+        return run.state.label().into();
+    }
+    let ports: std::collections::BTreeSet<_> = run.listening_ports.iter().copied().collect();
+    let ports = if ports.is_empty() {
+        "--".into()
+    } else {
+        ports
+            .into_iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!("{}：{ports}", run.state.label())
 }

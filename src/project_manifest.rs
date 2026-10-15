@@ -110,6 +110,7 @@ pub fn discover(root: &Path) -> Result<Vec<Script>, String> {
         }
         let script = Script {
             display_name: None,
+            description_override: None,
             enabled: spec.enabled,
             display_command: spec.display_command,
             id: 0,

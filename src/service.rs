@@ -185,7 +185,10 @@ impl Service {
                 s.id = prev.id;
                 s.favorite = prev.favorite;
                 s.display_name = prev.display_name.clone();
-                if !has_manifest {
+                s.description_override = prev.description_override.clone();
+                if let Some(text) = &s.description_override {
+                    s.description = text.clone();
+                } else if !has_manifest {
                     s.description = prev.description.clone();
                 }
                 if !has_manifest {
@@ -249,14 +252,33 @@ impl Service {
         self.commit(next)
     }
     pub fn describe(&mut self, id: u64, text: String) -> Result<(), String> {
+        self.update_script_info(id, None, Some(text))
+    }
+    /// Atomically update presentation metadata without modifying launch definitions.
+    pub fn update_script_info(
+        &mut self,
+        id: u64,
+        name: Option<Option<String>>,
+        description: Option<String>,
+    ) -> Result<(), String> {
+        let name = name.map(Script::validate_display_name).transpose()?;
         let mut next = self.catalog.clone();
-        next.projects
+        let script = next
+            .projects
             .iter_mut()
             .flat_map(|p| &mut p.scripts)
             .find(|s| s.id == id)
-            .ok_or("脚本不存在")?
-            .description = text;
-        self.commit(next)
+            .ok_or("启动项不存在")?;
+        if let Some(name) = name {
+            script.display_name = name;
+        }
+        if let Some(text) = description {
+            script.description = text.clone();
+            script.description_override = Some(text);
+        }
+        self.commit(next)?;
+        self.sync_display_names();
+        Ok(())
     }
     pub fn generate_description(&mut self, id: u64) -> Result<(), String> {
         let script = self.script(id).ok_or("脚本不存在")?;
@@ -280,7 +302,7 @@ impl Service {
             .runs
             .iter()
             .rev()
-            .find(|r| r.script_id == id)
+            .find(|r| !r.superseded && r.script_id == id)
             .map(|r| {
                 if r.state.active() {
                     format!("；最近执行：{}", r.state.label())
@@ -322,6 +344,7 @@ impl Service {
         }
         p.scripts.push(Script {
             display_name: None,
+            description_override: None,
             enabled: true,
             display_command: None,
             id,
@@ -396,16 +419,13 @@ impl Service {
             .iter()
             .find(|r| r.id == run_id)
             .is_some_and(|run| {
-                !matches!(run.state, State::Stopping | State::Starting)
+                !run.superseded
+                    && !run.close_requested
+                    && !matches!(run.state, State::Stopping | State::Starting)
                     && run.associated_scripts.contains(&script_id)
                     && self
                         .script(script_id)
                         .is_some_and(|s| s.launch_block_reason().is_none())
-                    && !self.runtime.runs.iter().any(|other| {
-                        other.id != run_id
-                            && other.state.active()
-                            && other.associated_scripts.contains(&script_id)
-                    })
             })
     }
     pub fn can_restart(&self, run_id: u64) -> bool {
@@ -424,7 +444,7 @@ impl Service {
             .runs
             .iter()
             .rev()
-            .find(|r| r.associated_scripts.contains(&script_id))
+            .find(|r| !r.superseded && r.associated_scripts.contains(&script_id))
             .is_some_and(|r| self.can_restart_target(r.id, script_id))
     }
     pub fn restart(&mut self, script_id: u64) -> Result<u64, String> {
@@ -435,7 +455,7 @@ impl Service {
                     .runs
                     .iter()
                     .rev()
-                    .find(|r| r.associated_scripts.contains(&script_id))
+                    .find(|r| !r.superseded && r.associated_scripts.contains(&script_id))
                     .map(|r| r.id)
             })
             .ok_or("暂无启动记录")?;
@@ -461,9 +481,9 @@ impl Service {
             return Err("该运行记录当前不可重启，请操作最新实例".into());
         }
         let version = self.snapshot_launch(script_id)?;
-        let id = self
-            .runtime
-            .launch_checked(project, &script, self.store.root.join("logs"))?;
+        let id =
+            self.runtime
+                .restart_checked(run, project, &script, self.store.root.join("logs"))?;
         self.runtime.note(
             id,
             format!(
@@ -542,18 +562,7 @@ impl Service {
         Ok(id)
     }
     pub fn set_display_name(&mut self, id: u64, name: Option<String>) -> Result<(), String> {
-        let name = Script::validate_display_name(name)?;
-        let mut next = self.catalog.clone();
-        let script = next
-            .projects
-            .iter_mut()
-            .flat_map(|p| &mut p.scripts)
-            .find(|s| s.id == id)
-            .ok_or("启动项不存在")?;
-        script.display_name = name;
-        self.commit(next)?;
-        self.sync_display_names();
-        Ok(())
+        self.update_script_info(id, Some(name), None)
     }
     pub fn sync_display_names(&mut self) {
         for run in &mut self.runtime.runs {
@@ -573,11 +582,13 @@ impl Service {
             }
         }
     }
-    pub fn run_tabs(&self) -> Vec<crate::presentation::RunTab> {
+    pub fn session_tabs(&self) -> Vec<crate::presentation::RunTab> {
         self.runtime
             .runs
             .iter()
+            .filter(|run| !run.superseded)
             .map(|run| crate::presentation::RunTab {
+                console_id: run.console_id,
                 id: run.id,
                 label: crate::presentation::tab_label(&run.launch_name),
                 full_name: run.launch_name.clone(),
@@ -601,10 +612,53 @@ impl Service {
             })
             .collect()
     }
+    /// Navigation keeps active sessions above history without reordering workspace tabs.
+    pub fn sidebar_sessions(&self) -> Vec<crate::presentation::RunTab> {
+        let mut sessions = self.session_tabs();
+        sessions.sort_by_key(|tab| (!tab.state.active(), std::cmp::Reverse(tab.id)));
+        let mut history = 0;
+        sessions.retain(|tab| {
+            if tab.state.active() {
+                true
+            } else {
+                history += 1;
+                history <= 8
+            }
+        });
+        sessions
+    }
+    pub fn run_tabs(&self) -> Vec<crate::presentation::RunTab> {
+        let open: std::collections::HashSet<_> = self
+            .runtime
+            .runs
+            .iter()
+            .filter(|r| r.tab_open)
+            .map(|r| r.id)
+            .collect();
+        self.session_tabs()
+            .into_iter()
+            .filter(|t| open.contains(&t.id))
+            .collect()
+    }
+    pub fn current_console_run(&self, id: u64) -> Option<u64> {
+        let console_id = self.runtime.runs.iter().find(|r| r.id == id)?.console_id;
+        self.runtime
+            .runs
+            .iter()
+            .find(|r| r.console_id == console_id && r.tab_open && !r.superseded)
+            .map(|r| r.id)
+    }
     pub fn selected_run(&self, selected: Option<u64>) -> Option<u64> {
         selected
-            .filter(|id| self.runtime.runs.iter().any(|r| r.id == *id))
-            .or_else(|| self.runtime.runs.last().map(|r| r.id))
+            .and_then(|id| self.current_console_run(id))
+            .or_else(|| {
+                self.runtime
+                    .runs
+                    .iter()
+                    .rev()
+                    .find(|r| r.tab_open)
+                    .map(|r| r.id)
+            })
     }
     pub fn has_external_run(&self, project_id: u64) -> bool {
         self.catalog
@@ -681,12 +735,24 @@ impl Service {
             .into_iter()
             .collect()
     }
+    pub fn script_status_label(&self, id: u64) -> &'static str {
+        if self.runtime.runs.iter().any(|r| {
+            !r.superseded
+                && r.state == State::Running
+                && r.associated_scripts.contains(&id)
+                && (r.external.is_none() || r.associated_scripts.len() == 1)
+        }) {
+            "运行中"
+        } else {
+            "--"
+        }
+    }
     pub fn active_run(&self, id: u64) -> Option<u64> {
         self.runtime
             .runs
             .iter()
             .rev()
-            .find(|r| r.associated_scripts.contains(&id) && r.state.active())
+            .find(|r| !r.superseded && r.associated_scripts.contains(&id) && r.state.active())
             .map(|r| r.id)
     }
     pub fn grouped_projects(&self, filter: Filter, query: &str) -> Vec<(Group, Vec<Project>)> {
@@ -745,7 +811,7 @@ impl Service {
         self.runtime
             .runs
             .iter()
-            .filter(|r| r.state.active())
+            .filter(|r| r.state.active() && !r.superseded)
             .count()
     }
     pub fn latest_state(&self, id: u64) -> Option<State> {
@@ -753,7 +819,7 @@ impl Service {
             .runs
             .iter()
             .rev()
-            .find(|r| r.script_id == id)
+            .find(|r| !r.superseded && r.script_id == id)
             .map(|r| r.state)
     }
 }

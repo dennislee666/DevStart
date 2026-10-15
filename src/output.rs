@@ -4,6 +4,7 @@
 pub struct Decoder {
     pending: Vec<u8>,
     escape: u8,
+    csi: String,
 }
 impl Decoder {
     pub fn push(&mut self, bytes: &[u8]) -> String {
@@ -43,14 +44,27 @@ impl Decoder {
                 },
                 1 => {
                     self.escape = match c {
-                        '[' => 2,
+                        '[' => {
+                            self.csi.clear();
+                            2
+                        }
                         ']' => 3,
                         _ => 0,
                     }
                 }
                 2 => {
                     if ('@'..='~').contains(&c) {
+                        if c == 'm'
+                            && self.csi.len() <= 128
+                            && self.csi.chars().all(|c| c.is_ascii_digit() || c == ';')
+                        {
+                            out.push_str("\x1b[");
+                            out.push_str(&self.csi);
+                            out.push('m');
+                        }
                         self.escape = 0;
+                    } else if self.csi.len() < 129 {
+                        self.csi.push(c);
                     }
                 }
                 3 => match c {

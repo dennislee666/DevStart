@@ -11,6 +11,8 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
+#[path = "ui_console_render.rs"]
+mod console_render;
 #[path = "ui_editor.rs"]
 mod editor_ui;
 #[path = "ui_console_search.rs"]
@@ -18,6 +20,14 @@ mod search_ui;
 #[path = "ui_settings.rs"]
 mod settings_ui;
 
+#[derive(Clone)]
+struct ScriptInfoDraft {
+    id: u64,
+    name: String,
+    description: String,
+    default_name: String,
+    reset_name: bool,
+}
 pub struct DevStart {
     service: Option<Service>,
     selected_editor: Option<u64>,
@@ -32,6 +42,9 @@ pub struct DevStart {
     query: String,
     expanded: HashSet<u64>,
     selected_run: Option<u64>,
+    close_run: Option<u64>,
+    bulk_confirm: Option<crate::bulk::Plan>,
+    collapsed_groups: HashSet<u64>,
     tiled: bool,
     preset: Option<(u64, String, String, String)>,
     group_dialog: bool,
@@ -40,11 +53,11 @@ pub struct DevStart {
     import_dialog: bool,
     import_path: String,
     import_group: u64,
-    description: Option<(u64, String)>,
-    display_name: Option<(u64, String)>,
+    script_info: Option<ScriptInfoDraft>,
     add_script: Option<(u64, String, String)>,
     main_follow: HashMap<u64, bool>,
     console_queries: HashMap<u64, search_ui::SearchUi>,
+    console_layouts: HashMap<(egui::ViewportId, u64), console_render::LayoutCache>,
     console_windows: BTreeMap<u64, crate::windows::ConsoleWindow>,
     light: bool,
     applied_preferences: Option<Preferences>,
@@ -87,6 +100,9 @@ impl DevStart {
             query: String::new(),
             expanded,
             selected_run: None,
+            close_run: None,
+            bulk_confirm: None,
+            collapsed_groups: HashSet::new(),
             tiled: false,
             preset: None,
             group_dialog: false,
@@ -95,11 +111,11 @@ impl DevStart {
             import_dialog: false,
             import_path: String::new(),
             import_group: 1,
-            description: None,
-            display_name: None,
+            script_info: None,
             add_script: None,
             main_follow: HashMap::new(),
             console_queries: HashMap::new(),
+            console_layouts: HashMap::new(),
             console_windows: BTreeMap::new(),
             light,
             applied_preferences: None,
@@ -232,7 +248,7 @@ impl DevStart {
                     } else {
                         format!("{symbol}   {name}")
                     };
-                    let mut button = egui::Button::new(label)
+                    let mut button = egui::Button::new(button_label(ui, &label, ui.is_enabled()))
                         .selected(self.filter == filter)
                         .frame_when_inactive(self.filter == filter);
                     if !collapsed && filter != Filter::Running {
@@ -250,6 +266,7 @@ impl DevStart {
                         } else {
                             name.into()
                         });
+                    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
                     if response.clicked() {
                         self.filter = filter;
                         if filter == Filter::Running {
@@ -259,48 +276,83 @@ impl DevStart {
                     }
                 }
                 if !collapsed {
-                    let sessions: Vec<_> = self
+                    let sessions = self
                         .service
                         .as_ref()
-                        .map(|s| s.run_tabs())
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter(|t| t.state.active())
-                        .take(8)
-                        .collect();
+                        .map(|s| s.sidebar_sessions())
+                        .unwrap_or_default();
                     if !sessions.is_empty() {
                         ui.add_space(16.0);
                         ui.separator();
                         ui.add_space(8.0);
-                        ui.label(RichText::new("会话").small().color(tone(self.light, MUTED)));
-                        for tab in sessions {
-                            let response = ui
-                                .add_sized(
-                                    [ui.available_width(), row_height],
-                                    egui::Button::new(format!(
-                                        "{}   {}",
-                                        icon::TERMINAL_WINDOW,
-                                        tab.full_name
-                                    ))
-                                    .truncate()
-                                    .right_text(RichText::new("   ").size(8.0))
-                                    .selected(
-                                        self.filter == Filter::Running
-                                            && self.selected_run == Some(tab.id),
-                                    )
-                                    .frame_when_inactive(
-                                        self.filter == Filter::Running
-                                            && self.selected_run == Some(tab.id),
-                                    ),
-                                )
-                                .on_hover_text(format!("{}\n{}", tab.tooltip, tab.state.label()));
-                            paint_run_marker(ui, &response, tab.state, self.light);
-                            if response.clicked() {
-                                self.filter = Filter::Running;
-                                self.selected_run = Some(tab.id);
-                                self.tiled = false;
-                            }
-                        }
+                        ui.label(
+                            RichText::new("启动会话")
+                                .small()
+                                .color(tone(self.light, MUTED)),
+                        );
+                        egui::ScrollArea::vertical()
+                            .id_salt("session-history")
+                            .max_height(
+                                (ui.available_height() - row_height * 4.0)
+                                    .max(row_height)
+                                    .min(row_height * 8.0),
+                            )
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                for tab in sessions {
+                                    let response =
+                                        ui.add_sized(
+                                            [ui.available_width(), row_height],
+                                            egui::Button::new(button_label(
+                                                ui,
+                                                &format!(
+                                                    "{}   {}",
+                                                    icon::TERMINAL_WINDOW,
+                                                    tab.full_name
+                                                ),
+                                                ui.is_enabled(),
+                                            ))
+                                            .truncate()
+                                            .right_text(RichText::new("   ").size(8.0))
+                                            .selected(
+                                                self.filter == Filter::Running
+                                                    && self.selected_run == Some(tab.id),
+                                            )
+                                            .frame_when_inactive(
+                                                self.filter == Filter::Running
+                                                    && self.selected_run == Some(tab.id),
+                                            ),
+                                        )
+                                        .on_hover_text(
+                                            format!("{}\n{}", tab.tooltip, tab.state.label()),
+                                        );
+                                    let response =
+                                        response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    if tab.state.active() {
+                                        paint_run_marker(ui, &response, tab.state, self.light);
+                                    } else {
+                                        ui.painter().text(
+                                            egui::pos2(
+                                                response.rect.right() - 12.0,
+                                                response.rect.center().y,
+                                            ),
+                                            egui::Align2::CENTER_CENTER,
+                                            icon::CLOCK_COUNTER_CLOCKWISE,
+                                            egui::FontId::proportional(13.0),
+                                            tone(self.light, MUTED),
+                                        );
+                                    }
+                                    if response.clicked() {
+                                        if let Some(s) = &mut self.service {
+                                            let result = s.runtime.open_tab(tab.id);
+                                            self.report(result);
+                                        }
+                                        self.filter = Filter::Running;
+                                        self.selected_run = Some(tab.id);
+                                        self.tiled = false;
+                                    }
+                                }
+                            });
                     }
                 }
                 if !collapsed {
@@ -315,12 +367,13 @@ impl DevStart {
                     if ui
                         .add_sized(
                             [ui.available_width(), row_height],
-                            egui::Button::new(settings)
+                            egui::Button::new(button_label(ui, &settings, ui.is_enabled()))
                                 .right_text(if collapsed { "" } else { "⌘," })
                                 .selected(self.filter == Filter::Settings)
                                 .frame_when_inactive(self.filter == Filter::Settings),
                         )
                         .on_hover_text("设置 · ⌘,")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
                         self.open_settings();
@@ -333,9 +386,12 @@ impl DevStart {
                     if ui
                         .add_sized(
                             [ui.available_width(), row_height],
-                            egui::Button::new(data).right_text("").frame(false),
+                            egui::Button::new(button_label(ui, &data, ui.is_enabled()))
+                                .right_text("")
+                                .frame(false),
                         )
                         .on_hover_text("打开数据目录")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                         && let Some(s) = &self.service
                     {
@@ -360,7 +416,7 @@ impl DevStart {
         let has_tabs = self
             .service
             .as_ref()
-            .is_some_and(|s| !s.runtime.runs.is_empty());
+            .is_some_and(|s| s.runtime.runs.iter().any(|r| r.tab_open));
         egui::TopBottomPanel::top("workspace-toolbar")
             .exact_height(
                 row_height
@@ -397,11 +453,24 @@ impl DevStart {
                     }
                     if !running && !matches!(self.filter, Filter::Settings | Filter::Editor) {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button(format!("{} 添加项目", icon::PLUS)).clicked() {
+                            if ui
+                                .button(button_label(
+                                    ui,
+                                    &format!("{} 添加项目", icon::PLUS),
+                                    ui.is_enabled(),
+                                ))
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
                                 self.import_dialog = true;
                             }
                             if ui
-                                .button(format!("{} 新建分组", icon::FOLDER_PLUS))
+                                .button(button_label(
+                                    ui,
+                                    &format!("{} 新建分组", icon::FOLDER_PLUS),
+                                    ui.is_enabled(),
+                                ))
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
                                 .clicked()
                             {
                                 self.group_dialog = true;
@@ -418,45 +487,71 @@ impl DevStart {
                         if ui
                             .selectable_label(
                                 !self.tiled,
-                                format!("{} 标签视图", icon::TERMINAL_WINDOW),
+                                button_label(
+                                    ui,
+                                    &format!("{} 标签视图", icon::TERMINAL_WINDOW),
+                                    ui.is_enabled(),
+                                ),
                             )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .clicked()
                         {
                             self.tiled = false;
                         }
                         if ui
-                            .selectable_label(self.tiled, format!("{} 平铺", icon::SQUARES_FOUR))
+                            .selectable_label(
+                                self.tiled,
+                                button_label(
+                                    ui,
+                                    &format!("{} 平铺视图", icon::SQUARES_FOUR),
+                                    ui.is_enabled(),
+                                ),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .clicked()
                         {
                             self.tiled = true;
                         }
-                        if ui
-                            .add_enabled(
-                                self.service.as_ref().is_some_and(|s| s.active_count() > 0),
-                                egui::Button::new(icon::STOP),
-                            )
-                            .on_hover_text("停止全部")
-                            .clicked()
-                            && let Some(s) = &mut self.service
-                        {
-                            s.runtime.stop_all();
+                        for (action, symbol, label) in [
+                            (crate::bulk::Action::Stop, icon::STOP, "全部停止"),
+                            (crate::bulk::Action::Start, icon::PLAY, "全部启动"),
+                            (
+                                crate::bulk::Action::Restart,
+                                icon::ARROW_CLOCKWISE,
+                                "全部重启",
+                            ),
+                        ] {
+                            if let Some(plan) = self.service.as_ref().map(|s| s.bulk_plan(action)) {
+                                let enabled = plan.enabled() && ui.is_enabled();
+                                let hint = if !plan.blocked.is_empty() {
+                                    format!("{label}\n{}", plan.blocked.join("；"))
+                                } else if plan.targets.is_empty() {
+                                    "没有符合条件的标签启动项".into()
+                                } else {
+                                    label.into()
+                                };
+                                let response = ui
+                                    .add_enabled(
+                                        enabled,
+                                        egui::Button::new(button_label(
+                                            ui,
+                                            &format!("{symbol} {label}"),
+                                            enabled,
+                                        ))
+                                        .frame(false),
+                                    )
+                                    .on_hover_text(&hint)
+                                    .on_disabled_hover_text(&hint);
+                                let response = if enabled {
+                                    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                                } else {
+                                    response
+                                };
+                                if response.clicked() {
+                                    self.bulk_confirm = Some(plan);
+                                }
+                            }
                         }
-                        ui.menu_button(icon::BROWSERS, |ui| {
-                            if ui.button("独立当前 Console").clicked()
-                                && let Some(id) = self.selected_run
-                            {
-                                self.console_windows.entry(id).or_default();
-                                ui.close();
-                            }
-                            if ui.button("平铺独立窗口").clicked() {
-                                self.tile_consoles(ctx);
-                                ui.close();
-                            }
-                            if ui.button("收起独立窗口").clicked() {
-                                self.console_windows.clear();
-                                ui.close();
-                            }
-                        });
                     }
                 });
                 if running && !self.tiled && has_tabs {
@@ -493,13 +588,13 @@ impl DevStart {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     for tab in tabs {
-                        ui.push_id(tab.id, |ui| {
+                        ui.push_id(tab.console_id, |ui| {
                             let selected = self.selected_run == Some(tab.id);
                             let response = ui.add(
-                                egui::Button::new(format!(
-                                    "{}  {}",
-                                    icon::TERMINAL_WINDOW,
-                                    tab.label
+                                egui::Button::new(button_label(
+                                    ui,
+                                    &format!("{}  {}", icon::TERMINAL_WINDOW, tab.label),
+                                    ui.is_enabled(),
                                 ))
                                 .right_text(RichText::new("   ").size(8.0))
                                 .selected(selected)
@@ -518,6 +613,7 @@ impl DevStart {
                                 ))
                                 .min_size(Vec2::new(110.0, self.preferences().row_height())),
                             );
+                            let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
                             paint_run_marker(ui, &response, tab.state, self.light);
                             if std::env::var_os("DEV_START_TRACE_TABS").is_some() {
                                 eprintln!(
@@ -531,6 +627,34 @@ impl DevStart {
                             response.clone().on_hover_ui(|ui| {
                                 ui.set_max_width(420.0);
                                 ui.label(&tab.tooltip);
+                            });
+                            response.context_menu(|ui| {
+                                if ui.button("独立 Console 窗口").clicked() {
+                                    self.console_windows.entry(tab.id).or_default();
+                                    ui.close();
+                                }
+                                if ui.button("平铺独立窗口").clicked() {
+                                    self.tile_consoles(ui.ctx());
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if ui
+                                    .button(button_label(
+                                        ui,
+                                        &format!("{} 关闭标签", icon::X),
+                                        ui.is_enabled(),
+                                    ))
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .clicked()
+                                {
+                                    if tab.state.active() {
+                                        self.close_run = Some(tab.id);
+                                    } else if let Some(s) = &mut self.service {
+                                        let result = s.runtime.close_tab(tab.id, false);
+                                        self.report(result);
+                                    }
+                                    ui.close();
+                                }
                             });
                             if response.clicked() {
                                 self.selected_run = Some(tab.id);
@@ -635,10 +759,43 @@ impl DevStart {
                                 .size(16.0)
                                 .color(tone(self.light, ACCENT)),
                         );
-                        ui.label(RichText::new(&group.name).strong());
+                        let expanded = !self.collapsed_groups.contains(&group.id);
+                        let toggle = ui
+                            .push_id(("group-toggle", group.id), |ui| {
+                                ui.add(
+                                    egui::Button::new(RichText::new(&group.name).strong())
+                                        .right_text(
+                                            button_icon(
+                                                if expanded {
+                                                    icon::CARET_DOWN
+                                                } else {
+                                                    icon::CARET_RIGHT
+                                                },
+                                                true,
+                                            )
+                                            .size(14.0),
+                                        )
+                                        .frame(false),
+                                )
+                                .on_hover_text(if expanded {
+                                    "收起分组"
+                                } else {
+                                    "展开分组"
+                                })
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            })
+                            .inner;
+                        if toggle {
+                            if expanded {
+                                self.collapsed_groups.insert(group.id);
+                            } else {
+                                self.collapsed_groups.remove(&group.id);
+                            }
+                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.push_id(("group-actions", group.id), |ui| {
-                                ui.menu_button(icon::DOTS_THREE, |ui| {
+                                icon_menu(ui, icon::DOTS_THREE, |ui| {
                                     if ui.button("重命名分组").clicked() {
                                         self.rename_entity =
                                             Some((true, group.id, group.name.clone()));
@@ -650,6 +807,9 @@ impl DevStart {
                             });
                         });
                     });
+                    if self.collapsed_groups.contains(&group.id) {
+                        continue;
+                    }
                     if group_projects.is_empty() {
                         ui.indent(("empty-group", group.id), |ui| {
                             ui.label(
@@ -713,7 +873,7 @@ impl DevStart {
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            ui.menu_button(icon::DOTS_THREE, |ui| {
+                                            icon_menu(ui, icon::DOTS_THREE, |ui| {
                                                 if ui.button("重命名项目").clicked() {
                                                     self.rename_entity = Some((
                                                         false,
@@ -803,7 +963,7 @@ impl DevStart {
     fn launch_row(&mut self, ui: &mut egui::Ui, script: &crate::model::Script) {
         ui.push_id(script.id, |ui| {
             let width = ui.available_width();
-            let (name_width, command_width, port_width) = launch_widths(width);
+            let (name_width, command_width, status_width, port_width) = launch_widths(width);
             let port = self
                 .service
                 .as_ref()
@@ -860,6 +1020,21 @@ impl DevStart {
                             )
                             .truncate(),
                         );
+                    },
+                );
+                let status = self
+                    .service
+                    .as_ref()
+                    .map_or("--", |s| s.script_status_label(script.id));
+                ui.allocate_ui_with_layout(
+                    Vec2::new(status_width, self.preferences().row_height()),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(status_width);
+                        ui.label(RichText::new(status).color(tone(
+                            self.light,
+                            if status == "运行中" { GREEN } else { MUTED },
+                        )));
                     },
                 );
                 ui.allocate_ui_with_layout(
@@ -923,7 +1098,7 @@ impl DevStart {
                 if small(ui, icon::PENCIL_SIMPLE, "编辑原脚本文件") {
                     self.open_editor(script.id);
                 }
-                ui.menu_button(icon::DOTS_THREE, |ui| {
+                icon_menu(ui, icon::DOTS_THREE, |ui| {
                     if let Some(run) = active
                         && ui.button("查看 Console").clicked()
                     {
@@ -943,12 +1118,14 @@ impl DevStart {
                         ));
                         ui.close();
                     }
-                    if ui.button("修改显示名").clicked() {
-                        self.display_name = Some((script.id, script.display_label().to_owned()));
-                        ui.close();
-                    }
-                    if ui.button("修改简介").clicked() {
-                        self.description = Some((script.id, script.description.clone()));
+                    if ui.button("修改信息").clicked() {
+                        self.script_info = Some(ScriptInfoDraft {
+                            id: script.id,
+                            name: script.display_label().to_owned(),
+                            description: script.description.clone(),
+                            default_name: script.name.clone(),
+                            reset_name: script.display_name.is_none(),
+                        });
                         ui.close();
                     }
                     if ui.button("根据执行情况生成简介").clicked() {
@@ -998,102 +1175,126 @@ impl DevStart {
         let mut clear = false;
         let mut open = false;
         let run = &s.runtime.runs[index];
-        let compact = ui.available_height() < 420.0 || ui.available_width() < 620.0;
-        ui.spacing_mut().item_spacing.y = 4.0;
-        ui.spacing_mut().button_padding = Vec2::new(7.0, 3.0);
-        ui.horizontal(|ui| {
-            let title_width = (ui.available_width() - 76.0).max(20.0);
-            ui.allocate_ui_with_layout(
-                Vec2::new(title_width, 24.0),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    let name_width = if compact {
-                        title_width
-                    } else {
-                        (title_width - 450.0).clamp(80.0, 340.0)
-                    };
+        egui::Frame::new()
+            .fill(if self.light {
+                Color32::from_rgb(240, 242, 244)
+            } else {
+                SURFACE
+            })
+            .corner_radius(4)
+            .inner_margin(egui::Margin::symmetric(10, 6))
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                let compact = ui.available_height() < 420.0 || ui.available_width() < 620.0;
+                ui.spacing_mut().item_spacing.y = 4.0;
+                ui.spacing_mut().button_padding = Vec2::new(7.0, 3.0);
+                ui.horizontal(|ui| {
+                    let title_width = (ui.available_width() - 76.0).max(20.0);
                     ui.allocate_ui_with_layout(
-                        Vec2::new(name_width, 22.0),
+                        Vec2::new(title_width, 24.0),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
-                            ui.add(egui::Label::new(RichText::new(&run.title).strong()).truncate())
-                                .on_hover_text(&run.title);
+                            let name_width = if compact {
+                                title_width
+                            } else {
+                                (title_width - 450.0).clamp(80.0, 340.0)
+                            };
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(name_width, 22.0),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.add(
+                                        egui::Label::new(RichText::new(&run.title).strong())
+                                            .truncate(),
+                                    )
+                                    .on_hover_text(&run.title);
+                                },
+                            );
+                            if !compact {
+                                ui.add_space(8.0);
+                                run_status(ui, run, self.light);
+                            }
                         },
                     );
-                    if !compact {
-                        ui.add_space(8.0);
-                        run_status(ui, run, self.light);
-                    }
-                },
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if action_button(
-                    ui,
-                    matches!(run.state, State::Starting | State::Running),
-                    icon::STOP,
-                    "停止",
-                    Some(tone(self.light, RED)),
-                )
-                .clicked()
-                {
-                    stop = true;
-                }
-                ui.add_enabled_ui(s.can_restart(id), |ui| {
-                    if run.external.is_some() && run.associated_scripts.len() > 1 {
-                        ui.menu_button(icon::ARROW_CLOCKWISE, |ui| {
-                            for id in &run.associated_scripts {
-                                if let Some(script) = s.script(*id)
-                                    && ui
-                                        .add_enabled(
-                                            s.can_restart_target(run.id, *id),
-                                            egui::Button::new(crate::presentation::launch_label(
-                                                script.display_label(),
-                                            )),
-                                        )
-                                        .clicked()
-                                {
-                                    restart = Some(*id);
-                                    ui.close();
-                                }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if action_button(
+                            ui,
+                            matches!(run.state, State::Starting | State::Running),
+                            icon::STOP,
+                            "停止",
+                            Some(tone(self.light, RED)),
+                        )
+                        .clicked()
+                        {
+                            stop = true;
+                        }
+                        ui.add_enabled_ui(s.can_restart(id), |ui| {
+                            if run.external.is_some() && run.associated_scripts.len() > 1 {
+                                icon_menu(ui, icon::ARROW_CLOCKWISE, |ui| {
+                                    for id in &run.associated_scripts {
+                                        if let Some(script) = s.script(*id)
+                                            && ui
+                                                .add_enabled(
+                                                    s.can_restart_target(run.id, *id),
+                                                    egui::Button::new(
+                                                        crate::presentation::launch_label(
+                                                            script.display_label(),
+                                                        ),
+                                                    ),
+                                                )
+                                                .clicked()
+                                        {
+                                            restart = Some(*id);
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                            } else if action_button(ui, true, icon::ARROW_CLOCKWISE, "重启", None)
+                                .clicked()
+                            {
+                                restart = Some(run.script_id);
                             }
                         });
-                    } else if action_button(ui, true, icon::ARROW_CLOCKWISE, "重启", None).clicked()
-                    {
-                        restart = Some(run.script_id);
-                    }
+                    });
+                });
+                if compact {
+                    ui.horizontal_wrapped(|ui| run_status(ui, run, self.light));
+                }
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.checkbox(follow, "跟随输出").changed() && *follow {
+                            follow_requested = true;
+                        }
+                        if small(ui, icon::MAGNIFYING_GLASS, "搜索日志 · ⌘F") {
+                            search.toggle();
+                        }
+
+                        clear = small(ui, icon::ERASER, "清空视图");
+                        open = small(ui, icon::FILE_TEXT, "打开完整日志");
+                        if !compact {
+                            let preview =
+                                crate::presentation::command_preview(&run.display_command);
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(&preview)
+                                                .monospace()
+                                                .color(tone(self.light, MUTED)),
+                                        )
+                                        .truncate(),
+                                    )
+                                    .on_hover_text(
+                                        crate::presentation::command_preview(&run.command),
+                                    );
+                                },
+                            );
+                        }
+                    });
                 });
             });
-        });
-        if compact {
-            ui.horizontal_wrapped(|ui| run_status(ui, run, self.light));
-        }
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.checkbox(follow, "跟随输出").changed() && *follow {
-                    follow_requested = true;
-                }
-                if small(ui, icon::MAGNIFYING_GLASS, "搜索日志 · ⌘F") {
-                    search.toggle();
-                }
-
-                clear = small(ui, icon::ERASER, "清空视图");
-                open = small(ui, icon::FILE_TEXT, "打开完整日志");
-                if !compact {
-                    let preview = crate::presentation::command_preview(&run.display_command);
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(&preview)
-                                    .monospace()
-                                    .color(tone(self.light, MUTED)),
-                            )
-                            .truncate(),
-                        )
-                        .on_hover_text(crate::presentation::command_preview(&run.command));
-                    });
-                }
-            });
-        });
+        ui.add_space(4.0);
         let input = search_ui::controls(ui, search, id);
         let view =
             match s.runtime.runs[index]
@@ -1130,62 +1331,28 @@ impl DevStart {
             })
             .inner_margin(10.0)
             .show(ui, |ui| {
-                let height = ui.text_style_height(&egui::TextStyle::Monospace);
-                ui.spacing_mut().item_spacing.y =
-                    height * (s.catalog.preferences.console_line_height - 1.0);
-                let mut scroll = egui::ScrollArea::both();
-                if follow_requested {
-                    scroll = scroll.vertical_scroll_offset(
-                        view.rows.len() as f32 * (height + ui.spacing().item_spacing.y),
-                    );
-                }
-
-                if jump && let Some(row) = view.active_visible_row {
-                    let stride = height + ui.spacing().item_spacing.y;
-                    scroll = scroll.vertical_scroll_offset(
-                        (row as f32 * stride - ui.available_height() / 3.0).max(0.0),
-                    );
-                }
                 if search.open && search.query.only_matches && view.rows.is_empty() {
                     ui.label(RichText::new("没有匹配的日志").color(tone(self.light, MUTED)));
                 }
-                scroll
-                    .id_salt(("console", id))
-                    .auto_shrink([false, false])
-                    .stick_to_bottom(*follow)
-                    .show_rows(ui, height, view.rows.len(), |ui, rows| {
-                        for visible_row in rows {
-                            let index = view.rows[visible_row];
-                            if let Some((err, text)) = run.lines.get(index) {
-                                let color = if *err {
-                                    tone(self.light, RED)
-                                } else if self.light {
-                                    Color32::from_gray(45)
-                                } else {
-                                    crate::appearance::TEXT
-                                };
-                                let text = text.trim_end_matches('\n');
-                                let spans = crate::console_search::spans(text, &search.query);
-                                let job = search_ui::job(
-                                    text,
-                                    &spans,
-                                    egui::FontId::monospace(
-                                        s.catalog.preferences.console_font_size,
-                                    ),
-                                    color,
-                                    search.open
-                                        && !search.query.keyword.is_empty()
-                                        && view.active_row == Some(index),
-                                    self.light,
-                                );
-                                ui.add(
-                                    egui::Label::new(job)
-                                        .selectable(true)
-                                        .wrap_mode(egui::TextWrapMode::Extend),
-                                );
-                            }
-                        }
-                    });
+                let cache = self
+                    .console_layouts
+                    .entry((ui.ctx().viewport_id(), id))
+                    .or_default();
+                if let Some(target) = console_render::show(
+                    ui,
+                    run,
+                    &view,
+                    search,
+                    cache,
+                    &s.catalog.preferences,
+                    self.light,
+                    *follow,
+                    follow_requested,
+                    jump,
+                ) && let Err(e) = crate::console_text::open(&target, &run.cwd)
+                {
+                    self.error = Some(e);
+                }
             });
         let path = run.log_path.clone();
         let mut restarted = None;
@@ -1238,11 +1405,11 @@ impl DevStart {
     fn show_console_windows(&mut self, ctx: &egui::Context) {
         let ids: Vec<_> = self.console_windows.keys().copied().collect();
         for id in ids {
-            let Some(title) = self
+            let Some((title, console_id)) = self
                 .service
                 .as_ref()
                 .and_then(|s| s.runtime.runs.iter().find(|r| r.id == id))
-                .map(|r| r.title.clone())
+                .map(|r| (r.title.clone(), r.console_id))
             else {
                 self.console_windows.remove(&id);
                 continue;
@@ -1258,7 +1425,7 @@ impl DevStart {
             }
             let mut closed = false;
             ctx.show_viewport_immediate(
-                crate::windows::viewport_id(id),
+                crate::windows::viewport_id(console_id),
                 builder,
                 |child, class| {
                     if class == egui::ViewportClass::Embedded {
@@ -1304,11 +1471,81 @@ impl DevStart {
                 },
             );
             if !closed {
-                self.console_windows.insert(id, view);
+                let current = self
+                    .service
+                    .as_ref()
+                    .and_then(|s| s.current_console_run(id))
+                    .unwrap_or(id);
+                self.console_windows.insert(current, view);
             }
         }
     }
     fn dialogs(&mut self, ctx: &egui::Context) {
+        if let Some(plan) = self.bulk_confirm.clone() {
+            egui::Modal::new(egui::Id::new("bulk-sessions-confirm")).show(ctx, |ui| {
+                let (title, verb, confirm) = match plan.action {
+                    crate::bulk::Action::Stop => ("确认全部停止？", "将停止", "确认全部停止"),
+                    crate::bulk::Action::Start => ("确认全部启动？", "将启动", "确认全部启动"),
+                    crate::bulk::Action::Restart => ("确认全部重启？", "将重启", "确认全部重启"),
+                };
+                ui.heading(title);
+                ui.label(format!("{verb} {} 个标签启动项", plan.targets.len()));
+                egui::ScrollArea::vertical()
+                    .max_height(220.0)
+                    .show(ui, |ui| {
+                        for target in &plan.targets {
+                            ui.label(&target.title);
+                        }
+                    });
+                ui.horizontal(|ui| {
+                    if ui.button("取消").clicked() {
+                        self.bulk_confirm = None;
+                    }
+                    if ui.button(confirm).clicked() {
+                        let result = self
+                            .service
+                            .as_mut()
+                            .ok_or("工作空间不可用".to_string())
+                            .and_then(|s| s.apply_bulk(&plan, true))
+                            .and_then(|result| {
+                                if result.errors.is_empty() {
+                                    Ok(())
+                                } else {
+                                    Err(result.errors.join("；"))
+                                }
+                            });
+                        self.bulk_confirm = None;
+                        self.report(result);
+                    }
+                });
+            });
+        }
+
+        if let Some(id) = self.close_run {
+            egui::Modal::new(egui::Id::new("close-running-tab")).show(ctx, |ui| {
+                ui.heading("是否停止并关闭？");
+                if let Some(run) = self
+                    .service
+                    .as_ref()
+                    .and_then(|s| s.runtime.runs.iter().find(|r| r.id == id))
+                {
+                    ui.label(&run.title);
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("否，取消").clicked() {
+                        self.close_run = None;
+                    }
+                    if ui.button("是，停止并关闭").clicked() {
+                        if let Some(s) = &mut self.service {
+                            let result = s.runtime.close_tab(id, true);
+                            self.report(result);
+                        }
+                        self.close_run = None;
+                    }
+                });
+            });
+        }
+
         if let Some((source, mut name, mut args, mut port)) = self.preset.clone() {
             egui::Window::new("另存参数预设")
                 .collapsible(false)
@@ -1476,64 +1713,31 @@ impl DevStart {
                     });
                 });
         }
-        if let Some((id, mut text)) = self.display_name.clone() {
-            egui::Window::new("修改显示名")
-                .collapsible(false)
-                .resizable(false)
-                .default_width(360.0)
-                .show(ctx, |ui| {
-                    ui.label("显示名（最多 50 个字符）");
-                    ui.add(egui::TextEdit::singleline(&mut text).desired_width(340.0));
-                    self.display_name = Some((id, text.clone()));
-                    ui.horizontal(|ui| {
-                        if ui.button("保存").clicked() {
-                            let result = self
-                                .service
-                                .as_mut()
-                                .unwrap()
-                                .set_display_name(id, Some(text.clone()));
-                            if result.is_ok() {
-                                self.display_name = None;
-                            }
-                            self.report(result);
-                        }
-                        if ui.button("恢复默认").clicked() {
-                            let result = self.service.as_mut().unwrap().set_display_name(id, None);
-                            if result.is_ok() {
-                                self.display_name = None;
-                            }
-                            self.report(result);
-                        }
-                        if ui.button("取消").clicked() {
-                            self.display_name = None;
-                        }
-                    });
+        if let Some(mut draft) = self.script_info.clone() {
+            let mut open = true;
+            egui::Window::new("修改信息").open(&mut open).collapsible(false).resizable(false).default_width(440.0).show(ctx,|ui|{
+                ui.horizontal(|ui|{
+                    ui.label("显示名");
+                    let response=ui.add(egui::TextEdit::singleline(&mut draft.name).desired_width(270.0)).on_hover_text("最多50个字符");
+                    if response.changed(){draft.reset_name=false;}
+                    if ui.button("恢复默认").on_hover_cursor(egui::CursorIcon::PointingHand).clicked(){draft.name=draft.default_name.clone();draft.reset_name=true;}
                 });
-        }
-        if let Some((id, mut text)) = self.description.clone() {
-            egui::Window::new("脚本简介")
-                .collapsible(false)
-                .default_width(460.0)
-                .show(ctx, |ui| {
-                    ui.add(
-                        egui::TextEdit::multiline(&mut text)
-                            .desired_rows(4)
-                            .desired_width(440.0),
-                    );
-                    self.description = Some((id, text.clone()));
-                    ui.horizontal(|ui| {
-                        if ui.button("保存").clicked() {
-                            let result = self.service.as_mut().unwrap().describe(id, text.clone());
-                            if result.is_ok() {
-                                self.description = None;
-                            }
-                            self.report(result);
-                        }
-                        if ui.button("取消").clicked() {
-                            self.description = None;
-                        }
-                    });
+                ui.label("简介");
+                ui.add(egui::TextEdit::multiline(&mut draft.description).desired_width(f32::INFINITY).desired_rows(4));
+                self.script_info=Some(draft.clone());
+                ui.horizontal(|ui|{
+                    if ui.button("保存").on_hover_cursor(egui::CursorIcon::PointingHand).clicked(){
+                        let name=if draft.reset_name {None}else{Some(draft.name.clone())};
+                        let result=crate::api::dispatch(self.service.as_mut().unwrap(),"scripts.update",&serde_json::json!({"id":draft.id,"patch":{"display_name":name,"description":draft.description}})).map(|_|());
+                        if result.is_ok(){self.script_info=None;}
+                        self.report(result);
+                    }
+                    if ui.button("取消").on_hover_cursor(egui::CursorIcon::PointingHand).clicked(){self.script_info=None;}
                 });
+            });
+            if !open {
+                self.script_info = None;
+            }
         }
         if let Some((id, mut path, mut interpreter)) = self.add_script.clone() {
             egui::Window::new("添加启动脚本")
@@ -1600,6 +1804,26 @@ impl eframe::App for DevStart {
             if s.runtime.runs.len() > count && self.filter == Filter::Running {
                 self.selected_run = None;
             }
+            let moved: Vec<_> = self
+                .console_windows
+                .keys()
+                .filter_map(|old| {
+                    s.current_console_run(*old)
+                        .filter(|new| new != old)
+                        .map(|new| (*old, new))
+                })
+                .collect();
+            for (old, new) in moved {
+                if let Some(view) = self.console_windows.remove(&old) {
+                    self.console_windows.insert(new, view);
+                }
+            }
+            let retained: HashSet<_> = s.runtime.runs.iter().map(|r| r.id).collect();
+            self.console_layouts
+                .retain(|(_, id), _| retained.contains(id));
+            self.console_queries.retain(|id, _| retained.contains(id));
+            self.main_follow.retain(|id, _| retained.contains(id));
+            self.console_windows.retain(|id, _| retained.contains(id));
             if let Some(error) = s.runtime.error.take() {
                 self.error = Some(error);
             }
@@ -1654,6 +1878,71 @@ impl eframe::App for DevStart {
         ctx.request_repaint_after(Duration::from_millis(100));
     }
 }
+/// Keep icon-only fonts away from names: some icon fonts declare empty Latin glyphs.
+fn button_label(ui: &egui::Ui, text: &str, enabled: bool) -> egui::text::LayoutJob {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let mut job = egui::text::LayoutJob::default();
+    let mut start = 0;
+    let mut icon_run = None;
+    for (offset, ch) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), '\0')))
+    {
+        let is_icon = ('\u{e000}'..='\u{f8ff}').contains(&ch);
+        if icon_run.is_some_and(|v| v != is_icon) || offset == text.len() {
+            let family = if icon_run == Some(true) {
+                egui::FontFamily::Name(
+                    if enabled {
+                        "action-fill"
+                    } else {
+                        "action-outline"
+                    }
+                    .into(),
+                )
+            } else {
+                font.family.clone()
+            };
+            job.append(
+                &text[start..offset],
+                0.0,
+                egui::TextFormat {
+                    font_id: egui::FontId::new(font.size, family),
+                    color: Color32::PLACEHOLDER,
+                    ..Default::default()
+                },
+            );
+            start = offset;
+        }
+        icon_run = Some(is_icon);
+    }
+    job
+}
+/// Filled icons identify actions; disabled controls retain the outline variant.
+fn button_icon(symbol: &str, enabled: bool) -> RichText {
+    RichText::new(symbol).family(egui::FontFamily::Name(
+        if enabled {
+            "action-fill"
+        } else {
+            "action-outline"
+        }
+        .into(),
+    ))
+}
+fn icon_menu<R>(
+    ui: &mut egui::Ui,
+    symbol: &str,
+    content: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<Option<R>> {
+    let enabled = ui.is_enabled();
+    let result = ui.menu_button(button_icon(symbol, enabled), content);
+    if enabled {
+        result
+            .response
+            .clone()
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+    }
+    result
+}
 fn action_button(
     ui: &mut egui::Ui,
     enabled: bool,
@@ -1661,7 +1950,8 @@ fn action_button(
     label: &str,
     color: Option<Color32>,
 ) -> egui::Response {
-    let mut text = RichText::new(symbol).size(16.0);
+    let enabled = enabled && ui.is_enabled();
+    let mut text = button_icon(symbol, enabled).size(16.0);
     if let Some(color) = color {
         text = text.color(color);
     }
@@ -1674,6 +1964,11 @@ fn action_button(
         )
         .on_hover_text(label)
         .on_disabled_hover_text(label);
+    let response = if enabled {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    };
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
     response
 }
@@ -1705,7 +2000,7 @@ fn state_color(state: State, light: bool) -> Color32 {
 }
 
 fn favorite_button(ui: &mut egui::Ui, selected: bool, tooltip: &str) -> bool {
-    let text = RichText::new(icon::STAR).size(16.0);
+    let text = button_icon(icon::STAR, ui.is_enabled()).size(16.0);
     let text = if selected {
         text.color(Color32::from_rgb(231, 190, 106))
     } else {
@@ -1713,6 +2008,7 @@ fn favorite_button(ui: &mut egui::Ui, selected: bool, tooltip: &str) -> bool {
     };
     ui.add(egui::Button::new(text).frame(false))
         .on_hover_text(tooltip)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
 }
 
@@ -1730,7 +2026,10 @@ fn tone(light: bool, dark: Color32) -> Color32 {
 }
 
 fn run_status(ui: &mut egui::Ui, run: &crate::runtime::Run, light: bool) {
-    ui.label(RichText::new(run.state.label()).color(state_color(run.state, light)));
+    ui.label(
+        RichText::new(crate::presentation::run_state_display(run))
+            .color(state_color(run.state, light)),
+    );
     ui.label(
         RichText::new(if run.pid == 0 {
             "PID 待分配".to_string()
@@ -1747,15 +2046,26 @@ fn run_status(ui: &mut egui::Ui, run: &crate::runtime::Run, light: bool) {
     }
 }
 
-fn launch_widths(width: f32) -> (f32, f32, f32) {
+fn launch_widths(width: f32) -> (f32, f32, f32, f32) {
     let name = (width * 0.24).clamp(100.0, 210.0);
     let port = 92.0;
-    (name, (width - name - port - 188.0).max(60.0), port)
+    let status = 64.0;
+    (
+        name,
+        (width - name - status - port - 196.0).max(60.0),
+        status,
+        port,
+    )
 }
 fn launch_header(ui: &mut egui::Ui) {
-    let (name, command, port) = launch_widths(ui.available_width());
+    let (name, command, status, port) = launch_widths(ui.available_width());
     ui.horizontal(|ui| {
-        for (label, width) in [("启动项", name), ("启动命令", command), ("端口", port)] {
+        for (label, width) in [
+            ("启动项", name),
+            ("启动命令", command),
+            ("状态", status),
+            ("端口", port),
+        ] {
             ui.allocate_ui_with_layout(
                 Vec2::new(width, 18.0),
                 egui::Layout::left_to_right(egui::Align::Center),
@@ -1766,4 +2076,38 @@ fn launch_header(ui: &mut egui::Ui) {
             );
         }
     });
+}
+
+#[cfg(test)]
+mod action_cursor_tests {
+    use super::*;
+    #[test]
+    fn enabled_actions_show_hand_but_disabled_and_disabled_parent_keep_arrow() {
+        for (enabled, parent_enabled, expected) in [
+            (true, true, egui::CursorIcon::PointingHand),
+            (false, true, egui::CursorIcon::Default),
+            (true, false, egui::CursorIcon::Default),
+        ] {
+            let ctx = egui::Context::default();
+            ctx.set_fonts(crate::appearance::fonts(&Preferences::default()));
+            let mut target = egui::Pos2::ZERO;
+            let draw = |ctx: &egui::Context, target: &mut egui::Pos2| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    if !parent_enabled {
+                        ui.disable();
+                    }
+                    *target = action_button(ui, enabled, icon::PLAY, "启动", None)
+                        .rect
+                        .center();
+                });
+            };
+            let _ = ctx.run(Default::default(), |ctx| draw(ctx, &mut target));
+            let input = egui::RawInput {
+                events: vec![egui::Event::PointerMoved(target)],
+                ..Default::default()
+            };
+            let frame = ctx.run(input, |ctx| draw(ctx, &mut target));
+            assert_eq!(frame.platform_output.cursor_icon, expected);
+        }
+    }
 }

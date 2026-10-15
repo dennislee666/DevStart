@@ -496,6 +496,11 @@
           "script_id": {
             "type": "integer",
             "minimum": 0
+          },
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "可选：选定重启的原运行记录，保留其Console位置。"
           }
         },
         "required": [
@@ -503,7 +508,7 @@
         ],
         "additionalProperties": false
       },
-      "description": "Explicit execution; returns run_id asynchronously; checked shutdown/restart logs available via logs.read."
+      "description": "在当前console_id内重启：优雅停止、超时强制停止、确认退出后启动；返回新run_id和稳定console_id。"
     },
     "logs.read": {
       "params": {
@@ -866,6 +871,171 @@
         ],
         "additionalProperties": false
       }
+    },
+    "runs.close": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "stop": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "关闭标签。运行中须显式 stop:true，退出后隐藏；否则报错。"
+    },
+    "runs.open": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "重新打开保留的运行历史。"
+    },
+    "logs.open_target": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "target": {
+            "type": "string",
+            "maxLength": 16384
+          }
+        },
+        "required": [
+          "run_id",
+          "target"
+        ],
+        "additionalProperties": false
+      },
+      "description": "由用户显式操作打开HTTP(S)链接或运行目录相对文件路径。"
+    },
+    "runs.bulk_plan": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "stop",
+              "start",
+              "restart"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "description": "按当前打开标签的状态生成只读计划：stop活动标签，start未运行标签，restart运行中标签。"
+    },
+    "runs.bulk_apply": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "confirmed": {
+            "type": "boolean"
+          },
+          "plan": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "stop",
+                  "start",
+                  "restart"
+                ]
+              },
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "run_id": {
+                      "type": "string",
+                      "pattern": "^[0-9]+$"
+                    },
+                    "script_id": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "run_id",
+                    "script_id",
+                    "title"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "blocked": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "revision": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "action",
+              "targets",
+              "blocked",
+              "revision"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "confirmed",
+          "plan"
+        ],
+        "additionalProperties": false
+      },
+      "description": "二次确认后提交原样计划；会话变化、未确认或有阻止原因时不执行。"
+    },
+    "scripts.status": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "返回启动项状态列：明确运行中为运行中，否则--。"
     }
   }
 }
