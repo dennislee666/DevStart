@@ -443,9 +443,9 @@ runs.get和runs.list的每个运行对象新增listening_ports（升序去重的
 
 scripts.ports返回script_id、configured_port、configuration_source、configuration_error、actual_ports、display、tooltip、source（actual/configured/unknown）。GUI与该API采用同一展示协议：实际监听优先；没有实际结果时使用明确配置或可静态解析的启动端口；确实无法确定时才显示--。
 
-配置解析顺序：启动清单expected_port；字面--port/--server.port及JVM的-Dserver.port/-Djboot.server.port；package.json中启动命令及额外参数；单条静态Shell启动命令；Vite server.port/preview.port与Vue devServer.port的数字字面量。Next CLI支持-p，Uni的-p是平台选项，不作端口解析；mp-weixin等编译监视入口不会套用H5的Vite端口。优先明确声明的expected_port，不将推导值写回expected_port或改变启动约束。
+配置解析顺序：启动清单expected_port；字面--port/--server.port及JVM的-Dserver.port/-Djboot.server.port；package.json中启动命令及额外参数；单条静态Shell启动命令；Python中绑定HTTP服务的静态默认port与sys.argv[1]回退；Vite server.port/preview.port与Vue devServer.port的数字字面量。Next CLI支持-p，Uni的-p是平台选项，不作端口解析；mp-weixin等编译监视入口不会套用H5的Vite端口。优先明确声明的expected_port，不将推导值写回expected_port或改变启动约束。
 
-不执行Shell、JavaScript配置、构建、上传；不从代理地址、依赖服务URL或常见默认端口猜测。动态表达式、环境变量插值、多个含糊配置、条件分支/对象展开等不能静态确定时返回unknown，必要时在项目清单明确expected_port。配置结果在加载、重新读取项目启动项或API修改后刷新并缓存，UI每帧不读磁盘。外部修改配置后可调用projects.refresh。
+不执行Shell、JavaScript配置、构建、上传；不从代理地址、依赖服务URL或常见默认端口猜测。动态表达式、环境变量插值、多个含糊配置、非字面Python默认端口及配置语言条件分支/对象展开等不能静态确定时返回unknown，必要时在项目清单明确expected_port。配置结果在加载、重新读取项目启动项或API修改后刷新并缓存，UI每帧不读磁盘。外部修改配置后可调用projects.refresh。
 
 ### 启动项显示名
 

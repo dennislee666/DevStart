@@ -382,12 +382,18 @@ impl Service {
             .iter()
             .find(|p| p.scripts.iter().any(|s| s.id == id))
             .ok_or("项目不存在")?;
-        let s = p
+        let mut s = p
             .scripts
             .iter()
             .find(|s| s.id == id)
             .ok_or("脚本不存在")?
             .clone();
+        // Apply statically inferred ports to this launch only; project config stays authoritative and unchanged.
+        if s.expected_port.is_none()
+            && let Ok(Some(hint)) = self.configured_port_hint(id)
+        {
+            s.expected_port = Some(hint.port);
+        }
         let version = if s.launch_block_reason().is_none() {
             Some(self.snapshot_launch(id)?)
         } else {
@@ -467,7 +473,12 @@ impl Service {
         self.restart_run(run, script_id)
     }
     pub fn restart_run(&mut self, run: u64, script_id: u64) -> Result<u64, String> {
-        let script = self.script(script_id).ok_or("启动项不存在")?.clone();
+        let mut script = self.script(script_id).ok_or("启动项不存在")?.clone();
+        if script.expected_port.is_none()
+            && let Ok(Some(hint)) = self.configured_port_hint(script_id)
+        {
+            script.expected_port = Some(hint.port);
+        }
         let project = self
             .catalog
             .projects

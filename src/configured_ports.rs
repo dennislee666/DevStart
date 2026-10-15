@@ -66,6 +66,86 @@ fn flag_port(args: &[String], short: bool) -> Declared {
         Some(v) => number(v).map(Declared::Known).unwrap_or(Declared::Unknown),
     }
 }
+/// Infer a Python server port only from a literal module default and an explicit argv fallback.
+/// This never imports or executes the Python source.
+fn python_default_port(
+    script: &Script,
+    interpreter: &str,
+    source: &str,
+) -> Option<(u16, &'static str)> {
+    let executable = interpreter.split_whitespace().last()?;
+    let name = Path::new(executable).file_name()?.to_str()?;
+    let version = name.strip_prefix("python")?;
+    if !version.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return None;
+    }
+
+    let compact: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+    // Require an HTTP/TCP server constructor to bind the value called `port`.
+    if !compact.contains("Server((host,port),")
+        && !compact.contains("Server((host,port)")
+        && !compact.contains(".bind((host,port))")
+    {
+        return None;
+    }
+
+    let mut constants: HashMap<String, Option<u16>> = HashMap::new();
+    for line in source.lines() {
+        if line.starts_with(char::is_whitespace) || line.trim_start().starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty()
+            || !key.chars().enumerate().all(|(i, c)| {
+                c == '_' || c.is_ascii_alphanumeric() && (i > 0 || !c.is_ascii_digit())
+            })
+        {
+            continue;
+        }
+        let value = value.split('#').next()?.trim().replace('_', "");
+        if let Some(port) = number(&value) {
+            constants.insert(key.into(), Some(port));
+        } else if constants.contains_key(key) {
+            constants.insert(key.into(), None);
+        }
+    }
+
+    let mut fallbacks = Vec::new();
+    for line in source
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with('#'))
+    {
+        let Some((lhs, rhs)) = line.split_once('=') else {
+            continue;
+        };
+        if lhs.trim() != "port" || !rhs.contains("sys.argv[1]") {
+            continue;
+        }
+        let (_, fallback) = rhs.rsplit_once("else")?;
+        let fallback = fallback.trim().trim_end_matches(')').trim();
+        let value = if let Some(port) = number(&fallback.replace('_', "")) {
+            Some(port)
+        } else {
+            constants.get(fallback).copied().flatten()
+        }?;
+        fallbacks.push(value);
+    }
+    if !script.args.is_empty() {
+        if script.args.len() != 1 {
+            return None;
+        }
+        if let Some(argument) = number(&script.args[0]) {
+            return Some((argument, "Python 启动参数"));
+        }
+        return None;
+    }
+    let ports: std::collections::HashSet<_> = fallbacks.into_iter().collect();
+    (ports.len() == 1).then(|| (*ports.iter().next().unwrap(), "Python 静态默认端口"))
+}
 fn option(args: &[String], key: &str) -> Option<String> {
     let mut value = None;
     for (i, arg) in args.iter().enumerate() {
@@ -182,6 +262,23 @@ pub fn resolve(script: &Script) -> Result<Option<Hint>, String> {
         Declared::Absent => {}
     }
     if !package {
+        if let Entry::File { interpreter } = &script.entry {
+            let executable = interpreter.split_whitespace().last().unwrap_or("");
+            let python = Path::new(executable)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .and_then(|n| n.strip_prefix("python"))
+                .is_some_and(|suffix| suffix.chars().all(|c| c.is_ascii_digit() || c == '.'));
+            if python {
+                let source = read(&script.file)?;
+                if let Some((port, origin)) = python_default_port(script, interpreter, &source) {
+                    return Ok(Some(Hint {
+                        port,
+                        source: format!("{} · {origin}", script.file.display()),
+                    }));
+                }
+            }
+        }
         if let Entry::File { interpreter } = &script.entry
             && ["sh", "bash", "zsh"]
                 .contains(&interpreter.rsplit('/').next().unwrap_or(interpreter))
