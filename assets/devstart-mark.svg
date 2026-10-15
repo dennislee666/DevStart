@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <title>DevStart bracket play icon</title>
+  <rect x="48" y="48" width="928" height="928" rx="208" fill="#1F242B"/>
+  <path d="M338 280h-90v464h90m348-464h90v464h-90" stroke="#7ED6B0" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m430 354 228 158-228 158Z" fill="#7ED6B0"/>
+</svg>

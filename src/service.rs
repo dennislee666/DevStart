@@ -1,0 +1,792 @@
+use crate::{
+    discovery,
+    model::{Catalog, Group, Project, Script},
+    runtime::{Runtime, State},
+    store::Store,
+};
+use std::{path::Path, process::Command};
+#[derive(Clone, Copy, PartialEq)]
+pub enum Filter {
+    All,
+    Favorites,
+    Running,
+    Settings,
+    Editor,
+}
+pub struct Service {
+    pub editor: crate::editor::Workspace,
+    pub catalog: Catalog,
+    pub runtime: Runtime,
+    pub store: Store,
+    pub port_hints: crate::configured_ports::Cache,
+}
+impl Service {
+    pub fn load() -> Result<Self, String> {
+        let store = Store::new().map_err(|e| e.to_string())?;
+        let catalog = store.load()?;
+        let editor = crate::editor::Workspace::load(&store.root)?;
+        let port_hints = crate::configured_ports::collect(&catalog.projects);
+        Ok(Self {
+            editor,
+            port_hints,
+            catalog,
+            runtime: Runtime::default(),
+            store,
+        })
+    }
+    /// Commit configuration only after durable storage succeeds.
+    pub(crate) fn commit(&mut self, next: Catalog) -> Result<(), String> {
+        // Configuration clients must not remove or remap a source with an unsaved editor draft.
+        let detached: Vec<_> = self
+            .editor
+            .documents
+            .keys()
+            .copied()
+            .filter(|id| {
+                let before = self.script(*id);
+                let after = next
+                    .projects
+                    .iter()
+                    .flat_map(|p| &p.scripts)
+                    .find(|s| s.id == *id);
+                match (before, after) {
+                    (Some(a), Some(b)) => a.file != b.file,
+                    _ => true,
+                }
+            })
+            .collect();
+        if detached
+            .iter()
+            .any(|id| self.editor.documents.get(id).is_some_and(|d| d.dirty))
+        {
+            return Err("启动文件有未保存的编辑，请先保存或关闭再删除/变更源文件".into());
+        }
+        let hints = crate::configured_ports::collect(&next.projects);
+        self.store.save(&next)?;
+        for id in detached {
+            self.editor.documents.remove(&id);
+        }
+        self.catalog = next;
+        self.port_hints = hints;
+        Ok(())
+    }
+    pub fn update_preferences(
+        &mut self,
+        patch: serde_json::Value,
+    ) -> Result<crate::preferences::Preferences, String> {
+        let mut value =
+            serde_json::to_value(&self.catalog.preferences).map_err(|e| e.to_string())?;
+        for (key, val) in patch.as_object().ok_or("设置patch需要对象")? {
+            value[key] = val.clone();
+        }
+        let preferences: crate::preferences::Preferences =
+            serde_json::from_value(value).map_err(|e| e.to_string())?;
+        preferences.validate()?;
+        let mut next = self.catalog.clone();
+        next.preferences = preferences.clone();
+        self.commit(next)?;
+        Ok(preferences)
+    }
+    pub fn import_profile(&mut self, path: &Path) -> Result<(), String> {
+        let profile: crate::profile::Profile =
+            serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+                .map_err(|e| format!("profile 解析失败: {e}"))?;
+        let next = crate::profile::merge(&self.catalog, profile)?;
+        self.commit(next)
+    }
+    pub fn add_group(&mut self, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("请输入分组名称".into());
+        }
+        if self.catalog.groups.iter().any(|g| g.name == name) {
+            return Err("分组已存在".into());
+        }
+        let mut next = self.catalog.clone();
+        let id = next.id();
+        next.groups.push(Group {
+            id,
+            name: name.into(),
+        });
+        self.commit(next)
+    }
+    pub fn import(&mut self, path: &Path, group: u64) -> Result<u64, String> {
+        self.import_configured(path, group, None, "", false)
+    }
+    pub(crate) fn import_configured(
+        &mut self,
+        path: &Path,
+        group: u64,
+        label: Option<&str>,
+        description: &str,
+        favorite: bool,
+    ) -> Result<u64, String> {
+        if label.is_some_and(|v| v.trim().is_empty()) {
+            return Err("项目名不能为空".into());
+        }
+        if !self.catalog.groups.iter().any(|g| g.id == group) {
+            return Err("分组不存在".into());
+        }
+        let path = path
+            .canonicalize()
+            .map_err(|e| format!("项目目录 {}: {e}", path.display()))?;
+        if self.catalog.projects.iter().any(|p| p.path == path) {
+            return Err("项目已导入".into());
+        }
+        let mut scripts = discovery::discover(&path)?;
+        let mut next = self.catalog.clone();
+        for script in &mut scripts {
+            script.id = next.id();
+        }
+        let id = next.id();
+        let name = path
+            .file_name()
+            .ok_or("无效项目目录")?
+            .to_string_lossy()
+            .into_owned();
+        next.projects.push(Project {
+            description: description.into(),
+            id,
+            name: label.unwrap_or(&name).into(),
+            path,
+            group,
+            favorite,
+            scripts,
+            explicit_scripts: false,
+        });
+        self.commit(next)?;
+        Ok(id)
+    }
+    pub fn rescan(&mut self, id: u64) -> Result<(), String> {
+        let old = self
+            .catalog
+            .projects
+            .iter()
+            .find(|p| p.id == id)
+            .ok_or("项目不存在")?
+            .clone();
+        let has_manifest = old.path.join(crate::project_manifest::FILE_NAME).exists();
+        if old.explicit_scripts && !has_manifest {
+            for script in &old.scripts {
+                crate::profile::validate(script)?;
+            }
+            return Ok(());
+        }
+        let mut scripts = discovery::discover(&old.path)?;
+        let mut next = self.catalog.clone();
+        for s in &mut scripts {
+            if let Some(prev) = old.scripts.iter().find(|p| {
+                if has_manifest {
+                    p.name == s.name
+                } else {
+                    !p.custom && p.source_identity() == s.source_identity()
+                }
+            }) {
+                s.id = prev.id;
+                s.favorite = prev.favorite;
+                s.display_name = prev.display_name.clone();
+                if !has_manifest {
+                    s.description = prev.description.clone();
+                }
+                if !has_manifest {
+                    s.args = prev.args.clone();
+                    s.environment = prev.environment.clone();
+                }
+                if !has_manifest {
+                    s.expected_port = prev.expected_port;
+                }
+            } else {
+                s.id = next.id();
+            }
+        }
+        for configured in &old.scripts {
+            if configured.custom
+                && !scripts
+                    .iter()
+                    .any(|s| s.identity() == configured.identity())
+            {
+                scripts.push(configured.clone());
+            }
+        }
+        next.projects
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or("项目不存在")?
+            .scripts = scripts;
+        self.commit(next)
+    }
+    pub fn project_favorite(&mut self, id: u64) -> Result<(), String> {
+        let mut next = self.catalog.clone();
+        let p = next
+            .projects
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or("项目不存在")?;
+        p.favorite = !p.favorite;
+        self.commit(next)
+    }
+    pub fn script_favorite(&mut self, id: u64) -> Result<(), String> {
+        let mut next = self.catalog.clone();
+        let s = next
+            .projects
+            .iter_mut()
+            .flat_map(|p| &mut p.scripts)
+            .find(|s| s.id == id)
+            .ok_or("脚本不存在")?;
+        s.favorite = !s.favorite;
+        self.commit(next)
+    }
+    pub fn move_project(&mut self, id: u64, group: u64) -> Result<(), String> {
+        let mut next = self.catalog.clone();
+        if !next.groups.iter().any(|g| g.id == group) {
+            return Err("分组不存在".into());
+        }
+        next.projects
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or("项目不存在")?
+            .group = group;
+        self.commit(next)
+    }
+    pub fn describe(&mut self, id: u64, text: String) -> Result<(), String> {
+        let mut next = self.catalog.clone();
+        next.projects
+            .iter_mut()
+            .flat_map(|p| &mut p.scripts)
+            .find(|s| s.id == id)
+            .ok_or("脚本不存在")?
+            .description = text;
+        self.commit(next)
+    }
+    pub fn generate_description(&mut self, id: u64) -> Result<(), String> {
+        let script = self.script(id).ok_or("脚本不存在")?;
+        let source = std::fs::read_to_string(&script.file).map_err(|e| e.to_string())?;
+        let comment = source
+            .lines()
+            .take(24)
+            .filter_map(|l| l.trim().strip_prefix('#'))
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('!'))
+            .take(3)
+            .collect::<Vec<_>>()
+            .join("；");
+        let intro = if comment.is_empty() {
+            format!("运行 {}", script.invocation())
+        } else {
+            comment
+        };
+        let evidence = self
+            .runtime
+            .runs
+            .iter()
+            .rev()
+            .find(|r| r.script_id == id)
+            .map(|r| {
+                if r.state.active() {
+                    format!("；最近执行：{}", r.state.label())
+                } else {
+                    format!(
+                        "；最近执行：{}，{}",
+                        r.state.label(),
+                        crate::runtime::exit_label(r.exit)
+                    )
+                }
+            })
+            .unwrap_or_default();
+        self.describe(id, format!("{intro}{evidence}"))
+    }
+    pub fn add_script(
+        &mut self,
+        project_id: u64,
+        path: &Path,
+        interpreter: &str,
+    ) -> Result<(), String> {
+        let file = path
+            .canonicalize()
+            .map_err(|e| format!("项目目录 {}: {e}", path.display()))?;
+        if !file.is_file() {
+            return Err("请选择脚本文件".into());
+        }
+        if interpreter.trim().is_empty() {
+            return Err("请填写解释器".into());
+        }
+        let mut next = self.catalog.clone();
+        let id = next.id();
+        let p = next
+            .projects
+            .iter_mut()
+            .find(|p| p.id == project_id)
+            .ok_or("项目不存在")?;
+        if p.scripts.iter().any(|s| s.file == file) {
+            return Err("脚本已存在".into());
+        }
+        p.scripts.push(Script {
+            display_name: None,
+            enabled: true,
+            display_command: None,
+            id,
+            name: file
+                .file_name()
+                .ok_or("无效路径")?
+                .to_string_lossy()
+                .into_owned(),
+            cwd: p.path.clone(),
+            file,
+            entry: crate::model::Entry::File {
+                interpreter: interpreter.trim().into(),
+            },
+            description: "执行项目原有脚本".into(),
+            favorite: false,
+            environment: Default::default(),
+            expected_port: None,
+            args: vec![],
+            custom: false,
+            resource_key: None,
+        });
+        self.commit(next)
+    }
+    pub fn script(&self, id: u64) -> Option<&Script> {
+        self.catalog
+            .projects
+            .iter()
+            .flat_map(|p| &p.scripts)
+            .find(|s| s.id == id)
+    }
+    pub fn launch(&mut self, id: u64) -> Result<u64, String> {
+        let p = self
+            .catalog
+            .projects
+            .iter()
+            .find(|p| p.scripts.iter().any(|s| s.id == id))
+            .ok_or("项目不存在")?;
+        let s = p
+            .scripts
+            .iter()
+            .find(|s| s.id == id)
+            .ok_or("脚本不存在")?
+            .clone();
+        let version = if s.launch_block_reason().is_none() {
+            Some(self.snapshot_launch(id)?)
+        } else {
+            None
+        };
+        let run = self
+            .runtime
+            .launch_checked(p, &s, self.store.root.join("logs"))?;
+        if let Some(version) = version {
+            self.runtime.note(
+                run,
+                format!(
+                    "启动文件已备份 · 版本 {} · {}",
+                    version.id,
+                    version.path.display()
+                ),
+            );
+        }
+        Ok(run)
+    }
+    pub fn poll(&mut self) {
+        self.runtime.poll();
+        self.runtime
+            .refresh_external(&self.catalog.projects, self.store.root.join("logs"));
+    }
+    pub fn can_restart_target(&self, run_id: u64, script_id: u64) -> bool {
+        self.runtime
+            .runs
+            .iter()
+            .find(|r| r.id == run_id)
+            .is_some_and(|run| {
+                !matches!(run.state, State::Stopping | State::Starting)
+                    && run.associated_scripts.contains(&script_id)
+                    && self
+                        .script(script_id)
+                        .is_some_and(|s| s.launch_block_reason().is_none())
+                    && !self.runtime.runs.iter().any(|other| {
+                        other.id != run_id
+                            && other.state.active()
+                            && other.associated_scripts.contains(&script_id)
+                    })
+            })
+    }
+    pub fn can_restart(&self, run_id: u64) -> bool {
+        self.runtime
+            .runs
+            .iter()
+            .find(|r| r.id == run_id)
+            .is_some_and(|run| {
+                run.associated_scripts
+                    .iter()
+                    .any(|id| self.can_restart_target(run_id, *id))
+            })
+    }
+    pub fn can_restart_script(&self, script_id: u64) -> bool {
+        self.runtime
+            .runs
+            .iter()
+            .rev()
+            .find(|r| r.associated_scripts.contains(&script_id))
+            .is_some_and(|r| self.can_restart_target(r.id, script_id))
+    }
+    pub fn restart(&mut self, script_id: u64) -> Result<u64, String> {
+        let run = self
+            .active_run(script_id)
+            .or_else(|| {
+                self.runtime
+                    .runs
+                    .iter()
+                    .rev()
+                    .find(|r| r.associated_scripts.contains(&script_id))
+                    .map(|r| r.id)
+            })
+            .ok_or("暂无启动记录")?;
+        self.restart_run(run, script_id)
+    }
+    pub fn restart_run(&mut self, run: u64, script_id: u64) -> Result<u64, String> {
+        let script = self.script(script_id).ok_or("启动项不存在")?.clone();
+        let project = self
+            .catalog
+            .projects
+            .iter()
+            .find(|p| p.scripts.iter().any(|s| s.id == script_id))
+            .ok_or("项目不存在")?;
+        let target = self
+            .runtime
+            .runs
+            .iter()
+            .find(|r| r.id == run)
+            .ok_or("运行实例不存在")?;
+        if !target.associated_scripts.contains(&script_id)
+            || !self.can_restart_target(run, script_id)
+        {
+            return Err("该运行记录当前不可重启，请操作最新实例".into());
+        }
+        let version = self.snapshot_launch(script_id)?;
+        let id = self
+            .runtime
+            .launch_checked(project, &script, self.store.root.join("logs"))?;
+        self.runtime.note(
+            id,
+            format!(
+                "启动文件已备份 · 版本 {} · {}",
+                version.id,
+                version.path.display()
+            ),
+        );
+        Ok(id)
+    }
+    pub fn create_preset(
+        &mut self,
+        source: u64,
+        name: &str,
+        args: &str,
+        port: &str,
+    ) -> Result<u64, String> {
+        let port = if port.trim().is_empty() {
+            None
+        } else {
+            Some(
+                port.trim()
+                    .parse::<u16>()
+                    .map_err(|_| "端口需为 1–65535 的整数".to_string())?,
+            )
+        };
+        if port == Some(0) {
+            return Err("端口需为 1–65535 的整数".into());
+        }
+        self.add_preset(
+            source,
+            name,
+            args.lines().map(str::to_owned).collect(),
+            port,
+        )
+    }
+    pub fn add_preset(
+        &mut self,
+        source_id: u64,
+        name: &str,
+        args: Vec<String>,
+        expected_port: Option<u16>,
+    ) -> Result<u64, String> {
+        if name.trim().is_empty() {
+            return Err("请输入启动项名称".into());
+        }
+        let mut next = self.catalog.clone();
+        let mut preset = self.script(source_id).ok_or("启动项不存在")?.clone();
+        preset.name = name.trim().into();
+        preset.display_name = None;
+        preset.args = args;
+        preset.expected_port = expected_port;
+        preset.custom = true;
+        crate::profile::validate(&preset)?;
+        let project = next
+            .projects
+            .iter()
+            .find(|p| p.scripts.iter().any(|s| s.id == source_id))
+            .ok_or("项目不存在")?;
+        if project
+            .scripts
+            .iter()
+            .any(|s| s.identity() == preset.identity())
+        {
+            return Err("相同命令和参数的启动项已存在".into());
+        }
+        preset.id = next.id();
+        let id = preset.id;
+        next.projects
+            .iter_mut()
+            .find(|p| p.scripts.iter().any(|s| s.id == source_id))
+            .ok_or("项目不存在")?
+            .scripts
+            .push(preset);
+        self.commit(next)?;
+        Ok(id)
+    }
+    pub fn set_display_name(&mut self, id: u64, name: Option<String>) -> Result<(), String> {
+        let name = Script::validate_display_name(name)?;
+        let mut next = self.catalog.clone();
+        let script = next
+            .projects
+            .iter_mut()
+            .flat_map(|p| &mut p.scripts)
+            .find(|s| s.id == id)
+            .ok_or("启动项不存在")?;
+        script.display_name = name;
+        self.commit(next)?;
+        self.sync_display_names();
+        Ok(())
+    }
+    pub fn sync_display_names(&mut self) {
+        for run in &mut self.runtime.runs {
+            if let Some((project, script)) = self.catalog.projects.iter().find_map(|p| {
+                p.scripts
+                    .iter()
+                    .find(|s| s.id == run.script_id)
+                    .map(|s| (p, s))
+            }) {
+                if run.external.is_some() {
+                    run.launch_name = format!("{} · 外部运行", project.name);
+                    run.title = format!("{} / 外部运行（参数未识别）", project.name);
+                } else {
+                    run.launch_name = script.display_label().to_owned();
+                    run.title = format!("{} / {}", project.name, script.display_label());
+                }
+            }
+        }
+    }
+    pub fn run_tabs(&self) -> Vec<crate::presentation::RunTab> {
+        self.runtime
+            .runs
+            .iter()
+            .map(|run| crate::presentation::RunTab {
+                id: run.id,
+                label: crate::presentation::tab_label(&run.launch_name),
+                full_name: run.launch_name.clone(),
+                tooltip: crate::presentation::run_tooltip(
+                    &run.launch_name,
+                    &run.display_command,
+                    &path_label(
+                        self.catalog
+                            .projects
+                            .iter()
+                            .find(|p| {
+                                p.scripts
+                                    .iter()
+                                    .any(|s| run.associated_scripts.contains(&s.id))
+                            })
+                            .map(|p| p.path.as_path())
+                            .unwrap_or(&run.cwd),
+                    ),
+                ),
+                state: run.state,
+            })
+            .collect()
+    }
+    pub fn selected_run(&self, selected: Option<u64>) -> Option<u64> {
+        selected
+            .filter(|id| self.runtime.runs.iter().any(|r| r.id == *id))
+            .or_else(|| self.runtime.runs.last().map(|r| r.id))
+    }
+    pub fn has_external_run(&self, project_id: u64) -> bool {
+        self.catalog
+            .projects
+            .iter()
+            .find(|p| p.id == project_id)
+            .is_some_and(|p| {
+                self.runtime.runs.iter().any(|r| {
+                    r.state.active()
+                        && r.external.is_some()
+                        && p.scripts
+                            .iter()
+                            .any(|s| r.associated_scripts.contains(&s.id))
+                })
+            })
+    }
+    pub fn configured_port_hint(
+        &self,
+        script_id: u64,
+    ) -> Result<Option<crate::configured_ports::Hint>, String> {
+        if let Some(hint) = self.port_hints.get(&script_id) {
+            return hint.clone();
+        }
+        Ok(self
+            .script(script_id)
+            .and_then(|s| s.expected_port)
+            .map(|port| crate::configured_ports::Hint {
+                port,
+                source: "启动清单 expected_port".into(),
+            }))
+    }
+    pub fn running_port_cell(&self, script_id: u64) -> crate::presentation::PortCell {
+        let ports = self.running_ports(script_id);
+        let configured = self.configured_port_hint(script_id);
+        if !ports.is_empty() {
+            let label = ports
+                .iter()
+                .map(u16::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut tooltip = format!("实际 TCP 监听端口（含子进程）：{label}");
+            if let Ok(Some(hint)) = configured {
+                tooltip.push_str(&format!("\n配置端口：{}\n来源：{}", hint.port, hint.source));
+            }
+            crate::presentation::PortCell { label, tooltip }
+        } else if let Ok(Some(hint)) = configured {
+            crate::presentation::PortCell {
+                label: hint.port.to_string(),
+                tooltip: format!(
+                    "配置端口：{}\n来源：{}\n尚未确认实际监听",
+                    hint.port, hint.source
+                ),
+            }
+        } else {
+            crate::presentation::PortCell {
+                label: "--".into(),
+                tooltip: configured
+                    .err()
+                    .map(|e| format!("读取端口配置失败：{e}"))
+                    .unwrap_or_else(|| {
+                        "无法静态确定启动端口，且尚未确认实际监听；可在启动清单中声明 expected_port"
+                            .into()
+                    }),
+            }
+        }
+    }
+    pub fn running_ports(&self, script_id: u64) -> Vec<u16> {
+        self.runtime
+            .runs
+            .iter()
+            .filter(|r| r.state.active() && r.associated_scripts.contains(&script_id))
+            .flat_map(|r| r.listening_ports.iter().copied())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+    pub fn active_run(&self, id: u64) -> Option<u64> {
+        self.runtime
+            .runs
+            .iter()
+            .rev()
+            .find(|r| r.associated_scripts.contains(&id) && r.state.active())
+            .map(|r| r.id)
+    }
+    pub fn grouped_projects(&self, filter: Filter, query: &str) -> Vec<(Group, Vec<Project>)> {
+        let visible = self.visible_projects(filter, query);
+        self.catalog
+            .groups
+            .iter()
+            .filter_map(|group| {
+                let projects: Vec<_> = visible
+                    .iter()
+                    .filter(|p| p.group == group.id)
+                    .cloned()
+                    .collect();
+                if projects.is_empty()
+                    && (group.id == 1 || !query.is_empty() || filter == Filter::Favorites)
+                {
+                    None
+                } else {
+                    Some((group.clone(), projects))
+                }
+            })
+            .collect()
+    }
+    pub fn visible_projects(&self, filter: Filter, query: &str) -> Vec<Project> {
+        let q = query.trim().to_lowercase();
+        self.catalog
+            .projects
+            .iter()
+            .filter_map(|p| {
+                let project_match = p.name.to_lowercase().contains(&q)
+                    || p.path.to_string_lossy().to_lowercase().contains(&q);
+                let mut visible = p.clone();
+                visible.scripts.retain(|s| {
+                    let filter_match = match filter {
+                        Filter::Favorites => p.favorite || s.favorite,
+                        Filter::Running => self.active_run(s.id).is_some(),
+                        _ => true,
+                    };
+                    filter_match
+                        && (project_match
+                            || s.name.to_lowercase().contains(&q)
+                            || s.display_label().to_lowercase().contains(&q)
+                            || s.description.to_lowercase().contains(&q)
+                            || s.invocation().to_lowercase().contains(&q))
+                });
+                let keep = match filter {
+                    Filter::Favorites => p.favorite || !visible.scripts.is_empty(),
+                    Filter::Running => !visible.scripts.is_empty(),
+                    _ => project_match || !visible.scripts.is_empty(),
+                };
+                keep.then_some(visible)
+            })
+            .collect()
+    }
+    pub fn active_count(&self) -> usize {
+        self.runtime
+            .runs
+            .iter()
+            .filter(|r| r.state.active())
+            .count()
+    }
+    pub fn latest_state(&self, id: u64) -> Option<State> {
+        self.runtime
+            .runs
+            .iter()
+            .rev()
+            .find(|r| r.script_id == id)
+            .map(|r| r.state)
+    }
+}
+/// Open the original file in the system's associated editor; never copy or rewrite it.
+pub fn open_file(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err(format!("文件不存在: {}", path.display()));
+    }
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = Command::new("open");
+        if path.is_file() {
+            c.arg("-t");
+        }
+        c
+    };
+    #[cfg(not(target_os = "macos"))]
+    let mut cmd = Command::new("xdg-open");
+    let output = cmd.arg(path).output().map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "打开文件失败: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+pub fn path_label(path: &Path) -> String {
+    let text = path.display().to_string();
+    if let Ok(home) = std::env::var("HOME") {
+        text.replacen(&home, "~", 1)
+    } else {
+        text
+    }
+}

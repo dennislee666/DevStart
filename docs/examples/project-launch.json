@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "launches": [
+    {
+      "name": "开发服务",
+      "file": "package.json",
+      "entry": {
+        "Package": {
+          "manager": "npm",
+          "name": "dev"
+        }
+      },
+      "description": "运行项目自身的开发脚本"
+    }
+  ]
+}

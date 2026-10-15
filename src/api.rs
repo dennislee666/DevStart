@@ -1,0 +1,317 @@
+//! Versioned JSON-RPC commands; GUI and headless mode execute these on their service thread.
+use crate::{api_config as config, service::Service};
+use serde_json::{Value, json};
+use std::{
+    fs::File,
+    io::{Read, Seek, SeekFrom},
+};
+
+pub const METHODS: &[&str] = &[
+    "editor.list",
+    "editor.open",
+    "editor.read",
+    "editor.change",
+    "editor.save",
+    "editor.reload",
+    "editor.close",
+    "editor.versions",
+    "editor.restore",
+    "api.describe",
+    "api.docs",
+    "config.get",
+    "settings.get",
+    "settings.update",
+    "settings.reset",
+    "groups.list",
+    "groups.create",
+    "groups.update",
+    "groups.delete",
+    "projects.list",
+    "projects.get",
+    "projects.create",
+    "projects.update",
+    "projects.delete",
+    "projects.refresh",
+    "scripts.list",
+    "scripts.get",
+    "scripts.ports",
+    "scripts.create",
+    "scripts.update",
+    "scripts.delete",
+    "runs.list",
+    "runs.get",
+    "runs.start",
+    "runs.restart",
+    "runs.stop",
+    "runs.stop_all",
+    "logs.search",
+    "logs.read",
+    "logs.list",
+];
+pub fn response(s: &mut Service, request: Value) -> Value {
+    let id = request.get("id").cloned().unwrap_or(Value::Null);
+    if request.get("id").is_none()
+        || request["jsonrpc"] != "2.0"
+        || !request["method"].is_string()
+        || (!id.is_null() && !id.is_string() && !id.is_number())
+    {
+        return error(id, -32600, "无效JSON-RPC请求");
+    }
+    let method = request["method"].as_str().unwrap();
+    if !METHODS.contains(&method) {
+        return error(id, -32601, "方法不存在");
+    }
+    let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
+    if !params.is_object() {
+        return error(id, -32602, "params必须为对象");
+    }
+    match dispatch(s, method, &params) {
+        Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
+        Err(message) => {
+            eprintln!("[dev start api] {method}: {message}");
+            error(id, -32000, &message)
+        }
+    }
+}
+pub fn error(id: Value, code: i64, message: &str) -> Value {
+    json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
+}
+pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, String> {
+    match method {
+        m if m.starts_with("editor.") => s.editor_action(m, p),
+        "api.describe" => {
+            config::fields(p, &[])?;
+            Ok(
+                json!({"name":"DevStart","edition":crate::app_identity::edition(),"api_version":1,"transport":"unix-jsonrpc-ndjson","methods":METHODS,
+                "default_group_id":1,"max_request_bytes":2097152,"max_response_bytes":8388608,
+                "max_log_chunk_bytes":65536,"documentation":"docs/api.md","contracts":serde_json::from_str::<Value>(include_str!("../docs/api-schema.json")).map_err(|e|e.to_string())?, "launch_spec":{
+                    "required":["name","file","entry","description"],
+                    "optional":["cwd","args","environment","expected_port","resource_key","enabled","display_command"]}}),
+            )
+        }
+        "api.docs" => {
+            config::fields(p, &[])?;
+            Ok(json!({"api_version":1,"format":"markdown","text":include_str!("../docs/api.md")}))
+        }
+        "settings.get" => {
+            config::fields(p, &[])?;
+            Ok(json!(s.catalog.preferences))
+        }
+        "settings.update" => {
+            config::fields(p, &["patch"])?;
+            Ok(json!(s.update_preferences(p["patch"].clone())?))
+        }
+        "settings.reset" => {
+            config::fields(p, &[])?;
+            Ok(json!(
+                s.update_preferences(
+                    serde_json::to_value(crate::preferences::Preferences::default())
+                        .map_err(|e| e.to_string())?
+                )?
+            ))
+        }
+        "scripts.ports" => {
+            config::fields(p, &["id"])?;
+            let id = config::id(p, "id")?;
+            if s.script(id).is_none() {
+                return Err("启动项不存在".into());
+            }
+            let hint = s.configured_port_hint(id);
+            let actual = s.running_ports(id);
+            let cell = s.running_port_cell(id);
+            let configured = hint.as_ref().ok().and_then(|v| v.as_ref());
+            Ok(
+                json!({"script_id":id,"configured_port":configured.map(|h|h.port),"configuration_source":configured.map(|h|h.source.clone()),
+                "configuration_error":hint.as_ref().err(),"actual_ports":actual,"display":cell.label,"tooltip":cell.tooltip,
+                "source":if !actual.is_empty(){"actual"}else if configured.is_some(){"configured"}else{"unknown"}}),
+            )
+        }
+        "config.get" => {
+            config::fields(p, &[])?;
+            Ok(json!(s.catalog))
+        }
+        "runs.list" => {
+            config::fields(p, &[])?;
+            Ok(json!(
+                s.runtime.runs.iter().map(run_value).collect::<Vec<_>>()
+            ))
+        }
+        "runs.get" => {
+            config::fields(p, &["id"])?;
+            Ok(run_value(run(s, config::id(p, "id")?)?))
+        }
+        "runs.start" | "runs.restart" => {
+            config::fields(p, &["script_id"])?;
+            let sid = config::id(p, "script_id")?;
+            // Checked launch already closes the verified old instance before starting the new one.
+            let id = s.launch(sid)?;
+            Ok(json!({"run_id":id,"state":"starting","asynchronous":true}))
+        }
+        "runs.stop" => {
+            config::fields(p, &["id"])?;
+            let id = config::id(p, "id")?;
+            let active = run(s, id)?.state.active();
+            if active {
+                s.runtime.stop(id);
+            }
+            Ok(json!({"run_id":id,"stop_requested":active}))
+        }
+        "runs.stop_all" => {
+            config::fields(p, &[])?;
+            s.runtime.stop_all();
+            Ok(json!({"stop_requested":true}))
+        }
+        "logs.search" => {
+            config::fields(
+                p,
+                &["run_id", "keyword", "case_sensitive", "offset", "limit"],
+            )?;
+            let id = config::id(p, "run_id")?;
+            let query = crate::console_search::Query {
+                keyword: config::text(p, "keyword")?.into(),
+                case_sensitive: p
+                    .get("case_sensitive")
+                    .map(|v| v.as_bool().ok_or("case_sensitive需要布尔值"))
+                    .transpose()?
+                    .unwrap_or(false),
+                only_matches: true,
+            };
+            let offset = p
+                .get("offset")
+                .map(|_| config::id(p, "offset"))
+                .transpose()?
+                .unwrap_or(0)
+                .min(usize::MAX as u64) as usize;
+            let limit = p
+                .get("limit")
+                .map(|_| config::id(p, "limit"))
+                .transpose()?
+                .unwrap_or(100)
+                .clamp(1, 200) as usize;
+            let run = s
+                .runtime
+                .runs
+                .iter_mut()
+                .find(|r| r.id == id)
+                .ok_or("当前服务中没有该运行记录，历史日志请用logs.read")?;
+            let view = run.lines.query(&query, None, 0)?;
+            let rows:Vec<_>=view.rows.iter().skip(offset).take(limit).filter_map(|row|run.lines.get(*row).map(|(stderr,text)|json!({"cached_row":row,"line_number":run.lines.dropped+row+1,"stderr":stderr,"text":text,"highlights":crate::console_search::spans(text,&query).iter().map(|r|json!({"start":r.start,"end":r.end})).collect::<Vec<_>>()}))).collect();
+            let next = offset.saturating_add(rows.len());
+            Ok(
+                json!({"run_id":id,"source":"console_cache","cached_lines":run.lines.len(),"dropped_lines":run.lines.dropped,"matched_lines":view.matched_lines,"rows":rows,"next_offset":next,"has_more":next<view.rows.len()}),
+            )
+        }
+        "logs.list" => {
+            config::fields(p, &["after_id", "limit"])?;
+            let after = p
+                .get("after_id")
+                .map(|_| config::id(p, "after_id"))
+                .transpose()?
+                .unwrap_or(0);
+            let limit = p
+                .get("limit")
+                .map(|_| config::id(p, "limit"))
+                .transpose()?
+                .unwrap_or(100)
+                .clamp(1, 1000) as usize;
+            let mut files = std::collections::BTreeMap::new();
+            for entry in std::fs::read_dir(s.store.root.join("logs")).map_err(|e| e.to_string())? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().to_string();
+                if let Some(id) = name
+                    .strip_prefix("run-")
+                    .and_then(|v| v.strip_suffix(".log"))
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .filter(|id| *id > after)
+                {
+                    files.insert(id, entry.metadata().map_err(|e| e.to_string())?.len());
+                    if files.len() > limit + 1 {
+                        files.pop_last();
+                    }
+                }
+            }
+            let more = files.len() > limit;
+            if more {
+                files.pop_last();
+            }
+            let files: Vec<_> = files.into_iter().collect();
+            Ok(
+                json!({"logs":files.iter().map(|(id,size)|json!({"run_id":id,"size":size})).collect::<Vec<_>>(),"next_after_id":files.last().map(|v|v.0).unwrap_or(after),"has_more":more}),
+            )
+        }
+        "logs.read" => {
+            config::fields(p, &["run_id", "offset", "limit", "tail_bytes"])?;
+            let run_id = config::id(p, "run_id")?;
+            let active = s
+                .runtime
+                .runs
+                .iter()
+                .find(|r| r.id == run_id)
+                .is_some_and(|r| r.state.active());
+            let path = s.store.root.join("logs").join(format!("run-{run_id}.log"));
+            if std::fs::symlink_metadata(&path).is_ok_and(|m| !m.file_type().is_file()) {
+                return Err("日志路径不是普通文件".into());
+            }
+            let mut file = match File::open(&path) {
+                Ok(file) => file,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound && active => {
+                    return Ok(
+                        json!({"run_id":run_id,"offset":0,"next_offset":0,"size":0,"text":"","bytes":[],"active":true,"reset":false,"eof":true}),
+                    );
+                }
+                Err(e) => return Err(e.to_string()),
+            };
+            let size = file.metadata().map_err(|e| e.to_string())?.len();
+            let limit = if p.get("limit").is_some() {
+                config::id(p, "limit")?.clamp(1, 65536)
+            } else {
+                16384
+            };
+            if p.get("offset").is_some() && p.get("tail_bytes").is_some() {
+                return Err("offset和tail_bytes不能同时指定".into());
+            }
+            let requested = if p.get("tail_bytes").is_some() {
+                size.saturating_sub(config::id(p, "tail_bytes")?.min(65536))
+            } else {
+                p.get("offset")
+                    .map(|_| config::id(p, "offset"))
+                    .transpose()?
+                    .unwrap_or(0)
+            };
+            let offset = if requested > size { 0 } else { requested };
+            file.seek(SeekFrom::Start(offset))
+                .map_err(|e| e.to_string())?;
+            let mut bytes = Vec::new();
+            file.take(limit)
+                .read_to_end(&mut bytes)
+                .map_err(|e| e.to_string())?;
+            // Return exact byte cursors and raw bytes for lossless consumers. Text is an optional lossy convenience.
+            let next = offset + bytes.len() as u64;
+            Ok(
+                json!({"run_id":run_id,"offset":offset,"next_offset":next,"size":size,"text":String::from_utf8_lossy(&bytes),
+                "bytes":bytes,"active":active,"reset":requested>size,"eof":next>=size}),
+            )
+        }
+        _ => config::handle(s, method, p),
+    }
+}
+fn run(s: &Service, id: u64) -> Result<&crate::runtime::Run, String> {
+    s.runtime
+        .runs
+        .iter()
+        .find(|r| r.id == id)
+        .ok_or("运行实例不存在".into())
+}
+fn run_value(run: &crate::runtime::Run) -> Value {
+    let timing = run.timing();
+    json!({"id":run.id,"script_id":run.script_id,"associated_scripts":run.associated_scripts,
+        "title":run.title,"launch_name":run.launch_name,"display_command":run.display_command,
+        "state":match run.state { crate::runtime::State::Starting=>"starting",crate::runtime::State::Running=>"running",crate::runtime::State::Stopping=>"stopping",crate::runtime::State::Succeeded=>"succeeded",crate::runtime::State::Stopped=>"stopped",crate::runtime::State::Failed=>"failed" },
+        "pid":run.pid,"listening_ports":if run.state.active(){run.listening_ports.clone()}else{vec![]},"active":run.state.active(),"external":run.external.is_some(),"exit_code":run.exit,
+        "elapsed_seconds":timing.elapsed_seconds,"started_at":timing.started_at,"started_at_unix_ms":timing.started_at_unix_ms,
+        "elapsed_display":timing.elapsed_display,"timing_display":timing.display,
+        "log_path":run.log_path,"cwd":run.cwd})
+}

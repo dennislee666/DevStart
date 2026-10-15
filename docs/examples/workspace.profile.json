@@ -1,0 +1,11 @@
+{
+  "group": "示例工作区",
+  "projects": [
+    {
+      "name": "示例项目",
+      "path": "/path/to/your/project",
+      "scripts": [],
+      "project_file": true
+    }
+  ]
+}

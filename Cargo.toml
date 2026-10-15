@@ -1,0 +1,30 @@
+[package]
+name = "dev-start"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A native local development script launcher"
+license = "MIT"
+
+[features]
+default = []
+personal = []
+
+[dependencies]
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "accesskit"] }
+egui_extras = { version = "0.33", default-features = false, features = ["syntect"] }
+sha2 = "0.10"
+egui-phosphor = "0.11"
+rfd = "0.16"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+unicode-segmentation = "1.13"
+
+[profile.release]
+lto = "thin"
+strip = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSScreen"] }

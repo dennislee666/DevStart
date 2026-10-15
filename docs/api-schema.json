@@ -1,0 +1,871 @@
+{
+  "version": 1,
+  "methods": {
+    "api.describe": {
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "config.get": {
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "groups.list": {
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "projects.list": {
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "runs.list": {
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "runs.stop_all": {
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "groups.create": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "groups.update": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "groups.delete": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Default group 1 is protected; projects move to group 1."
+    },
+    "projects.get": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "projects.delete": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "projects.refresh": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "scripts.get": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "scripts.delete": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "runs.get": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "runs.stop": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "projects.create": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "group": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "favorite": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Omitted/null group defaults to 1. Read-only source discovery; never auto-starts."
+    },
+    "projects.update": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "patch": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "group": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1
+              },
+              "favorite": {
+                "type": "boolean"
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "patch"
+        ],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "scripts.list": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "scripts.create": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "spec": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "file": {
+                "type": "string"
+              },
+              "entry": {
+                "type": "object",
+                "description": "Externally tagged File/Package/Command/Java variant; see api.md"
+              },
+              "description": {
+                "type": "string"
+              },
+              "cwd": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "environment": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "expected_port": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "resource_key": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "display_command": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "file",
+              "entry",
+              "description"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "project_id",
+          "spec"
+        ],
+        "additionalProperties": false
+      },
+      "description": ""
+    },
+    "scripts.update": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "patch": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "file": {
+                "type": "string"
+              },
+              "entry": {
+                "type": "object",
+                "description": "Externally tagged File/Package/Command/Java variant; see api.md"
+              },
+              "description": {
+                "type": "string"
+              },
+              "cwd": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "environment": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "expected_port": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "resource_key": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "display_command": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "favorite": {
+                "type": "boolean"
+              },
+              "display_name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Catalog-local display alias, 1–50 Unicode graphemes; null resets. Alias-only patches are allowed while running; execution identity is unchanged."
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "patch"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Writes project-native manifest, validates and refreshes source snapshots; blocked while target active."
+    },
+    "runs.start": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "script_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "script_id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Explicit execution; returns run_id asynchronously; checked shutdown/restart logs available via logs.read."
+    },
+    "runs.restart": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "script_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "script_id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Explicit execution; returns run_id asynchronously; checked shutdown/restart logs available via logs.read."
+    },
+    "logs.read": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65536
+          },
+          "tail_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65536
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Byte-cursor paging; offset and tail_bytes mutually exclusive. bytes is lossless, text convenience is lossy. Logs persist across app restarts."
+    },
+    "logs.list": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "after_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "description": "Paginate durable log files; use next_after_id."
+    },
+    "api.docs": {
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "description": "Embedded API manual as Markdown; independent of installation directory."
+    },
+    "settings.get": {
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "description": "Read persisted appearance preferences."
+    },
+    "settings.reset": {
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "description": "Restore default appearance preferences and persist."
+    },
+    "settings.update": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "patch": {
+            "type": "object",
+            "properties": {
+              "theme": {
+                "enum": [
+                  "dark",
+                  "light",
+                  "system"
+                ]
+              },
+              "ui_font": {
+                "enum": [
+                  "system",
+                  "monospace"
+                ]
+              },
+              "ui_font_size": {
+                "type": "number",
+                "minimum": 10,
+                "maximum": 18
+              },
+              "console_font": {
+                "enum": [
+                  "system",
+                  "menlo",
+                  "monaco"
+                ]
+              },
+              "console_font_size": {
+                "type": "number",
+                "minimum": 10,
+                "maximum": 24
+              },
+              "console_line_height": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 1.8
+              },
+              "density": {
+                "enum": [
+                  "compact",
+                  "comfortable"
+                ]
+              },
+              "sidebar_collapsed": {
+                "type": "boolean"
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "patch"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Validate, atomically save and apply appearance preferences; same configuration as GUI settings."
+    },
+    "logs.search": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "keyword": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "case_sensitive": {
+            "type": "boolean"
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        },
+        "required": [
+          "run_id",
+          "keyword"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Search the current bounded Console cache; returns matching rows and original UTF-8 highlight byte ranges. Does not read or modify the full raw file."
+    },
+    "scripts.ports": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Read configured/inferred and observed ports with display value and provenance; never executes scripts."
+    },
+    "editor.list": {
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    "editor.open": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "script_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "script_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "editor.read": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "script_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "script_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "editor.change": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "script_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expected_revision": {
+            "type": "string",
+            "description": "SHA-256 revision returned by editor.open/read/change/save"
+          },
+          "content": {
+            "type": "string",
+            "description": "UTF-8 source, at most 1 MiB; no NUL"
+          }
+        },
+        "required": [
+          "script_id",
+          "expected_revision",
+          "content"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "editor.save": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "script_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expected_revision": {
+            "type": "string",
+            "description": "SHA-256 revision returned by editor.open/read/change/save"
+          }
+        },
+        "required": [
+          "script_id",
+          "expected_revision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "editor.reload": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "script_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expected_revision": {
+            "type": "string",
+            "description": "SHA-256 revision returned by editor.open/read/change/save"
+          },
+          "discard": {
+            "type": "boolean",
+            "description": "Explicitly discard an unsaved buffer; defaults to false"
+          }
+        },
+        "required": [
+          "script_id",
+          "expected_revision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "editor.close": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "script_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expected_revision": {
+            "type": "string",
+            "description": "SHA-256 revision returned by editor.open/read/change/save"
+          },
+          "discard": {
+            "type": "boolean",
+            "description": "Explicitly discard an unsaved buffer; defaults to false"
+          }
+        },
+        "required": [
+          "script_id",
+          "expected_revision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "editor.versions": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "script_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "script_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "editor.restore": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "script_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expected_revision": {
+            "type": "string",
+            "description": "SHA-256 revision returned by editor.open/read/change/save"
+          },
+          "version_id": {
+            "type": [
+              "string",
+              "integer"
+            ],
+            "description": "Decimal version ID returned as a JSON string to preserve 64-bit precision in JavaScript; exact integers also accepted."
+          }
+        },
+        "required": [
+          "script_id",
+          "expected_revision",
+          "version_id"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}
