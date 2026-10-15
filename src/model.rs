@@ -241,10 +241,12 @@ pub fn unique_id() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64;
-    let previous = LAST
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
-            Some(now.max(last + 1))
-        })
-        .unwrap();
-    now.max(previous + 1)
+    let mut previous = LAST.load(Ordering::Relaxed);
+    loop {
+        let next = now.max(previous.saturating_add(1));
+        match LAST.compare_exchange_weak(previous, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return next,
+            Err(observed) => previous = observed,
+        }
+    }
 }
