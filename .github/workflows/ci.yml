@@ -11,6 +11,7 @@ jobs:
     env:
       RUSTUP_DIST_SERVER: https://rsproxy.cn
       RUSTUP_UPDATE_ROOT: https://rsproxy.cn/rustup
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install Rust components
@@ -24,4 +25,9 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
       - run: cargo build --release --locked
+      - name: Verify Intel Monterey build
+        run: |
+          rustup target add x86_64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          xcrun vtool -show-build target/x86_64-apple-darwin/release/dev-start
       - run: python3 scripts/verify-api.py

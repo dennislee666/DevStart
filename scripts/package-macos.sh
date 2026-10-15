@@ -5,8 +5,51 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   printf '%s\n' 'macOS packaging requires macOS.' >&2
   exit 1
 fi
-cargo build --release --locked "$@"
-edition=$(target/release/dev-start --edition)
+deployment_target="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
+export MACOSX_DEPLOYMENT_TARGET="$deployment_target"
+macos_arch="${DEVSTART_MACOS_ARCH:-universal}"
+package_binary="target/release/dev-start"
+case "$macos_arch" in
+  universal)
+    if ! command -v rustup >/dev/null 2>&1; then
+      printf '%s\n' 'Universal macOS packaging requires rustup. Set DEVSTART_MACOS_ARCH=native for a host-only build.' >&2
+      exit 1
+    fi
+    toolchain="${RUSTUP_TOOLCHAIN:-$(rustup show active-toolchain | awk '{print $1}')}"
+    rustc_bin=$(rustup which --toolchain "$toolchain" rustc)
+    cargo_bin=$(rustup which --toolchain "$toolchain" cargo)
+    installed=$(rustup target list --installed --toolchain "$toolchain")
+    missing=()
+    for target in aarch64-apple-darwin x86_64-apple-darwin; do
+      if ! grep -qx "$target" <<<"$installed"; then missing+=("$target"); fi
+    done
+    if ((${#missing[@]})); then
+      RUSTUP_DIST_SERVER="${RUSTUP_DIST_SERVER:-https://rsproxy.cn}" \
+      RUSTUP_UPDATE_ROOT="${RUSTUP_UPDATE_ROOT:-https://rsproxy.cn/rustup}" \
+        rustup target add --toolchain "$toolchain" "${missing[@]}"
+    fi
+    RUSTC="$rustc_bin" "$cargo_bin" build --release --locked --target aarch64-apple-darwin "$@"
+    RUSTC="$rustc_bin" "$cargo_bin" build --release --locked --target x86_64-apple-darwin "$@"
+    host_arch=$(uname -m)
+    case "$host_arch" in
+      arm64) host_binary='target/aarch64-apple-darwin/release/dev-start' ;;
+      x86_64) host_binary='target/x86_64-apple-darwin/release/dev-start' ;;
+      *) printf 'Unsupported macOS host architecture: %s\n' "$host_arch" >&2; exit 1 ;;
+    esac
+    # Both slices use the same Cargo manifest and feature flags. Read edition from
+    # the host slice so packaging never requires Rosetta on an Apple Silicon Mac.
+    edition=$("$host_binary" --edition)
+    mkdir -p target/universal-apple-darwin/release
+    package_binary='target/universal-apple-darwin/release/dev-start'
+    lipo -create target/aarch64-apple-darwin/release/dev-start target/x86_64-apple-darwin/release/dev-start -output "$package_binary.next"
+    mv -f "$package_binary.next" "$package_binary"
+    ;;
+  native)
+    cargo build --release --locked "$@"
+    edition=$(target/release/dev-start --edition)
+    ;;
+  *) printf 'DEVSTART_MACOS_ARCH must be universal or native, got: %s\n' "$macos_arch" >&2; exit 2 ;;
+esac
 bundle_id="com.devstart.public"
 if [[ "$edition" == "personal" ]]; then
   bundle_id="com.devstart.desktop"
@@ -30,7 +73,7 @@ for size in 16 32 128 256 512; do
   sips -z "$double" "$double" assets/devstart-icon.png --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/DevStart.icns"
-cp target/release/dev-start "$app/Contents/MacOS/dev-start.next"
+cp "$package_binary" "$app/Contents/MacOS/dev-start.next"
 mv -f "$app/Contents/MacOS/dev-start.next" "$app/Contents/MacOS/dev-start"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

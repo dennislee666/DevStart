@@ -37,9 +37,9 @@ DevStart 把散落在不同项目中的启动命令集中到一个桌面窗口�
 
 ## 平台与依赖
 
-当前正式验证平台是 **macOS**。使用 Rust / eframe / egui，无需为 DevStart 安装 Node.js 或 WebView。Linux 的图形与进程工具路径仍需适配验证；Windows 暂未实现进程组管理，不承诺可用。
+当前正式验证平台是 **macOS 12 Monterey 及以上**；安装包默认同时包含 Intel `x86_64` 与 Apple Silicon `arm64`。使用 Rust / eframe / egui，无需为 DevStart 安装 Node.js 或 WebView。Linux 的图形与进程工具路径仍需适配验证；Windows 暂未实现进程组管理，不承诺可用。
 
-- Rust **1.88+**，建议使用稳定版工具链。
+- Rust **1.88+**，建议使用稳定版工具链。Universal 打包会通过 RsProxy 获取缺少的 macOS 架构标准库；应用的 Apple 最低系统版本为 macOS 12.0。
 - macOS Command Line Tools；外部进程/端口识别使用系统 `ps` 和 `lsof`。
 - 被启动项目仍需自行准备它的 JDK、Node.js、Python、Rust 等依赖。
 
@@ -77,7 +77,7 @@ bash scripts/package-macos.sh
 open dist/DevStart.app
 ```
 
-生成的应用为本机架构、临时本地签名，未进行 Apple 公证。仓库不包含预置的个人配置或已打包应用。
+生成 universal 应用（可用 `DEVSTART_MACOS_ARCH=native` 仅构建本机架构），使用临时本地签名，未进行 Apple 公证。仓库不包含预置的个人配置或已打包应用。
 
 ## AI / API / MCP
 
