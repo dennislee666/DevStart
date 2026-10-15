@@ -397,14 +397,16 @@ impl Service {
             .runtime
             .launch_checked(p, &s, self.store.root.join("logs"))?;
         if let Some(version) = version {
-            self.runtime.note(
-                run,
+            let note = if version.created {
                 format!(
                     "启动文件已备份 · 版本 {} · {}",
                     version.id,
                     version.path.display()
-                ),
-            );
+                )
+            } else {
+                format!("启动文件未变化，跳过备份 · 版本 {}", version.id)
+            };
+            self.runtime.note(run, note);
         }
         Ok(run)
     }
@@ -487,14 +489,16 @@ impl Service {
         let id =
             self.runtime
                 .restart_checked(run, project, &script, self.store.root.join("logs"))?;
-        self.runtime.note(
-            id,
+        let note = if version.created {
             format!(
                 "启动文件已备份 · 版本 {} · {}",
                 version.id,
                 version.path.display()
-            ),
-        );
+            )
+        } else {
+            format!("启动文件未变化，跳过备份 · 版本 {}", version.id)
+        };
+        self.runtime.note(id, note);
         Ok(id)
     }
     pub fn create_preset(

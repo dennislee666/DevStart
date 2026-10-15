@@ -39,7 +39,11 @@ pub struct Version {
     pub revision: String,
     pub reason: String,
     pub created_ms: u64,
+    #[serde(default)]
+    pub source_modified_ns: Option<u64>,
     pub bytes: usize,
+    #[serde(skip)]
+    pub created: bool,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub content: Option<String>,
 }
@@ -101,6 +105,9 @@ fn version_dir(root: &Path, sid: u64) -> PathBuf {
 }
 pub fn versions(root: &Path, sid: u64, path: &Path) -> Result<Vec<Version>, String> {
     let _guard = VERSION_LOCK.lock().map_err(|_| "版本存储锁异常")?;
+    read_versions(root, sid, path)
+}
+fn read_versions(root: &Path, sid: u64, path: &Path) -> Result<Vec<Version>, String> {
     let dir = version_dir(root, sid);
     if !dir.exists() {
         return Ok(vec![]);
@@ -138,6 +145,36 @@ pub fn snapshot(
     let dir = version_dir(root, sid);
     private_dir(&root.join("source-versions"))?;
     private_dir(&dir)?;
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|e| format!("启动文件元数据 {}: {e}", path.display()))?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err("启动文件必须为普通文件，不能是符号链接".into());
+    }
+    let modified_ns = metadata
+        .modified()
+        .map_err(|e| e.to_string())?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos()
+        .try_into()
+        .map_err(|_| "启动文件修改时间超出范围")?;
+    let source_bytes = metadata.len();
+    let digest = revision(text);
+    let existing = read_versions(root, sid, path)?;
+    if reason == "launch" {
+        if revision(&read_source(path)?) != digest {
+            return Err("启动文件在备份检查期间发生修改，请重新启动".into());
+        }
+        if let Some(last) = existing.first()
+            && (last.revision == digest
+                || (last.source_modified_ns == Some(modified_ns)
+                    && last.bytes as u64 == source_bytes))
+        {
+            let mut unchanged = last.clone();
+            unchanged.created = false;
+            return Ok(unchanged);
+        }
+    }
     if ["save", "restore"].contains(&reason) && path.extension().is_some_and(|s| s == "java") {
         crate::store::atomic_write(
             &dir.join("edited-source"),
@@ -148,13 +185,15 @@ pub fn snapshot(
     let value = Version {
         id,
         path: path.to_owned(),
-        revision: revision(text),
+        revision: digest,
         reason: reason.into(),
         created_ms: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| e.to_string())?
             .as_millis() as u64,
-        bytes: text.len(),
+        source_modified_ns: Some(modified_ns),
+        bytes: usize::try_from(source_bytes).map_err(|_| "启动文件大小超出范围")?,
+        created: true,
         content: Some(text.to_owned()),
     };
     crate::store::atomic_write(

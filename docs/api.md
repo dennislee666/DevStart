@@ -473,7 +473,7 @@ scripts.ports返回script_id、configured_port、configuration_source、configur
 
 示例顺序：`editor.open {"script_id":24}` → `editor.change {"script_id":24,"expected_revision":"返回的revision","content":"新的完整文件内容"}` → `editor.save {"script_id":24,"expected_revision":"change返回的revision"}`。保存返回新 revision。用 `editor.versions` 选择 version_id，再以最新 revision 调用 `editor.restore`。回退后磁盘立即是该版本，下一次 `runs.start` / `runs.restart` 使用当前磁盘文件。
 
-备份位于数据目录 `source-versions/<script_id>/`，目录 0700、内容 0600；首次打开保存原始基线，保存、每次启动与回退保留版本，修改前外部内容也会保留。每启动项仅保留最近 10 个版本，包含回退本身，版本与源文件路径绑定；旧版本超过上限后自动删除。无更改保存不制造重复版本，启动则每次记录。回退不自动启动任何命令。
+备份位于数据目录 `source-versions/<script_id>/`，目录 0700、内容 0600；首次打开保存原始基线，保存、源文件变化后的启动及回退保留版本，修改前外部内容也会保留。每个版本附带源文件的修改时间与字节大小，用于启动备份去重。每启动项仅保留最近 10 个版本，包含回退本身，版本与源文件路径绑定；旧版本超过上限后自动删除。无更改保存不制造重复版本。启动时若文件修改时间与大小都和最近版本一致，或内容版本摘要一致，则跳过备份；只有两个判断都不匹配时才创建版本。回退不自动启动任何命令。
 
 Java `.java` 若曾经由内置编辑器保存/回退，后续启动检查会用该启动项 JDK 同目录的 `javac`，仅编译对应源文件，禁用注解处理，不执行 Maven/Gradle、上传、部署或生成器主类。编译在后台、原服务停止之前完成，60 秒超时或错误会取消启动；输出进入对应 Console。编译成功后才优雅切换服务并应用 class，确保 Java 源文件回退也在下次启动生效。没有内置编辑保存记录的 Java 项目保持原有已编译启动行为。Python、Rust、前端等仍使用项目自己的运行命令和编译流程，DevStart 不代写业务构建脚本。
 
