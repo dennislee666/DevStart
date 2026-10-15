@@ -392,12 +392,13 @@ impl DevStart {
             self.editor_quit_pending = true;
         }
         if self.editor_quit_pending {
-            egui::Window::new("退出前保存修改")
+            dialog_ui::window(ctx, "退出前保存修改")
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
+                    dialog_ui::content(ui);
                     ui.label("有启动文件尚未保存。");
-                    ui.horizontal(|ui| {
+                    dialog_ui::actions(ui, |ui| {
                         if ui.button("全部保存并退出").clicked() {
                             let ids: Vec<_> = self
                                 .service
@@ -443,12 +444,13 @@ impl DevStart {
                 | EditorAction::Reload(id)
                 | EditorAction::Restore(id, _) => id,
             };
-            egui::Window::new("未保存的修改")
+            dialog_ui::window(ctx, "未保存的修改")
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
+                    dialog_ui::content(ui);
                     ui.label("保存当前修改后继续？");
-                    ui.horizontal(|ui| {
+                    dialog_ui::actions(ui, |ui| {
                         if ui.button("保存并继续").clicked() && self.save_editor(sid) {
                             self.editor_pending = None;
                             self.perform_editor_action(action.clone(), false);
@@ -466,11 +468,12 @@ impl DevStart {
         if let Some((sid, versions)) = self.editor_versions.clone() {
             let mut opened = true;
             let mut restore = None;
-            egui::Window::new("版本历史")
+            dialog_ui::window(ctx, "版本历史")
                 .open(&mut opened)
                 .collapsible(false)
                 .default_width(480.0)
                 .show(ctx, |ui| {
+                    dialog_ui::content(ui);
                     ui.label(
                         RichText::new("回退会保留当前版本，下次启动使用回退后的文件。")
                             .small()

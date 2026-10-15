@@ -1,4 +1,4 @@
-//! Bounded display cache; the independent raw log file remains complete.
+//! Bounded display cache; the independent raw log file has its own disk retention limits.
 use std::collections::VecDeque;
 pub const MAX_LINES: usize = 3000;
 pub const MAX_BYTES: usize = 2 * 1024 * 1024;

@@ -23,6 +23,7 @@ impl Store {
                 "DevStart 已在运行；同一工作空间只允许一个实例",
             ));
         }
+        crate::log_store::maintain(&root.join("logs"), true)?;
         Ok(Self { root, _lock: lock })
     }
     pub fn load(&self) -> Result<Catalog, String> {

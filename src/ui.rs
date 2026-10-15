@@ -13,6 +13,8 @@ use std::{
 };
 #[path = "ui_console_render.rs"]
 mod console_render;
+#[path = "ui_dialog.rs"]
+mod dialog_ui;
 #[path = "ui_editor.rs"]
 mod editor_ui;
 #[path = "ui_console_search.rs"]
@@ -43,6 +45,7 @@ pub struct DevStart {
     expanded: HashSet<u64>,
     selected_run: Option<u64>,
     close_run: Option<u64>,
+    delete_script: Option<u64>,
     bulk_confirm: Option<crate::bulk::Plan>,
     collapsed_groups: HashSet<u64>,
     tiled: bool,
@@ -101,6 +104,7 @@ impl DevStart {
             expanded,
             selected_run: None,
             close_run: None,
+            delete_script: None,
             bulk_confirm: None,
             collapsed_groups: HashSet::new(),
             tiled: false,
@@ -824,41 +828,59 @@ impl DevStart {
                             ui.push_id(project.id, |ui| {
                                 ui.horizontal(|ui| {
                                     let expanded = self.expanded.contains(&project.id);
-                                    if small(
+                                    let arrow_clicked = small(
                                         ui,
                                         if expanded {
                                             icon::CARET_DOWN
                                         } else {
                                             icon::CARET_RIGHT
                                         },
-                                        "展开启动项",
-                                    ) {
+                                        if expanded {
+                                            "收起启动项"
+                                        } else {
+                                            "展开启动项"
+                                        },
+                                    );
+                                    let name_clicked = ui
+                                        .add(
+                                            egui::Button::new(
+                                                RichText::new(&project.name).strong(),
+                                            )
+                                            .frame(false),
+                                        )
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .on_hover_text(service::path_label(&project.path))
+                                        .clicked();
+                                    let path_width = (ui.available_width() - 150.0).max(40.0);
+                                    let path_clicked = ui
+                                        .allocate_ui_with_layout(
+                                            Vec2::new(path_width, 24.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.add(
+                                                    egui::Button::new(
+                                                        RichText::new(service::path_label(
+                                                            &project.path,
+                                                        ))
+                                                        .small()
+                                                        .color(tone(self.light, MUTED)),
+                                                    )
+                                                    .frame(false)
+                                                    .truncate(),
+                                                )
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                .on_hover_text(project.path.display().to_string())
+                                                .clicked()
+                                            },
+                                        )
+                                        .inner;
+                                    if arrow_clicked || name_clicked || path_clicked {
                                         if expanded {
                                             self.expanded.remove(&project.id);
                                         } else {
                                             self.expanded.insert(project.id);
                                         }
                                     }
-                                    ui.label(RichText::new(&project.name).strong())
-                                        .on_hover_text(service::path_label(&project.path));
-                                    let path_width = (ui.available_width() - 150.0).max(40.0);
-                                    ui.allocate_ui_with_layout(
-                                        Vec2::new(path_width, 24.0),
-                                        egui::Layout::left_to_right(egui::Align::Center),
-                                        |ui| {
-                                            ui.add(
-                                                egui::Label::new(
-                                                    RichText::new(service::path_label(
-                                                        &project.path,
-                                                    ))
-                                                    .small()
-                                                    .color(tone(self.light, MUTED)),
-                                                )
-                                                .truncate(),
-                                            )
-                                            .on_hover_text(project.path.display().to_string());
-                                        },
-                                    );
                                     if self
                                         .service
                                         .as_ref()
@@ -904,7 +926,13 @@ impl DevStart {
                                                     ui.close();
                                                 }
                                                 ui.separator();
-                                                ui.label("移动到分组");
+                                                ui.add_space(2.0);
+                                                ui.add(egui::Label::new(
+                                                    RichText::new("移动到分组")
+                                                        .size(11.0)
+                                                        .color(tone(self.light, MUTED)),
+                                                ));
+                                                ui.add_space(2.0);
                                                 let groups = self
                                                     .service
                                                     .as_ref()
@@ -1149,6 +1177,14 @@ impl DevStart {
                         self.report(result);
                         ui.close();
                     }
+                    if ui
+                        .button("删除启动项")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        self.delete_script = Some(script.id);
+                        ui.close();
+                    }
                 });
             });
         });
@@ -1270,7 +1306,7 @@ impl DevStart {
                         }
 
                         clear = small(ui, icon::ERASER, "清空视图");
-                        open = small(ui, icon::FILE_TEXT, "打开完整日志");
+                        open = small(ui, icon::FILE_TEXT, "打开日志文件");
                         if !compact {
                             let preview =
                                 crate::presentation::command_preview(&run.display_command);
@@ -1317,7 +1353,7 @@ impl DevStart {
         let run = &s.runtime.runs[index];
         if run.lines.dropped > 0 || run.lines.shortened {
             ui.label(
-                RichText::new("早期输出已移出视图，完整记录保留在日志文件")
+                RichText::new("仅显示最近输出；日志文件也有保留上限")
                     .small()
                     .color(tone(self.light, MUTED)),
             );
@@ -1481,76 +1517,159 @@ impl DevStart {
         }
     }
     fn dialogs(&mut self, ctx: &egui::Context) {
+        if let Some(id) = self.delete_script {
+            let target = self.service.as_ref().and_then(|service| {
+                service.catalog.projects.iter().find_map(|project| {
+                    project
+                        .scripts
+                        .iter()
+                        .find(|script| script.id == id)
+                        .map(|script| {
+                            (
+                                project.name.clone(),
+                                script.display_label().to_owned(),
+                                crate::api_config::idle(service, &[id]).err(),
+                            )
+                        })
+                })
+            });
+            if let Some((project, name, blocked)) = target {
+                let mut open = true;
+                dialog_ui::window(ctx, "删除启动项")
+                    .open(&mut open)
+                    .collapsible(false)
+                    .resizable(false)
+                    .default_width(360.0)
+                    .show(ctx, |ui| {
+                        dialog_ui::content(ui);
+                        ui.label(format!("{project} / {name}"));
+                        ui.label("确认删除此启动项？");
+                        ui.label(
+                            RichText::new("保留原脚本文件和日志。").color(tone(self.light, MUTED)),
+                        );
+                        if let Some(reason) = &blocked {
+                            ui.label(RichText::new(reason).color(tone(self.light, RED)));
+                        }
+                        dialog_ui::actions(ui, |ui| {
+                            let response = ui.add_enabled(
+                                blocked.is_none(),
+                                egui::Button::new(
+                                    RichText::new("删除").color(tone(self.light, RED)),
+                                ),
+                            );
+                            let response = if blocked.is_none() {
+                                response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                            } else {
+                                response
+                            };
+                            if response.clicked() {
+                                // Revalidate on the service owner: state may change while confirmation is open.
+                                let result = crate::api::dispatch(
+                                    self.service.as_mut().unwrap(),
+                                    "scripts.delete",
+                                    &serde_json::json!({"id":id}),
+                                )
+                                .map(|_| ());
+                                if result.is_ok() {
+                                    self.delete_script = None;
+                                }
+                                self.report(result);
+                            }
+                            if ui
+                                .button("取消")
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
+                                self.delete_script = None;
+                            }
+                        });
+                    });
+                if !open {
+                    self.delete_script = None;
+                }
+            } else {
+                self.delete_script = None;
+            }
+        }
         if let Some(plan) = self.bulk_confirm.clone() {
-            egui::Modal::new(egui::Id::new("bulk-sessions-confirm")).show(ctx, |ui| {
-                let (title, verb, confirm) = match plan.action {
-                    crate::bulk::Action::Stop => ("确认全部停止？", "将停止", "确认全部停止"),
-                    crate::bulk::Action::Start => ("确认全部启动？", "将启动", "确认全部启动"),
-                    crate::bulk::Action::Restart => ("确认全部重启？", "将重启", "确认全部重启"),
-                };
-                ui.heading(title);
-                ui.label(format!("{verb} {} 个标签启动项", plan.targets.len()));
-                egui::ScrollArea::vertical()
-                    .max_height(220.0)
-                    .show(ui, |ui| {
-                        for target in &plan.targets {
-                            ui.label(&target.title);
+            egui::Modal::new(egui::Id::new("bulk-sessions-confirm"))
+                .frame(dialog_ui::frame(ctx))
+                .show(ctx, |ui| {
+                    dialog_ui::content(ui);
+                    let (title, verb, confirm) = match plan.action {
+                        crate::bulk::Action::Stop => ("确认全部停止？", "将停止", "确认全部停止"),
+                        crate::bulk::Action::Start => ("确认全部启动？", "将启动", "确认全部启动"),
+                        crate::bulk::Action::Restart => {
+                            ("确认全部重启？", "将重启", "确认全部重启")
+                        }
+                    };
+                    ui.heading(title);
+                    ui.label(format!("{verb} {} 个标签启动项", plan.targets.len()));
+                    egui::ScrollArea::vertical()
+                        .max_height(220.0)
+                        .show(ui, |ui| {
+                            for target in &plan.targets {
+                                ui.label(&target.title);
+                            }
+                        });
+                    dialog_ui::actions(ui, |ui| {
+                        if ui.button(confirm).clicked() {
+                            let result = self
+                                .service
+                                .as_mut()
+                                .ok_or("工作空间不可用".to_string())
+                                .and_then(|s| s.apply_bulk(&plan, true))
+                                .and_then(|result| {
+                                    if result.errors.is_empty() {
+                                        Ok(())
+                                    } else {
+                                        Err(result.errors.join("；"))
+                                    }
+                                });
+                            self.bulk_confirm = None;
+                            self.report(result);
+                        }
+                        if ui.button("取消").clicked() {
+                            self.bulk_confirm = None;
                         }
                     });
-                ui.horizontal(|ui| {
-                    if ui.button("取消").clicked() {
-                        self.bulk_confirm = None;
-                    }
-                    if ui.button(confirm).clicked() {
-                        let result = self
-                            .service
-                            .as_mut()
-                            .ok_or("工作空间不可用".to_string())
-                            .and_then(|s| s.apply_bulk(&plan, true))
-                            .and_then(|result| {
-                                if result.errors.is_empty() {
-                                    Ok(())
-                                } else {
-                                    Err(result.errors.join("；"))
-                                }
-                            });
-                        self.bulk_confirm = None;
-                        self.report(result);
-                    }
                 });
-            });
         }
 
         if let Some(id) = self.close_run {
-            egui::Modal::new(egui::Id::new("close-running-tab")).show(ctx, |ui| {
-                ui.heading("是否停止并关闭？");
-                if let Some(run) = self
-                    .service
-                    .as_ref()
-                    .and_then(|s| s.runtime.runs.iter().find(|r| r.id == id))
-                {
-                    ui.label(&run.title);
-                }
-                ui.horizontal(|ui| {
-                    if ui.button("否，取消").clicked() {
-                        self.close_run = None;
+            egui::Modal::new(egui::Id::new("close-running-tab"))
+                .frame(dialog_ui::frame(ctx))
+                .show(ctx, |ui| {
+                    dialog_ui::content(ui);
+                    ui.heading("是否停止并关闭？");
+                    if let Some(run) = self
+                        .service
+                        .as_ref()
+                        .and_then(|s| s.runtime.runs.iter().find(|r| r.id == id))
+                    {
+                        ui.label(&run.title);
                     }
-                    if ui.button("是，停止并关闭").clicked() {
-                        if let Some(s) = &mut self.service {
-                            let result = s.runtime.close_tab(id, true);
-                            self.report(result);
+                    dialog_ui::actions(ui, |ui| {
+                        if ui.button("是，停止并关闭").clicked() {
+                            if let Some(s) = &mut self.service {
+                                let result = s.runtime.close_tab(id, true);
+                                self.report(result);
+                            }
+                            self.close_run = None;
                         }
-                        self.close_run = None;
-                    }
+                        if ui.button("取消").clicked() {
+                            self.close_run = None;
+                        }
+                    });
                 });
-            });
         }
 
         if let Some((source, mut name, mut args, mut port)) = self.preset.clone() {
-            egui::Window::new("另存参数预设")
+            dialog_ui::window(ctx, "另存参数预设")
                 .collapsible(false)
                 .default_width(500.0)
                 .show(ctx, |ui| {
+                    dialog_ui::content(ui);
                     ui.label("启动项名称");
                     ui.text_edit_singleline(&mut name);
                     ui.label("参数（每行一个，原样传递）");
@@ -1569,7 +1688,7 @@ impl DevStart {
                     ui.label("端口约束（可选）");
                     ui.text_edit_singleline(&mut port);
                     self.preset = Some((source, name.clone(), args.clone(), port.clone()));
-                    ui.horizontal(|ui| {
+                    dialog_ui::actions(ui, |ui| {
                         if ui.button("保存启动项").clicked() {
                             let result = self
                                 .service
@@ -1599,18 +1718,22 @@ impl DevStart {
         }
 
         if let Some((group, id, mut name)) = self.rename_entity.clone() {
-            egui::Window::new(if group {
-                "重命名分组"
-            } else {
-                "重命名项目"
-            })
+            dialog_ui::window(
+                ctx,
+                if group {
+                    "重命名分组"
+                } else {
+                    "重命名项目"
+                },
+            )
             .collapsible(false)
             .resizable(false)
             .default_width(360.0)
             .show(ctx, |ui| {
+                dialog_ui::content(ui);
                 ui.add(egui::TextEdit::singleline(&mut name).desired_width(340.0));
                 self.rename_entity = Some((group, id, name.clone()));
-                ui.horizontal(|ui| {
+                dialog_ui::actions(ui, |ui| {
                     if ui.button("保存").clicked() {
                         let (method, params) = if group {
                             ("groups.update", serde_json::json!({"id":id,"name":name}))
@@ -1635,12 +1758,13 @@ impl DevStart {
             });
         }
         if self.group_dialog {
-            egui::Window::new("新建分组")
+            dialog_ui::window(ctx, "新建分组")
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
+                    dialog_ui::content(ui);
                     ui.add(egui::TextEdit::singleline(&mut self.group_name).hint_text("分组名称"));
-                    ui.horizontal(|ui| {
+                    dialog_ui::actions(ui, |ui| {
                         if ui.button("创建").clicked()
                             && let Some(s) = &mut self.service
                         {
@@ -1658,11 +1782,12 @@ impl DevStart {
                 });
         }
         if self.import_dialog {
-            egui::Window::new("添加项目")
+            dialog_ui::window(ctx, "添加项目")
                 .collapsible(false)
                 .resizable(false)
                 .default_width(500.0)
                 .show(ctx, |ui| {
+                    dialog_ui::content(ui);
                     ui.label("项目目录");
                     ui.horizontal(|ui| {
                         ui.add_sized(
@@ -1692,7 +1817,7 @@ impl DevStart {
                                 }
                             });
                     }
-                    ui.horizontal(|ui| {
+                    dialog_ui::actions(ui, |ui| {
                         if ui.button("读取启动脚本").clicked()
                             && let Some(s) = &mut self.service
                         {
@@ -1715,7 +1840,8 @@ impl DevStart {
         }
         if let Some(mut draft) = self.script_info.clone() {
             let mut open = true;
-            egui::Window::new("修改信息").open(&mut open).collapsible(false).resizable(false).default_width(440.0).show(ctx,|ui|{
+            dialog_ui::window(ctx, "修改信息").open(&mut open).collapsible(false).resizable(false).default_width(440.0).show(ctx,|ui|{
+                dialog_ui::content(ui);
                 ui.horizontal(|ui|{
                     ui.label("显示名");
                     let response=ui.add(egui::TextEdit::singleline(&mut draft.name).desired_width(270.0)).on_hover_text("最多50个字符");
@@ -1725,7 +1851,7 @@ impl DevStart {
                 ui.label("简介");
                 ui.add(egui::TextEdit::multiline(&mut draft.description).desired_width(f32::INFINITY).desired_rows(4));
                 self.script_info=Some(draft.clone());
-                ui.horizontal(|ui|{
+                dialog_ui::actions(ui,|ui|{
                     if ui.button("保存").on_hover_cursor(egui::CursorIcon::PointingHand).clicked(){
                         let name=if draft.reset_name {None}else{Some(draft.name.clone())};
                         let result=crate::api::dispatch(self.service.as_mut().unwrap(),"scripts.update",&serde_json::json!({"id":draft.id,"patch":{"display_name":name,"description":draft.description}})).map(|_|());
@@ -1740,10 +1866,11 @@ impl DevStart {
             }
         }
         if let Some((id, mut path, mut interpreter)) = self.add_script.clone() {
-            egui::Window::new("添加启动脚本")
+            dialog_ui::window(ctx, "添加启动脚本")
                 .collapsible(false)
                 .default_width(480.0)
                 .show(ctx, |ui| {
+                    dialog_ui::content(ui);
                     ui.label("原始脚本路径");
                     ui.horizontal(|ui| {
                         ui.text_edit_singleline(&mut path);
@@ -1756,7 +1883,7 @@ impl DevStart {
                     ui.label("解释器（例如 /bin/bash、python3）");
                     ui.text_edit_singleline(&mut interpreter);
                     self.add_script = Some((id, path.clone(), interpreter.clone()));
-                    ui.horizontal(|ui| {
+                    dialog_ui::actions(ui, |ui| {
                         if ui.button("添加").clicked() {
                             let result = self.service.as_mut().unwrap().add_script(
                                 id,
@@ -1775,12 +1902,13 @@ impl DevStart {
                 });
         }
         if let Some(error) = self.error.clone() {
-            egui::Window::new("操作失败")
+            dialog_ui::window(ctx, "操作失败")
                 .collapsible(false)
                 .default_width(520.0)
                 .show(ctx, |ui| {
+                    dialog_ui::content(ui);
                     ui.label(RichText::new(&error).color(tone(self.light, RED)));
-                    ui.horizontal(|ui| {
+                    dialog_ui::actions(ui, |ui| {
                         if ui.button("复制错误").clicked() {
                             ctx.copy_text(error);
                         }

@@ -17,6 +17,7 @@ mod external;
 mod java_edit;
 mod launch;
 mod lifecycle;
+mod log_store;
 mod model;
 mod output;
 mod preferences;

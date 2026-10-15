@@ -5,7 +5,6 @@ use crate::{
 use std::os::unix::process::CommandExt;
 use std::{
     collections::HashSet,
-    fs::File,
     io::{Read, Write},
     path::PathBuf,
     process::{Command, Stdio},
@@ -155,7 +154,7 @@ impl Runtime {
             .collect();
         let id = crate::model::unique_id();
         let path = logs.join(format!("run-{id}.log"));
-        std::fs::write(
+        crate::log_store::append(
             &path,
             format!(
                 "[dev start] {} / {}\n[command] {}\n[cwd] {}\n",
@@ -163,7 +162,8 @@ impl Runtime {
                 script.name,
                 script.invocation(),
                 script.cwd.display()
-            ),
+            )
+            .as_bytes(),
         )
         .map_err(|e| format!("创建启动Console日志: {e}"))?;
         let control = Control::default();
@@ -340,11 +340,8 @@ impl Runtime {
         if control.requested() {
             return Err("已取消启动".into());
         }
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-            .map_err(|e| format!("创建日志: {e}"))?;
+        let mut file =
+            crate::log_store::Writer::open(&log_path).map_err(|e| format!("创建日志: {e}"))?;
         if slot.is_none() {
             writeln!(
                 file,
@@ -540,7 +537,9 @@ impl Runtime {
                     };
                     for done in [&stdout_done, &stderr_done] {
                         if done.recv_timeout(Duration::from_millis(300)).is_err() {
-                            journal.note("进程已退出，输出管道尚未关闭；完整输出仍写入原日志");
+                            journal.note(
+                                "进程已退出，输出管道尚未关闭；后续输出仍写入有保留上限的原日志",
+                            );
                         }
                     }
                     let message = format!(
@@ -856,7 +855,8 @@ impl Runtime {
             candidate.port,
             process.cwd.display()
         );
-        std::fs::write(&log_path, &message).map_err(|e| format!("外部运行日志: {e}"))?;
+        crate::log_store::append(&log_path, message.as_bytes())
+            .map_err(|e| format!("外部运行日志: {e}"))?;
         let control = Control::default();
         let journal = self.journal(id, &log_path);
         let started_at = match crate::time_display::process_start(&process.started) {
@@ -926,8 +926,10 @@ impl Runtime {
                 ),
                 Err(e) => (State::Failed, e),
             };
-            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(log_path) {
-                let _ = writeln!(f, "[dev start] {text}");
+            if let Err(error) =
+                crate::log_store::append(&log_path, format!("[dev start] {text}\n").as_bytes())
+            {
+                let _ = tx.send(Event::Error(id, format!("日志写入失败: {error}")));
             }
             let _ = tx.send(Event::Output(
                 id,
@@ -996,7 +998,7 @@ fn pump<R: Read + Send + 'static>(
     id: u64,
     tx: SyncSender<Event>,
     control: Sender<Event>,
-    file: Arc<Mutex<File>>,
+    file: Arc<Mutex<crate::log_store::Writer>>,
 ) -> Receiver<()> {
     let (done_tx, done_rx) = mpsc::channel();
     thread::spawn(move || {
@@ -1048,7 +1050,7 @@ fn pump<R: Read + Send + 'static>(
         if skipped > 0 {
             let _ = control.send(Event::Error(
                 id,
-                format!("Console 队列繁忙，{skipped} 字节未实时显示，已保留末尾片段；完整输出已保存到日志文件。"),
+                format!("Console 队列繁忙，{skipped} 字节未实时显示，已保留末尾片段；原始输出已写入有保留上限的日志文件。"),
             ));
         }
         let _ = done_tx.send(());
@@ -1098,7 +1100,7 @@ fn monitor_external(
 fn console_pump_keeps_the_final_fragment_when_the_display_queue_is_full() {
     let path =
         std::env::temp_dir().join(format!("dev-start-pump-{}.log", crate::model::unique_id()));
-    let file = Arc::new(Mutex::new(File::create(&path).unwrap()));
+    let file = Arc::new(Mutex::new(crate::log_store::Writer::open(&path).unwrap()));
     let (tx, _rx) = mpsc::sync_channel(1);
     let (state_tx, state_rx) = mpsc::channel();
     let payload = "中\n".repeat(9000) + "LAST_OUTPUT\n";

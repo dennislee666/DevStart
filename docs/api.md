@@ -33,7 +33,7 @@
 | 修改显示名和简介 | `scripts.update` 的一个 patch 同时传 display_name/description → 再读；允许运行中修改，不改变 argv/PID |
 | 启动或重启 | 找到 script_id → `runs.start/restart` → 保存返回 run_id/console_id → 查询状态并增量读取日志 |
 | 停止 | 从 runs.list 确定当前实例 → `runs.stop` → 轮询 runs.get，直到 active:false；保留实际退出状态 |
-| 查错误日志 | `logs.search` 查询当前有界缓存；需要历史/完整内容时 `logs.list` → `logs.read` 分页，不全量灌入 AI 上下文 |
+| 查错误日志 | `logs.search` 查询当前有界缓存；需要保留范围内的历史内容时 `logs.list` → `logs.read` 分页，不全量灌入 AI 上下文 |
 | 删除启动项/移除项目 | 先查关联活动实例 → 停止并等退出 → `scripts.delete/projects.delete` → 再读列表；不会删除原项目目录或原脚本 |
 | 批量启停 | `runs.bulk_plan` → 展示目标并确认 → `runs.bulk_apply` → 检查 errors 并跟踪返回的 run_ids |
 
@@ -261,14 +261,30 @@ scripts.update的patch可包含spec的全部字段，额外支持favorite布尔�
 logs.read可指定offset（默认0）或tail_bytes（二选一），limit默认16384字节、上限65536。tail_bytes也最多65536。返回：
 
 ```json
-{"run_id":123,"offset":0,"next_offset":6,"size":6,"text":"ready\n","bytes":[114,101,97,100,121,10],"active":true,"reset":false,"eof":true}
+{"run_id":123,"offset":0,"next_offset":6,"size":6,"base_offset":0,"retained_bytes":6,"text":"ready\n","bytes":[114,101,97,100,121,10],"active":true,"reset":false,"eof":true}
 ```
 
-offset/next_offset/size均为**原始文件字节**，不能按字符串长度计算。bytes为无损原始字节数组；text为方便阅读的UTF-8有损解码，跨页中文可能截在字符中间，要求精确还原时拼接bytes或使用增量解码器。文件被截断且请求offset超过当前size时reset:true、offset重置为0。eof只是当前已读到文件末尾，active:true时仍可能继续输出。
+offset/next_offset/size 是**累计原始字节游标**，不能按字符串长度或当前文件物理大小计算；size 是当前累计末尾，保留范围为 `[base_offset, size)`。未裁剪时 base_offset=0，行为与原字节偏移一致。retained_bytes 为当前保留的输出字节数，日志文件的内部游标头不计入输出。bytes 是保留范围内的无损原始字节；text 是便于阅读的 UTF-8 有损解码，跨页或超长单行裁剪可能处于字符中间，精确还原应拼接 bytes 或使用增量解码器。
 
-跟踪流程：每次使用next_offset发起下一次logs.read，eof且active时等待300ms再查，active:false且eof时结束。`--logs RUN_ID [OFFSET]`已封装此流程，直接输出原始字节。磁盘读取不占Console缓存，不全量读日志；UI缓存仍为每实例3000行/2MiB和全局32MiB。
+请求 offset 早于 base_offset 或晚于 size 时，reset:true，并从当前 base_offset 返回，不一定是0。客户端必须记录历史已被裁剪，使用响应 next_offset 继续，不得把缺口当作“无错误”。eof 仅表示当前读到末尾，active:true 时仍可能继续输出。
 
-重启应用后先logs.list查持久化run_id，再logs.read。日志页只返回实际文件内容；外部识别服务的历史stdout无法被接管，因此只保留监测和操作记录及重启后的新输出。
+跟踪流程：每次使用next_offset发起下一次logs.read，eof且active时等待300ms再查，active:false且eof时结束。`--logs RUN_ID [OFFSET]`已封装此流程，直接输出原始字节。磁盘分页读取不占 Console 缓存；UI 缓存仍为每实例3000行/2MiB和全局30000行/32MiB。磁盘日志也受下述保留上限约束。
+
+重启应用后先 logs.list 查询仍保留的 run_id，再 logs.read；历史文件可能已按配额或过期策略清理，不保证永久存在。日志页只返回实际文件内容；外部识别服务的历史stdout无法被接管，因此只保留监测和操作记录及重启后的新输出。
+
+### 磁盘保留策略
+
+| 范围 | 默认硬上限 | 超出处理 |
+|---|---|---|
+| 单个运行日志 | 10000 行或 10 MiB，先触及者生效 | 裁掉最旧内容，保留约8000行/8MiB的最新片段，给后续输出留空间 |
+| 工作空间日志合计 | 200 MiB、50份 | 优先清理最旧修改时间的运行日志；运行中的旧日志也可能被淘汰，下次输出可重新记录，不停止项目 |
+| 历史保留时间 | 最后写入后7天 | 启动时及约每30秒清理 |
+
+限制仅针对 DevStart 数据目录 `logs/run-数字.log`，不删除原项目文件，也无法限制项目自己另行写出的业务日志。行数包括换行记录；超长单行还受字节上限保护。日志文件可能多一行内部游标说明，业务内容会预留该行，文件总行数仍不超过10000行。原子裁剪时可临时额外占用约8MiB，保留配额不包含文件系统元数据。
+
+`api.describe.log_retention` 返回上述策略。`logs.list.size` 是当前磁盘文件物理字节数，`logs.read.size` 是累计输出末尾游标，两者在裁剪后不可混用。已清理且未重新输出的历史文件不在 logs.list 中；读不到文件时应报告历史不可用，不得伪造日志。活动实例日志被回收且尚未重建时可返回空页和 reset:true。
+
+旧版本已有日志也会在新版首次打开时按同一规则整理。Console 缓存和磁盘日志分别限额，“打开日志文件”仅查看仍保留的片段，不再承诺完整永久历史。需要长期留档时，使用者应主动导出所需内容到自己管理的位置。
 
 ## 6. Python与Node调用
 
@@ -405,7 +421,7 @@ GUI字体设置提供局部预览，通过“应用并保存”统一提交，�
 
 ## 10. Console 关键词搜索
 
-logs.search复用GUI搜索器，只查询当前服务中该run保留的Console缓存（每实例最多3000行/2MiB），不加载完整磁盘文件，也不修改GUI的查询条件。历史磁盘记录用logs.read按字节流读取。keyword为字面子串，最多256字符；默认Unicode小写匹配，case_sensitive:true区分大小写，不做正则或模糊推断。空关键词返回全部缓存行，matched_lines为0。
+logs.search复用GUI搜索器，只查询当前服务中该run保留的Console缓存（每实例最多3000行/2MiB），不加载完整磁盘文件，也不修改GUI的查询条件。仍保留的历史磁盘记录用 logs.read 按累计字节游标读取。keyword为字面子串，最多256字符；默认Unicode小写匹配，case_sensitive:true区分大小写，不做正则或模糊推断。空关键词返回全部缓存行，matched_lines为0。
 
 offset为过滤后结果的行偏移，limit默认100、最多200；返回source:"console_cache"、cached_lines、dropped_lines、matched_lines、rows、next_offset、has_more。每个row含cached_row、line_number、stderr、text与highlights。highlights的start/end是text原UTF-8字节的闭开区间，每行最多64处，用于显示而非总命中次数。line_number为当前Console缓冲的序号（包含已淘汰行计数），不是磁盘原始字节或原始ANSI文件行号。日志持续输出时索引会变化，分页不保证跨请求快照；实时轮询可用相同keyword重新查询。
 
@@ -477,7 +493,7 @@ GUI 的重命名入口复用 `projects.update {"id":项目ID,"patch":{"name":"ex
 
 `runs.close {"id":123}` 关闭已结束标签；活动实例拒绝无确认关闭。确认后调用 `runs.close {"id":123,"stop":true}`，使用原优雅停止/超时强制停止流程，退出后 `tab_open:false`。取消确认不调用该方法。`runs.open {"id":123}` 重新打开历史标签，停止并关闭的请求完成前不允许重新打开。
 
-左栏显示全部活动实例和最近8条已结束记录（历史图标），关闭不删除原日志。历史属于本次软件会话，重开软件后完整日志仍可经 `logs.list/read` 查询。
+左栏显示全部活动实例和最近8条已结束记录（历史图标），关闭不删除原日志。历史属于本次软件会话，重开软件后仍保留的日志可经 `logs.list/read` 查询。
 
 Console 各视图自动换行，保留最多3000行/2MiB；可搜索纯文本。支持标准 ANSI SGR 前景色、256色/真彩色、强调、斜体及下划线；不执行终端控制序列或日志中的命令。链接与路径使用区别颜色和下划线，悬停提示 Control+点击打开。支持HTTP(S)、绝对路径、~/、相对路径及编译器行列号后缀；路径不存在会显示真实错误。
 
@@ -497,7 +513,7 @@ Console 各视图自动换行，保留最多3000行/2MiB；可搜索纯文本。
 
 计划返回 `action`、`targets`、`blocked` 与配置/源文件指纹 `revision`。向用户显示动作和对象并获得确认后，调用 `runs.bulk_apply {"confirmed":true,"plan":<原样计划>}`。未确认或过期计划不产生进程副作用。`targets[].run_id` 是十进制字符串，避免 JavaScript 精度损失；不要重建或修改计划。返回 `{action,run_ids,errors}`；启动/重启仍为异步，应跟踪新的 run_id。同步部分失败列在 errors，异步失败查看对应 Console。
 
-所有打开的标签都保留，已停止标签不会因历史上限被移除。左侧启动会话只展示最多8条结束历史；关闭历史记录另有8条缓存上限，完整日志保留在磁盘。原 `runs.stop_all` 是程序化的全实例停止；工具栏三种动作使用上述标签计划协议。
+所有打开的标签都保留，已停止标签不会因历史上限被移除。左侧启动会话只展示最多8条结束历史；关闭历史记录另有8条缓存上限，磁盘日志在保留上限内可查。原 `runs.stop_all` 是程序化的全实例停止；工具栏三种动作使用上述标签计划协议。
 
 ### 启动项修改信息与状态列
 

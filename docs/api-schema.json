@@ -538,7 +538,7 @@
         ],
         "additionalProperties": false
       },
-      "description": "按原始字节游标有界读取持久化日志；offset/tail_bytes 互斥，next_offset 原样用于续读。bytes 无损，text 便于阅读；支持重开后的日志。"
+      "description": "按累计字节游标分页读取仍保留的日志；每文件10000行/10MiB，全局200MiB/50份/7天。保留范围[base_offset,size)，retained_bytes为当前输出大小。旧游标失效返回reset=true并从base_offset继续；使用next_offset续读，不按文件大小推算。offset/tail_bytes互斥，bytes无损、text便于阅读。"
     },
     "logs.list": {
       "params": {
@@ -557,7 +557,7 @@
         "required": [],
         "additionalProperties": false
       },
-      "description": "分页列出持久化日志索引，按 next_after_id 续查；磁盘历史不代表当前实例仍可启停。"
+      "description": "分页列出仍保留的日志文件索引，按next_after_id续查；size为磁盘物理字节数。历史按200MiB/50份/7天回收，日志存在不表示实例仍可启停。"
     },
     "api.docs": {
       "params": {

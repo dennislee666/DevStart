@@ -72,6 +72,9 @@ pub fn follow(args: &[String]) -> Result<(), String> {
             return Err(e.to_string());
         }
         let r = &value["result"];
+        if r["reset"] == true {
+            eprintln!("[dev start] 日志保留范围已变化，从当前最早可读位置继续");
+        }
         let bytes: Vec<u8> =
             serde_json::from_value(r["bytes"].clone()).map_err(|e| e.to_string())?;
         std::io::stdout()

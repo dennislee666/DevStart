@@ -1,7 +1,5 @@
-//! Lifecycle events share the visible Console and append-only raw log.
+//! Lifecycle events share the visible Console and bounded raw log.
 use std::{
-    fs::OpenOptions,
-    io::Write,
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -37,11 +35,7 @@ impl Journal {
     }
     fn write(&self, error: bool, message: &str) {
         let line = format!("[dev start] {message}\n");
-        if let Err(e) = OpenOptions::new()
-            .append(true)
-            .open(&self.path)
-            .and_then(|mut f| f.write_all(line.as_bytes()))
-        {
+        if let Err(e) = crate::log_store::append(&self.path, line.as_bytes()) {
             (self.emit)(true, format!("[dev start] 生命周期日志写入失败: {e}\n"));
         }
         (self.emit)(error, line);

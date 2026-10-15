@@ -409,6 +409,9 @@ impl Service {
         Ok(run)
     }
     pub fn poll(&mut self) {
+        if let Err(error) = crate::log_store::maintain(&self.store.root.join("logs"), false) {
+            self.runtime.error = Some(format!("日志保留策略维护失败: {error}"));
+        }
         self.runtime.poll();
         self.runtime
             .refresh_external(&self.catalog.projects, self.store.root.join("logs"));

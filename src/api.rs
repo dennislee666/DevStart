@@ -1,10 +1,6 @@
 //! Versioned JSON-RPC commands; GUI and headless mode execute these on their service thread.
 use crate::{api_config as config, service::Service};
 use serde_json::{Value, json};
-use std::{
-    fs::File,
-    io::{Read, Seek, SeekFrom},
-};
 
 pub const METHODS: &[&str] = &[
     "editor.list",
@@ -90,7 +86,10 @@ pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, Strin
             Ok(
                 json!({"name":"DevStart","edition":crate::app_identity::edition(),"api_version":1,"transport":"unix-jsonrpc-ndjson","methods":METHODS,
                 "default_group_id":1,"max_request_bytes":2097152,"max_response_bytes":8388608,
-                "max_log_chunk_bytes":65536,"documentation":"docs/api.md","contracts":serde_json::from_str::<Value>(include_str!("../docs/api-schema.json")).map_err(|e|e.to_string())?, "launch_spec":{
+                "max_log_chunk_bytes":65536,"log_retention":{
+                    "max_lines_per_file":crate::log_store::MAX_LINES,"max_bytes_per_file":crate::log_store::MAX_BYTES,
+                    "max_total_bytes":crate::log_store::MAX_TOTAL_BYTES,"max_files":crate::log_store::MAX_FILES,
+                    "max_age_days":7},"documentation":"docs/api.md","contracts":serde_json::from_str::<Value>(include_str!("../docs/api-schema.json")).map_err(|e|e.to_string())?, "launch_spec":{
                     "required":["name","file","entry","description"],
                     "optional":["cwd","args","environment","expected_port","resource_key","enabled","display_command"]}}),
             )
@@ -331,45 +330,33 @@ pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, Strin
             if std::fs::symlink_metadata(&path).is_ok_and(|m| !m.file_type().is_file()) {
                 return Err("日志路径不是普通文件".into());
             }
-            let mut file = match File::open(&path) {
-                Ok(file) => file,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound && active => {
-                    return Ok(
-                        json!({"run_id":run_id,"offset":0,"next_offset":0,"size":0,"text":"","bytes":[],"active":true,"reset":false,"eof":true}),
-                    );
-                }
-                Err(e) => return Err(e.to_string()),
-            };
-            let size = file.metadata().map_err(|e| e.to_string())?.len();
-            let limit = if p.get("limit").is_some() {
-                config::id(p, "limit")?.clamp(1, 65536)
-            } else {
-                16384
-            };
             if p.get("offset").is_some() && p.get("tail_bytes").is_some() {
                 return Err("offset和tail_bytes不能同时指定".into());
             }
-            let requested = if p.get("tail_bytes").is_some() {
-                size.saturating_sub(config::id(p, "tail_bytes")?.min(65536))
-            } else {
-                p.get("offset")
-                    .map(|_| config::id(p, "offset"))
-                    .transpose()?
-                    .unwrap_or(0)
+            let requested = p
+                .get("offset")
+                .map(|_| config::id(p, "offset"))
+                .transpose()?;
+            let tail = p
+                .get("tail_bytes")
+                .map(|_| config::id(p, "tail_bytes"))
+                .transpose()?;
+            let limit = p
+                .get("limit")
+                .map(|_| config::id(p, "limit"))
+                .transpose()?
+                .unwrap_or(16384)
+                .clamp(1, 65536);
+            let mut page = match crate::log_store::read(&path, requested, tail, limit) {
+                Ok(page) => serde_json::to_value(page).map_err(|e| e.to_string())?,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound && active => json!({
+                    "offset":0,"next_offset":0,"size":0,"base_offset":0,"retained_bytes":0,
+                    "text":"","bytes":[],"reset":true,"eof":true}),
+                Err(e) => return Err(e.to_string()),
             };
-            let offset = if requested > size { 0 } else { requested };
-            file.seek(SeekFrom::Start(offset))
-                .map_err(|e| e.to_string())?;
-            let mut bytes = Vec::new();
-            file.take(limit)
-                .read_to_end(&mut bytes)
-                .map_err(|e| e.to_string())?;
-            // Return exact byte cursors and raw bytes for lossless consumers. Text is an optional lossy convenience.
-            let next = offset + bytes.len() as u64;
-            Ok(
-                json!({"run_id":run_id,"offset":offset,"next_offset":next,"size":size,"text":String::from_utf8_lossy(&bytes),
-                "bytes":bytes,"active":active,"reset":requested>size,"eof":next>=size}),
-            )
+            page["run_id"] = json!(run_id);
+            page["active"] = json!(active);
+            Ok(page)
         }
         _ => config::handle(s, method, p),
     }
