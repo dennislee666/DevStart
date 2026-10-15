@@ -1515,10 +1515,7 @@ fn command_tooltips_bound_unicode_without_changing_execution() {
     assert_eq!(command_preview(&long), format!("{}…", "中".repeat(100)));
     assert_eq!(
         run_tooltip("Starter", &long, "~/Projects/example-java"),
-        format!(
-            "Starter\n{}…\n~/Projects/example-java",
-            "中".repeat(100)
-        )
+        format!("Starter\n{}…\n~/Projects/example-java", "中".repeat(100))
     );
 }
 
