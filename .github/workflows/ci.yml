@@ -15,6 +15,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install Rust components
         run: rustup component add rustfmt clippy
+      - name: Toolchain versions
+        run: |
+          rustc --version
+          cargo --version
+          cargo clippy --version
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked

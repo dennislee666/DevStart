@@ -102,7 +102,7 @@ impl DevStart {
                     } else {
                         BG
                     })
-                    .stroke(egui::Stroke::new(1.0, tone(self.light, BORDER)))
+                    .stroke(egui::Stroke::new(1.0_f32, tone(self.light, BORDER)))
                     .corner_radius(6)
                     .inner_margin(16.0)
                     .show(ui, |ui| {

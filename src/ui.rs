@@ -509,7 +509,7 @@ impl DevStart {
                                     Color32::TRANSPARENT
                                 })
                                 .stroke(egui::Stroke::new(
-                                    1.0,
+                                    1.0_f32,
                                     if selected {
                                         tone(self.light, BORDER)
                                     } else {
@@ -1691,7 +1691,7 @@ fn paint_run_marker(ui: &egui::Ui, response: &egui::Response, state: State, ligh
         ui.painter().circle_filled(center, 2.6, color);
     } else {
         ui.painter()
-            .circle_stroke(center, 2.6, egui::Stroke::new(1.0, color));
+            .circle_stroke(center, 2.6, egui::Stroke::new(1.0_f32, color));
     }
 }
 

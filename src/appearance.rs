@@ -123,29 +123,29 @@ pub fn style(p: &Preferences, light: bool) -> egui::Style {
     style.visuals.extreme_bg_color = if light { Color32::WHITE } else { BG };
     style.visuals.faint_bg_color = if light { Color32::from_gray(243) } else { SIDE };
     style.visuals.override_text_color = Some(text);
-    style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, border);
+    style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, border);
     style.visuals.widgets.inactive.bg_fill = if light {
         Color32::from_gray(243)
     } else {
         SURFACE
     };
     style.visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
-    style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, border);
+    style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, border);
     for widget in [
         &mut style.visuals.widgets.hovered,
         &mut style.visuals.widgets.active,
     ] {
         widget.weak_bg_fill = hover;
         widget.bg_fill = hover;
-        widget.bg_stroke = egui::Stroke::new(1.0, border);
+        widget.bg_stroke = egui::Stroke::new(1.0_f32, border);
     }
     style.visuals.selection.bg_fill = if light {
         Color32::from_rgb(218, 231, 226)
     } else {
         Color32::from_rgb(44, 49, 48)
     };
-    style.visuals.selection.stroke = egui::Stroke::new(1.0, text);
-    style.visuals.window_stroke = egui::Stroke::new(1.0, border);
+    style.visuals.selection.stroke = egui::Stroke::new(1.0_f32, text);
+    style.visuals.window_stroke = egui::Stroke::new(1.0_f32, border);
     style.visuals.window_corner_radius = egui::CornerRadius::same(6);
     for widget in [
         &mut style.visuals.widgets.inactive,
