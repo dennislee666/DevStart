@@ -952,8 +952,12 @@ impl DevStart {
                                                     }
                                                 }
                                             });
-                                            if favorite_button(ui, project.favorite, "收藏项目")
-                                            {
+                                            if favorite_button(
+                                                ui,
+                                                project.favorite,
+                                                "收藏项目",
+                                                self.light,
+                                            ) {
                                                 let result = self
                                                     .service
                                                     .as_mut()
@@ -1123,6 +1127,19 @@ impl DevStart {
                         Err(e) => self.report(Err(e)),
                     }
                 }
+                if favorite_button(
+                    ui,
+                    script.favorite,
+                    if script.favorite {
+                        "取消收藏启动项"
+                    } else {
+                        "收藏启动项"
+                    },
+                    self.light,
+                ) {
+                    let result = self.service.as_mut().unwrap().script_favorite(script.id);
+                    self.report(result);
+                }
                 if small(ui, icon::PENCIL_SIMPLE, "编辑原脚本文件") {
                     self.open_editor(script.id);
                 }
@@ -1209,6 +1226,9 @@ impl DevStart {
         let mut restart = None;
         let mut clear = false;
         let mut open = false;
+        let mut toggle_favorite = false;
+        let run_script_id = s.runtime.runs[index].script_id;
+        let favorite_state = s.script(run_script_id).map(|script| script.favorite);
         let run = &s.runtime.runs[index];
         egui::Frame::new()
             .fill(if self.light {
@@ -1319,12 +1339,40 @@ impl DevStart {
                             }
                             clear = small(ui, icon::ERASER, "清空视图");
                             open = small(ui, icon::FILE_TEXT, "打开日志文件");
+                            if let Some(favorite) = favorite_state
+                                && favorite_button(
+                                    ui,
+                                    favorite,
+                                    if favorite {
+                                        "取消收藏启动项"
+                                    } else {
+                                        "收藏启动项"
+                                    },
+                                    self.light,
+                                )
+                            {
+                                toggle_favorite = true;
+                            }
                         } else if tab_root {
                             if small(ui, icon::MAGNIFYING_GLASS, "搜索日志 · ⌘F") {
                                 search.toggle();
                             }
                             clear = small(ui, icon::ERASER, "清空视图");
                             open = small(ui, icon::FILE_TEXT, "打开日志文件");
+                            if let Some(favorite) = favorite_state
+                                && favorite_button(
+                                    ui,
+                                    favorite,
+                                    if favorite {
+                                        "取消收藏启动项"
+                                    } else {
+                                        "收藏启动项"
+                                    },
+                                    self.light,
+                                )
+                            {
+                                toggle_favorite = true;
+                            }
                         }
                     });
                 });
@@ -1356,6 +1404,20 @@ impl DevStart {
 
                             clear = small(ui, icon::ERASER, "清空视图");
                             open = small(ui, icon::FILE_TEXT, "打开日志文件");
+                            if let Some(favorite) = favorite_state
+                                && favorite_button(
+                                    ui,
+                                    favorite,
+                                    if favorite {
+                                        "取消收藏启动项"
+                                    } else {
+                                        "收藏启动项"
+                                    },
+                                    self.light,
+                                )
+                            {
+                                toggle_favorite = true;
+                            }
                             if !compact {
                                 let preview =
                                     crate::presentation::command_preview(&run.display_command);
@@ -1454,7 +1516,13 @@ impl DevStart {
         if let Some(run) = restarted {
             self.selected_run = Some(run);
         }
+        let favorite_result = if toggle_favorite {
+            s.script_favorite(run_script_id)
+        } else {
+            Ok(())
+        };
         self.report(restart_result);
+        self.report(favorite_result);
         if open {
             self.report(service::open_file(&path));
         }
@@ -2293,12 +2361,19 @@ fn state_color(state: State, light: bool) -> Color32 {
     }
 }
 
-fn favorite_button(ui: &mut egui::Ui, selected: bool, tooltip: &str) -> bool {
-    let text = button_icon(icon::STAR, ui.is_enabled()).size(16.0);
+fn favorite_button(ui: &mut egui::Ui, selected: bool, tooltip: &str, light: bool) -> bool {
+    let family = if selected {
+        "action-fill"
+    } else {
+        "action-outline"
+    };
+    let text = RichText::new(icon::STAR)
+        .family(egui::FontFamily::Name(family.into()))
+        .size(16.0);
     let text = if selected {
         text.color(Color32::from_rgb(231, 190, 106))
     } else {
-        text
+        text.color(tone(light, MUTED))
     };
     ui.add(egui::Button::new(text).frame(false))
         .on_hover_text(tooltip)
