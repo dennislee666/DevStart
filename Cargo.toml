@@ -1,6 +1,6 @@
 [package]
 name = "dev-start"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.88"
 description = "A native local development script launcher"
@@ -27,4 +27,6 @@ strip = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSScreen"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSScreen", "NSApplication", "NSMenu", "NSMenuItem"] }
+
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSString", "NSObject"] }

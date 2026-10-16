@@ -3,7 +3,9 @@ mod api_client;
 mod api_config;
 mod api_transport;
 mod app_identity;
+mod app_info;
 mod appearance;
+mod application_menu;
 mod bulk;
 mod config_transaction;
 mod configured_ports;
@@ -37,6 +39,10 @@ mod windows;
 fn main() -> eframe::Result {
     let args: Vec<_> = std::env::args().collect();
     let action = match args.get(1).map(String::as_str) {
+        Some("--version") => {
+            println!("{}", app_info::VERSION);
+            return Ok(());
+        }
         Some("--edition") => {
             println!("{}", app_identity::edition());
             return Ok(());

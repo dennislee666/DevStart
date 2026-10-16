@@ -197,6 +197,11 @@ impl DevStart {
                     }
                 });
                 ui.add_space(20.0);
+                section(ui, tr("关于"));
+                if ui.button(tr("关于 DevStart")).clicked() {
+                    self.about_open = true;
+                }
+                ui.add_space(20.0);
                 section(ui, tr("快捷键"));
                 setting_row(ui, tr("收起 / 展开侧栏"), |ui| {
                     ui.label(

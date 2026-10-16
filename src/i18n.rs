@@ -177,6 +177,7 @@ mod tests {
             include_str!("ui.rs"),
             include_str!("ui_editor.rs"),
             include_str!("ui_settings.rs"),
+            include_str!("ui_about.rs"),
             include_str!("ui_console_search.rs"),
             include_str!("ui_console_render.rs"),
         ] {

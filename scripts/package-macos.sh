@@ -54,6 +54,7 @@ bundle_id="com.devstart.public"
 if [[ "$edition" == "personal" ]]; then
   bundle_id="com.devstart.desktop"
 fi
+version=$("$package_binary" --version)
 app='dist/DevStart.app'
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp LICENSE "$app/Contents/Resources/LICENSE"
@@ -84,8 +85,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>CFBundleIdentifier</key><string>$bundle_id</string>
 <key>CFBundleExecutable</key><string>dev-start</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>$version</string>
+<key>CFBundleVersion</key><string>$version</string>
 <key>CFBundleIconFile</key><string>DevStart.icns</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSMinimumSystemVersion</key><string>12.0</string>

@@ -100,7 +100,7 @@ fn mcp_result(request: &Value, root: &std::path::Path, initialized: &mut bool) -
     let result = match method {
         "initialize" => {
             *initialized = true;
-            json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"dev-start","version":"0.1.0"},
+            json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"dev-start","version":crate::app_info::VERSION},
                 "instructions":"Call api.describe first and read docs/api.md. Configuration never starts scripts implicitly. Use explicit runs.start/runs.restart only for the requested launch. Disabled deployment entries remain disabled. logs.read returns bounded byte-cursor pages."})
         }
         "ping" => json!({}),

@@ -12,6 +12,8 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
+#[path = "ui_about.rs"]
+mod about_ui;
 #[path = "ui_console_render.rs"]
 mod console_render;
 #[path = "ui_dialog.rs"]
@@ -33,6 +35,9 @@ struct ScriptInfoDraft {
 }
 pub struct DevStart {
     brand_icon: egui::TextureHandle,
+    about_open: bool,
+    native_menu: Option<crate::application_menu::NativeMenu>,
+    menu_initialized: bool,
     service: Option<Service>,
     selected_editor: Option<u64>,
     editor_reset_ids: Vec<u64>,
@@ -107,6 +112,9 @@ impl DevStart {
             .unwrap_or_default();
         let mut app = Self {
             brand_icon,
+            about_open: false,
+            native_menu: None,
+            menu_initialized: false,
             service,
             selected_editor: None,
             editor_reset_ids: vec![],
@@ -244,29 +252,22 @@ impl DevStart {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    let hint = if collapsed {
-                        tr("展开侧栏 · ⌘B")
-                    } else {
-                        tr("收起侧栏 · ⌘B")
-                    };
-                    let response = ui
-                        .add(
-                            egui::Button::new(
-                                egui::Image::new((self.brand_icon.id(), Vec2::splat(22.0)))
-                                    .alt_text("DevStart"),
-                            )
-                            .frame(false)
-                            .min_size(Vec2::splat(26.0)),
-                        )
-                        .on_hover_text(hint)
-                        .on_hover_cursor(egui::CursorIcon::PointingHand);
-                    response.widget_info(|| {
-                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, hint)
-                    });
-                    if response.clicked() {
+                    if small(
+                        ui,
+                        icon::SIDEBAR_SIMPLE,
+                        if collapsed {
+                            tr("展开侧栏 · ⌘B")
+                        } else {
+                            tr("收起侧栏 · ⌘B")
+                        },
+                    ) {
                         self.toggle_sidebar();
                     }
                     if !collapsed {
+                        ui.add(
+                            egui::Image::new((self.brand_icon.id(), Vec2::splat(22.0)))
+                                .alt_text("DevStart"),
+                        );
                         ui.label(RichText::new("DevStart").strong());
                     }
                 });
@@ -2136,6 +2137,27 @@ impl eframe::App for DevStart {
             self.locale_checked = std::time::Instant::now();
         }
         let _locale = crate::i18n::scope(self.preferences().language.resolve(self.system_locale));
+        if !self.menu_initialized {
+            self.menu_initialized = true;
+            match crate::application_menu::NativeMenu::install(crate::i18n::current()) {
+                Ok(menu) => self.native_menu = Some(menu),
+                Err(error) => {
+                    eprintln!("[dev start] {error}");
+                    self.error = Some(error);
+                }
+            }
+        }
+        if let Some(menu) = &mut self.native_menu {
+            menu.sync_locale(crate::i18n::current());
+        }
+        if crate::application_menu::take_about_request() {
+            self.about_open = true;
+            ctx.send_viewport_cmd_to(
+                egui::ViewportId::ROOT,
+                egui::ViewportCommand::Minimized(false),
+            );
+            ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+        }
         self.editor_quit_guard(ctx);
         if let Some(s) = &mut self.service {
             let count = s.runtime.runs.len();
@@ -2221,6 +2243,7 @@ impl eframe::App for DevStart {
         self.editor_dialogs(ctx);
         self.dialogs(ctx);
         self.show_console_windows(ctx);
+        self.about_dialog(ctx);
         ctx.request_repaint_after(Duration::from_millis(100));
     }
 }
