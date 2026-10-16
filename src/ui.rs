@@ -1228,11 +1228,16 @@ impl DevStart {
             .inner_margin(egui::Margin::symmetric(10, 6))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
-                let compact = ui.available_height() < 420.0 || ui.available_width() < 620.0;
+                let tiled_root = self.tiled && ui.ctx().viewport_id() == egui::ViewportId::ROOT;
+                let available_width = ui.available_width();
+                let compact = ui.available_height() < 420.0
+                    || available_width < 620.0
+                    || tiled_root && available_width < 780.0;
                 ui.spacing_mut().item_spacing.y = 4.0;
                 ui.spacing_mut().button_padding = Vec2::new(7.0, 3.0);
                 ui.horizontal(|ui| {
-                    let title_width = (ui.available_width() - 76.0).max(20.0);
+                    let reserved_actions = if tiled_root { 300.0 } else { 76.0 };
+                    let title_width = (ui.available_width() - reserved_actions).max(20.0);
                     ui.allocate_ui_with_layout(
                         Vec2::new(title_width, 24.0),
                         egui::Layout::left_to_right(egui::Align::Center),
@@ -1298,50 +1303,80 @@ impl DevStart {
                                 restart = Some(run.script_id);
                             }
                         });
-                        if self.tiled
-                            && ui.ctx().viewport_id() == egui::ViewportId::ROOT
-                            && small(ui, icon::CORNERS_OUT, "在标签视图中打开当前 Console")
-                        {
-                            self.open_console_as_tab = Some(id);
+                        if tiled_root {
+                            if small(ui, icon::CORNERS_OUT, "在标签视图中打开当前 Console")
+                            {
+                                self.open_console_as_tab = Some(id);
+                            }
+                            if ui.checkbox(follow, "跟随输出").changed() && *follow {
+                                follow_requested = true;
+                            }
+                            if small(ui, icon::MAGNIFYING_GLASS, "搜索日志 · ⌘F") {
+                                search.toggle();
+                            }
+                            clear = small(ui, icon::ERASER, "清空视图");
+                            open = small(ui, icon::FILE_TEXT, "打开日志文件");
                         }
                     });
                 });
                 if compact {
                     ui.horizontal_wrapped(|ui| run_status(ui, run, self.light));
                 }
-                ui.horizontal(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.checkbox(follow, "跟随输出").changed() && *follow {
-                            follow_requested = true;
-                        }
-                        if small(ui, icon::MAGNIFYING_GLASS, "搜索日志 · ⌘F") {
-                            search.toggle();
-                        }
-
-                        clear = small(ui, icon::ERASER, "清空视图");
-                        open = small(ui, icon::FILE_TEXT, "打开日志文件");
-                        if !compact {
+                if !tiled_root || !compact {
+                    ui.horizontal(|ui| {
+                        if tiled_root {
                             let preview =
                                 crate::presentation::command_preview(&run.display_command);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&preview)
+                                        .monospace()
+                                        .color(tone(self.light, MUTED)),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(crate::presentation::command_preview(&run.command));
+                        } else {
                             ui.with_layout(
-                                egui::Layout::left_to_right(egui::Align::Center),
+                                egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    ui.add(
-                                        egui::Label::new(
-                                            RichText::new(&preview)
-                                                .monospace()
-                                                .color(tone(self.light, MUTED)),
-                                        )
-                                        .truncate(),
-                                    )
-                                    .on_hover_text(
-                                        crate::presentation::command_preview(&run.command),
-                                    );
+                                    if ui.checkbox(follow, "跟随输出").changed() && *follow {
+                                        follow_requested = true;
+                                    }
+                                    if small(ui, icon::MAGNIFYING_GLASS, "搜索日志 · ⌘F") {
+                                        search.toggle();
+                                    }
+
+                                    clear = small(ui, icon::ERASER, "清空视图");
+                                    open = small(ui, icon::FILE_TEXT, "打开日志文件");
+                                    if !compact {
+                                        let preview = crate::presentation::command_preview(
+                                            &run.display_command,
+                                        );
+                                        ui.with_layout(
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        RichText::new(&preview)
+                                                            .monospace()
+                                                            .color(tone(self.light, MUTED)),
+                                                    )
+                                                    .truncate(),
+                                                )
+                                                .on_hover_text(
+                                                    crate::presentation::command_preview(
+                                                        &run.command,
+                                                    ),
+                                                );
+                                            },
+                                        );
+                                    }
                                 },
                             );
                         }
                     });
-                });
+                }
             });
         ui.add_space(4.0);
         let input = search_ui::controls(ui, search, id);
