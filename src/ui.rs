@@ -32,6 +32,7 @@ struct ScriptInfoDraft {
     reset_name: bool,
 }
 pub struct DevStart {
+    brand_icon: egui::TextureHandle,
     service: Option<Service>,
     selected_editor: Option<u64>,
     editor_reset_ids: Vec<u64>,
@@ -74,6 +75,18 @@ pub struct DevStart {
 impl DevStart {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let light = false;
+        // Decode the bundled app icon once; all sidebar frames share its GPU texture.
+        let icon =
+            eframe::icon_data::from_png_bytes(include_bytes!("../assets/devstart-window-icon.png"))
+                .expect("embedded DevStart icon is valid PNG");
+        let brand_icon = cc.egui_ctx.load_texture(
+            "devstart-app-mark",
+            egui::ColorImage::from_rgba_unmultiplied(
+                [icon.width as usize, icon.height as usize],
+                &icon.rgba,
+            ),
+            egui::TextureOptions::LINEAR,
+        );
         let (service, mut error) = match Service::load() {
             Ok(s) => (Some(s), None),
             Err(e) => (None, Some(e)),
@@ -93,6 +106,7 @@ impl DevStart {
             .map(|s| s.catalog.projects.iter().map(|p| p.id).collect())
             .unwrap_or_default();
         let mut app = Self {
+            brand_icon,
             service,
             selected_editor: None,
             editor_reset_ids: vec![],
@@ -230,15 +244,26 @@ impl DevStart {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if small(
-                        ui,
-                        icon::SIDEBAR_SIMPLE,
-                        if collapsed {
-                            tr("展开侧栏 · ⌘B")
-                        } else {
-                            tr("收起侧栏 · ⌘B")
-                        },
-                    ) {
+                    let hint = if collapsed {
+                        tr("展开侧栏 · ⌘B")
+                    } else {
+                        tr("收起侧栏 · ⌘B")
+                    };
+                    let response = ui
+                        .add(
+                            egui::Button::new(
+                                egui::Image::new((self.brand_icon.id(), Vec2::splat(22.0)))
+                                    .alt_text("DevStart"),
+                            )
+                            .frame(false)
+                            .min_size(Vec2::splat(26.0)),
+                        )
+                        .on_hover_text(hint)
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    response.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, hint)
+                    });
+                    if response.clicked() {
                         self.toggle_sidebar();
                     }
                     if !collapsed {
