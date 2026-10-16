@@ -7,6 +7,10 @@ DevStart 把散落在不同项目中的启动命令集中到一个桌面窗口�
 
 **脚本仍属于原项目。** DevStart 引用项目自己的文件、命令和参数，不接管项目依赖，不在导入时运行脚本。开源版初次启动没有项目、启动项或个人分组，只有一个空的默认分组。
 
+## 下载 1.0
+
+[正式发布与下载](https://github.com/dennislee666/DevStart/releases/tag/v1.0.0)：macOS 12 及以上，Universal（Intel x86_64 / Apple Silicon）。安装及签名说明见[1.0 发布说明](docs/releases/1.0.md)。
+
 ## 界面预览
 
 下面是 **Facebook 虚构项目分组**的真实应用截图：Java API、后台管理、官网、手机 H5，每个项目分别提供“正式生产库”和“测试库”两个启动项。
@@ -16,6 +20,10 @@ DevStart 把散落在不同项目中的启动命令集中到一个桌面窗口�
 多个启动项同时运行时，可以切换标签查看各自的输出，也可以使用平铺视图。项目信息区显示状态、端口、PID、启动时间和运行时长；Console 支持搜索、过滤、彩色输出和 Control + 点击打开链接。
 
 ![运行 Console：标签切换、端口状态与彩色模拟日志](docs/screenshots/facebook-console.png)
+
+平铺视图同时查看四个项目的 Console，快速定位服务状态与日志。
+
+![Facebook 虚构工作区：四个服务的平铺 Console](docs/screenshots/facebook-tiles.png)
 
 | 项目 | 正式生产库端口 | 测试库端口 | 示例目录 |
 | --- | --- | --- | --- |
