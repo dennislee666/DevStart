@@ -106,7 +106,6 @@ pub(super) fn show(
     prefs: &Preferences,
     light: bool,
     follow: bool,
-    follow_requested: bool,
     jump: bool,
 ) -> Option<String> {
     let width = (ui.available_width() - ui.spacing().scroll.bar_width - 8.0).max(1.0);
@@ -171,10 +170,7 @@ pub(super) fn show(
     let mut scroll = egui::ScrollArea::vertical()
         .id_salt(("console", run.id))
         .auto_shrink([false, false])
-        .stick_to_bottom(follow);
-    if follow_requested {
-        scroll = scroll.vertical_scroll_offset(total);
-    }
+        .stick_to_bottom(follow && !jump);
     if jump && let Some(row) = view.active_visible_row {
         scroll = scroll.vertical_scroll_offset(
             (cache.offsets.get(row).copied().unwrap_or(0.0) - ui.available_height() / 3.0).max(0.0),

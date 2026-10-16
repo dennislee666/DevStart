@@ -2,14 +2,12 @@ use eframe::egui::{self, Rect, Vec2};
 
 #[derive(Clone)]
 pub struct ConsoleWindow {
-    pub follow: bool,
     pub placement: Option<Rect>,
     pub size: Vec2,
 }
 impl Default for ConsoleWindow {
     fn default() -> Self {
         Self {
-            follow: true,
             placement: None,
             size: Vec2::new(760.0, 520.0),
         }

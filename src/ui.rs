@@ -59,7 +59,6 @@ pub struct DevStart {
     import_group: u64,
     script_info: Option<ScriptInfoDraft>,
     add_script: Option<(u64, String, String)>,
-    main_follow: HashMap<u64, bool>,
     console_queries: HashMap<u64, search_ui::SearchUi>,
     console_layouts: HashMap<(egui::ViewportId, u64), console_render::LayoutCache>,
     console_windows: BTreeMap<u64, crate::windows::ConsoleWindow>,
@@ -119,7 +118,6 @@ impl DevStart {
             import_group: 1,
             script_info: None,
             add_script: None,
-            main_follow: HashMap::new(),
             console_queries: HashMap::new(),
             console_layouts: HashMap::new(),
             console_windows: BTreeMap::new(),
@@ -682,9 +680,7 @@ impl DevStart {
             return;
         }
         if let Some(id) = self.selected_run {
-            let mut follow = self.main_follow.get(&id).copied().unwrap_or(true);
-            ui.push_id(("tab-console", id), |ui| self.console(ui, id, &mut follow));
-            self.main_follow.insert(id, follow);
+            ui.push_id(("tab-console", id), |ui| self.console(ui, id));
         } else {
             ui.add_space(24.0);
             ui.horizontal(|ui| {
@@ -736,15 +732,9 @@ impl DevStart {
                                         })
                                         .inner_margin(10.0)
                                         .show(ui, |ui| {
-                                            let mut follow = self
-                                                .main_follow
-                                                .get(&tab.id)
-                                                .copied()
-                                                .unwrap_or(true);
                                             ui.push_id(("tile-console", tab.id), |ui| {
-                                                self.console(ui, tab.id, &mut follow)
+                                                self.console(ui, tab.id)
                                             });
-                                            self.main_follow.insert(tab.id, follow);
                                         });
                                 },
                             );
@@ -1197,7 +1187,7 @@ impl DevStart {
             });
         });
     }
-    fn console(&mut self, ui: &mut egui::Ui, id: u64, follow: &mut bool) {
+    fn console(&mut self, ui: &mut egui::Ui, id: u64) {
         let can_find =
             self.selected_run == Some(id) || ui.ctx().viewport_id() != egui::ViewportId::ROOT;
         let find =
@@ -1213,7 +1203,6 @@ impl DevStart {
         let Some(index) = s.runtime.runs.iter().position(|r| r.id == id) else {
             return;
         };
-        let mut follow_requested = false;
         let mut stop = false;
         let mut restart = None;
         let mut clear = false;
@@ -1229,7 +1218,9 @@ impl DevStart {
             .inner_margin(egui::Margin::symmetric(10, 6))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
-                let tiled_root = self.tiled && ui.ctx().viewport_id() == egui::ViewportId::ROOT;
+                let root_console = ui.ctx().viewport_id() == egui::ViewportId::ROOT;
+                let tiled_root = self.tiled && root_console;
+                let tab_root = !self.tiled && root_console;
                 let available_width = ui.available_width();
                 let compact = ui.available_height() < 420.0
                     || available_width < 620.0
@@ -1237,7 +1228,13 @@ impl DevStart {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 ui.spacing_mut().button_padding = Vec2::new(7.0, 3.0);
                 ui.horizontal(|ui| {
-                    let reserved_actions = if tiled_root { 300.0 } else { 76.0 };
+                    let reserved_actions = if tiled_root {
+                        300.0
+                    } else if tab_root {
+                        160.0
+                    } else {
+                        76.0
+                    };
                     let title_width = (ui.available_width() - reserved_actions).max(20.0);
                     ui.allocate_ui_with_layout(
                         Vec2::new(title_width, 24.0),
@@ -1252,11 +1249,41 @@ impl DevStart {
                                 Vec2::new(name_width, 22.0),
                                 egui::Layout::left_to_right(egui::Align::Center),
                                 |ui| {
-                                    ui.add(
-                                        egui::Label::new(RichText::new(&run.title).strong())
-                                            .truncate(),
-                                    )
-                                    .on_hover_text(&run.title);
+                                    if tiled_root {
+                                        ui.horizontal(|ui| {
+                                            let marker_width = 10.0;
+                                            let (rect, _) = ui.allocate_exact_size(
+                                                Vec2::new(marker_width, 22.0),
+                                                egui::Sense::hover(),
+                                            );
+                                            let center = rect.center();
+                                            let color = state_color(run.state, self.light);
+                                            if run.state.active() {
+                                                ui.painter().circle_filled(center, 2.6, color);
+                                            } else {
+                                                ui.painter().circle_stroke(
+                                                    center,
+                                                    2.6,
+                                                    egui::Stroke::new(1.0, color),
+                                                );
+                                            }
+                                            let title_width = ui.available_width().max(20.0);
+                                            ui.add_sized(
+                                                [title_width, 22.0],
+                                                egui::Label::new(
+                                                    RichText::new(&run.title).strong(),
+                                                )
+                                                .truncate(),
+                                            )
+                                            .on_hover_text(&run.title);
+                                        });
+                                    } else {
+                                        ui.add(
+                                            egui::Label::new(RichText::new(&run.title).strong())
+                                                .truncate(),
+                                        )
+                                        .on_hover_text(&run.title);
+                                    }
                                 },
                             );
                             if !compact {
@@ -1309,9 +1336,12 @@ impl DevStart {
                             {
                                 self.open_console_as_tab = Some(id);
                             }
-                            if ui.checkbox(follow, "跟随输出").changed() && *follow {
-                                follow_requested = true;
+                            if small(ui, icon::MAGNIFYING_GLASS, "搜索日志 · ⌘F") {
+                                search.toggle();
                             }
+                            clear = small(ui, icon::ERASER, "清空视图");
+                            open = small(ui, icon::FILE_TEXT, "打开日志文件");
+                        } else if tab_root {
                             if small(ui, icon::MAGNIFYING_GLASS, "搜索日志 · ⌘F") {
                                 search.toggle();
                             }
@@ -1323,9 +1353,9 @@ impl DevStart {
                 if compact {
                     ui.horizontal_wrapped(|ui| run_status(ui, run, self.light));
                 }
-                if !tiled_root || !compact {
-                    ui.horizontal(|ui| {
-                        if tiled_root {
+                if tiled_root || tab_root {
+                    if !compact {
+                        ui.horizontal(|ui| {
                             let preview =
                                 crate::presentation::command_preview(&run.display_command);
                             ui.add(
@@ -1337,45 +1367,38 @@ impl DevStart {
                                 .truncate(),
                             )
                             .on_hover_text(crate::presentation::command_preview(&run.command));
-                        } else {
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if ui.checkbox(follow, "跟随输出").changed() && *follow {
-                                        follow_requested = true;
-                                    }
-                                    if small(ui, icon::MAGNIFYING_GLASS, "搜索日志 · ⌘F") {
-                                        search.toggle();
-                                    }
+                        });
+                    }
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if small(ui, icon::MAGNIFYING_GLASS, "搜索日志 · ⌘F") {
+                                search.toggle();
+                            }
 
-                                    clear = small(ui, icon::ERASER, "清空视图");
-                                    open = small(ui, icon::FILE_TEXT, "打开日志文件");
-                                    if !compact {
-                                        let preview = crate::presentation::command_preview(
-                                            &run.display_command,
+                            clear = small(ui, icon::ERASER, "清空视图");
+                            open = small(ui, icon::FILE_TEXT, "打开日志文件");
+                            if !compact {
+                                let preview =
+                                    crate::presentation::command_preview(&run.display_command);
+                                ui.with_layout(
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(&preview)
+                                                    .monospace()
+                                                    .color(tone(self.light, MUTED)),
+                                            )
+                                            .truncate(),
+                                        )
+                                        .on_hover_text(
+                                            crate::presentation::command_preview(&run.command),
                                         );
-                                        ui.with_layout(
-                                            egui::Layout::left_to_right(egui::Align::Center),
-                                            |ui| {
-                                                ui.add(
-                                                    egui::Label::new(
-                                                        RichText::new(&preview)
-                                                            .monospace()
-                                                            .color(tone(self.light, MUTED)),
-                                                    )
-                                                    .truncate(),
-                                                )
-                                                .on_hover_text(
-                                                    crate::presentation::command_preview(
-                                                        &run.command,
-                                                    ),
-                                                );
-                                            },
-                                        );
-                                    }
-                                },
-                            );
-                        }
+                                    },
+                                );
+                            }
+                        });
                     });
                 }
             });
@@ -1396,9 +1419,6 @@ impl DevStart {
         search.matched = view.matched_lines;
         let jump = input.direction != 0
             || input.changed && !search.query.keyword.is_empty() && !search.query.only_matches;
-        if jump {
-            *follow = false;
-        }
         let run = &s.runtime.runs[index];
         if run.lines.dropped > 0 || run.lines.shortened {
             ui.label(
@@ -1431,8 +1451,7 @@ impl DevStart {
                     cache,
                     &s.catalog.preferences,
                     self.light,
-                    *follow,
-                    follow_requested,
+                    true,
                     jump,
                 ) && let Err(e) = crate::console_text::open(&target, &run.cwd)
                 {
@@ -1548,9 +1567,7 @@ impl DevStart {
                                 .inner_margin(14.0),
                         )
                         .show(child, |ui| {
-                            ui.push_id(("console-window", id), |ui| {
-                                self.console(ui, id, &mut view.follow)
-                            });
+                            ui.push_id(("console-window", id), |ui| self.console(ui, id));
                         });
                     child.request_repaint_after(Duration::from_millis(100));
                 },
@@ -1999,7 +2016,6 @@ impl eframe::App for DevStart {
             self.console_layouts
                 .retain(|(_, id), _| retained.contains(id));
             self.console_queries.retain(|id, _| retained.contains(id));
-            self.main_follow.retain(|id, _| retained.contains(id));
             self.console_windows.retain(|id, _| retained.contains(id));
             if let Some(error) = s.runtime.error.take() {
                 self.error = Some(error);
