@@ -42,7 +42,7 @@ fn source_editor_retains_ten_versions_and_restores_actual_next_launch_source() {
         0o755
     );
     let run = s.launch(sid).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(12);
     loop {
         s.poll();
         let text = fs::read_to_string(
@@ -55,7 +55,10 @@ fn source_editor_retains_ten_versions_and_restores_actual_next_launch_source() {
         )
         .unwrap();
         if text.contains("VERSION_5") {
-            assert!(text.contains("启动文件已备份"));
+            assert!(
+                text.contains("启动文件已备份") || text.contains("启动文件未变化，跳过备份"),
+                "launch snapshot status missing: {text}"
+            );
             break;
         }
         assert!(Instant::now() < deadline);

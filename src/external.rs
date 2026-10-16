@@ -60,9 +60,17 @@ pub fn process(pid: u32) -> Result<Option<Process>, String> {
         return Ok(None);
     }
     let parent = parts[0].parse().map_err(|e| format!("PID {pid}: {e}"))?;
-    let cwd = match output("/usr/sbin/lsof", &["-a", "-p", &id, "-d", "cwd", "-Fn"]) {
-        Ok(cwd) => cwd,
-        Err(error) => {
+    let mut cwd = None;
+    for attempt in 0..3 {
+        let result = Command::new("/usr/sbin/lsof")
+            .args(["-a", "-p", &id, "-d", "cwd", "-Fn"])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if result.status.success() {
+            cwd = Some(String::from_utf8_lossy(&result.stdout).into_owned());
+            break;
+        }
+        if result.status.code() == Some(1) && result.stderr.is_empty() {
             let status = Command::new("/bin/ps")
                 .args(["-p", &id, "-o", "stat="])
                 .output()
@@ -71,9 +79,18 @@ pub fn process(pid: u32) -> Result<Option<Process>, String> {
             if state.trim().is_empty() || state.trim().starts_with('Z') {
                 return Ok(None);
             }
-            return Err(error);
+            if attempt < 2 {
+                std::thread::sleep(std::time::Duration::from_millis(40));
+                continue;
+            }
+            return Err(format!("PID {pid} cwd 暂不可读取，进程仍存活"));
         }
-    };
+        return Err(format!(
+            "读取 PID {pid} cwd: {}",
+            String::from_utf8_lossy(&result.stderr)
+        ));
+    }
+    let cwd = cwd.ok_or_else(|| format!("PID {pid} cwd 不可读取"))?;
     let cwd = cwd
         .lines()
         .find_map(|l| l.strip_prefix('n'))
@@ -510,6 +527,40 @@ fn command_matches(args: &[String], script: &crate::model::Script) -> bool {
         }
     }
 }
+
+/// IDE debuggers may run a Python script through pyenv, debugpy, or a framework
+/// launcher and append its configured server port. Match the canonical script
+/// path and that sole trailing port; do not depend on the wrapper executable.
+pub(crate) fn command_matches_with_configured_port(
+    args: &[String],
+    script: &crate::model::Script,
+) -> bool {
+    if command_matches(args, script) {
+        return true;
+    }
+    let Entry::File { interpreter } = &script.entry else {
+        return false;
+    };
+    let executable = interpreter.split_whitespace().last().unwrap_or("");
+    let python = std::path::Path::new(executable)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("python"))
+        .is_some_and(|version| version.chars().all(|c| c.is_ascii_digit() || c == '.'));
+    if !python || !script.args.is_empty() {
+        return false;
+    }
+    let Some(port) = script.expected_port else {
+        return false;
+    };
+    let port_arg = port.to_string();
+    args.iter().enumerate().any(|(index, arg)| {
+        path_matches(arg, &script.file, &script.cwd)
+            && args
+                .get(index + 1..)
+                .is_some_and(|tail| tail.len() == 1 && tail[0] == port_arg)
+    })
+}
 fn candidate_cwd_matches(pid: u32, roots: &[PathBuf]) -> Result<bool, String> {
     let out = Command::new("/usr/sbin/lsof")
         .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
@@ -546,18 +597,18 @@ pub fn find_existing(
         .scripts
         .iter()
         .filter(|s| {
-            s.id == script.id
-                || script
+            s.id != script.id
+                && (script
                     .resource_key
                     .as_ref()
                     .is_some_and(|key| s.resource_key.as_ref() == Some(key))
-                || script.expected_port.is_some() && s.expected_port == script.expected_port
+                    || script.expected_port.is_some() && s.expected_port == script.expected_port)
         })
         .collect();
     let mut related = related;
-    if !related.iter().any(|s| s.id == script.id) {
-        related.push(script);
-    }
+    // Prefer the caller's launch snapshot: it may contain a statically inferred
+    // port that is intentionally not persisted in the project catalog.
+    related.push(script);
     let text = output("/bin/ps", &["-axo", "pid=,ppid=,command="])?;
     let mut parents = std::collections::HashMap::new();
     let mut candidates = HashSet::new();
@@ -615,7 +666,17 @@ pub fn find_existing(
                 continue;
             }
             let Some(p) = process(pid)? else { continue };
-            if !(p.cwd == cwd || p.cwd.starts_with(&root)) || !evidence(&p, project) {
+            let cwd_matches = p.cwd == cwd || p.cwd.starts_with(&root);
+            let argv_matches = if cwd_matches && !evidence(&p, project) {
+                let argv = arguments(pid)?;
+                related.iter().any(|candidate| {
+                    candidate.cwd.canonicalize().ok().as_ref() == Some(&p.cwd)
+                        && command_matches_with_configured_port(&argv, candidate)
+                })
+            } else {
+                false
+            };
+            if !cwd_matches || !evidence(&p, project) && !argv_matches {
                 return Err(format!(
                     "端口 {port} 由无法确认归属的 PID {pid} 占用；未关闭该进程，取消启动"
                 ));

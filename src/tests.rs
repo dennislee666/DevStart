@@ -692,6 +692,37 @@ fn external_discovery_requires_project_and_preserves_parameter_ambiguity() {
             .is_empty()
     );
 }
+
+#[test]
+fn external_file_identity_accepts_only_its_configured_debugger_port_argument() {
+    let f = Fixture::new();
+    let file = f.0.join("serve.py");
+    fs::write(&file, "print('fixture')\n").unwrap();
+    let mut script = f.script("# python entry");
+    script.file = file;
+    script.entry = Entry::File {
+        interpreter: "python3".into(),
+    };
+    script.expected_port = Some(4180);
+
+    let exact = vec!["python3".into(), "serve.py".into(), "4180".into()];
+    assert!(crate::external::command_matches_with_configured_port(
+        &exact, &script
+    ));
+
+    let wrong_port = vec!["python3".into(), "serve.py".into(), "4181".into()];
+    assert!(!crate::external::command_matches_with_configured_port(
+        &wrong_port,
+        &script
+    ));
+
+    let wrong_file = vec!["python3".into(), "other.py".into(), "4180".into()];
+    assert!(!crate::external::command_matches_with_configured_port(
+        &wrong_file,
+        &script
+    ));
+}
+
 #[test]
 fn external_identity_guard_and_drop_preserve_original_service() {
     let f = Fixture::new();
@@ -1269,6 +1300,78 @@ fn standalone_shell(f: &Fixture, arg: &str) -> ShellFixture {
     }
     result
 }
+
+#[test]
+fn checked_start_replaces_relative_python_debugger_process_using_launch_snapshot_port() {
+    use std::os::unix::process::CommandExt;
+
+    let f = Fixture::new();
+    let probe = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = probe.local_addr().unwrap().port();
+    drop(probe);
+    let file = f.0.join("serve.py");
+    fs::write(
+        &file,
+        format!(
+            "import socket,sys,time\nDEFAULT_PORT = {port}\nport = int(sys.argv[1]) if len(sys.argv)>1 else DEFAULT_PORT\ns=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind(('127.0.0.1',port));s.listen()\nprint('PYTHON_READY',flush=True)\nwhile True: time.sleep(0.1)\n"
+        ),
+    )
+    .unwrap();
+    let spawn_server =
+        format!("import subprocess; subprocess.Popen(['python3','serve.py','{port}'])");
+    let launcher = std::process::Command::new("python3")
+        .arg("-c")
+        .arg(spawn_server)
+        .current_dir(&f.0)
+        .process_group(0)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut external = ShellFixture(launcher);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+        assert!(
+            Instant::now() < deadline,
+            "external Python server did not bind"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    external.0.wait().unwrap();
+    let listener = crate::external::listeners().unwrap()[&port][0];
+    let external_identity = crate::external::process(listener).unwrap().unwrap();
+    assert_eq!(
+        external_identity.parent, 1,
+        "fixture must emulate an IDE orphan"
+    );
+
+    let mut catalog_script = f.script("# Python server");
+    catalog_script.file = file;
+    catalog_script.entry = Entry::File {
+        interpreter: "python3".into(),
+    };
+    let project = fixture_project(&f, catalog_script.clone());
+    let mut launch_snapshot = catalog_script;
+    launch_snapshot.expected_port = Some(port);
+
+    let mut runtime = Runtime::default();
+    let id = runtime
+        .launch_checked(&project, &launch_snapshot, f.0.join("logs"))
+        .unwrap();
+    wait(&mut runtime, |r| {
+        r.runs.iter().any(|run| {
+            run.id == id && run.state == State::Running && run_text(r, id).contains("PYTHON_READY")
+        })
+    });
+    let text = run_text(&runtime, id);
+    assert!(text.contains("已核实外部实例 1 个"), "{text}");
+    assert!(text.contains("已优雅退出"), "{text}");
+    assert!(!crate::external::same_process(&external_identity).unwrap());
+    runtime.stop_all();
+    wait(&mut runtime, |r| !r.runs[0].state.active());
+    let _ = external.0.wait();
+}
+
 #[test]
 fn checked_start_without_port_matches_relative_script_and_space_args_but_keeps_other_mode() {
     let f = Fixture::new();
