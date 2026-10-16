@@ -36,6 +36,39 @@ impl Service {
     }
     /// Commit configuration only after durable storage succeeds.
     pub(crate) fn commit(&mut self, next: Catalog) -> Result<(), String> {
+        self.commit_config(next, None)
+    }
+    fn commit_config(
+        &mut self,
+        mut next: Catalog,
+        refreshed_project: Option<u64>,
+    ) -> Result<(), String> {
+        // Refuse stale-cache overwrites. Explicit refresh is the only operation
+        // that accepts a user-edited managed document as the new definition.
+        for project in &self.catalog.projects {
+            if refreshed_project == Some(project.id)
+                || !next.projects.iter().any(|p| p.id == project.id)
+            {
+                continue;
+            }
+            let path = self.store.manifest_path(project.id);
+            let actual: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(&path)
+                    .map_err(|e| format!("读取DevStart启动配置 {}: {e}", path.display()))?,
+            )
+            .map_err(|e| format!("启动配置解析失败: {e}"))?;
+            let expected: serde_json::Value =
+                serde_json::from_slice(&crate::project_manifest::encode(
+                    crate::project_manifest::storage_specifications(project, &path)?,
+                )?)
+                .map_err(|e| e.to_string())?;
+            if actual != expected {
+                return Err(format!(
+                    "DevStart启动配置已被外部修改，请先重新读取启动脚本: {}",
+                    path.display()
+                ));
+            }
+        }
         // Configuration clients must not remove or remap a source with an unsaved editor draft.
         let detached: Vec<_> = self
             .editor
@@ -61,6 +94,32 @@ impl Service {
         {
             return Err("启动文件有未保存的编辑，请先保存或关闭再删除/变更源文件".into());
         }
+        for project in &mut next.projects {
+            let unchanged_execution = self
+                .catalog
+                .projects
+                .iter()
+                .find(|old| old.id == project.id)
+                .is_some_and(|old| {
+                    old.scripts.len() == project.scripts.len()
+                        && old
+                            .scripts
+                            .iter()
+                            .zip(&project.scripts)
+                            .all(|(a, b)| a.name == b.name && a.identity() == b.identity())
+                });
+            if !unchanged_execution {
+                let bytes = crate::project_manifest::encode(
+                    crate::project_manifest::specifications(project)?,
+                )?;
+                crate::project_manifest::bind(
+                    project,
+                    &self.store.manifest_path(project.id),
+                    &bytes,
+                )?;
+            }
+        }
+        let next = self.store.normalize(next)?;
         let hints = crate::configured_ports::collect(&next.projects);
         self.store.save(&next)?;
         for id in detached {
@@ -165,14 +224,18 @@ impl Service {
             .find(|p| p.id == id)
             .ok_or("项目不存在")?
             .clone();
-        let has_manifest = old.path.join(crate::project_manifest::FILE_NAME).exists();
-        if old.explicit_scripts && !has_manifest {
-            for script in &old.scripts {
-                crate::profile::validate(script)?;
-            }
-            return Ok(());
-        }
-        let mut scripts = discovery::discover(&old.path)?;
+        // Both modes require the app-owned manifest. Native discovery is an
+        // explicit mode, never a fallback when managed configuration is missing.
+        let path = self.store.manifest_path(id);
+        let bytes = std::fs::read(&path)
+            .map_err(|e| format!("读取DevStart启动配置 {}: {e}", path.display()))?;
+        crate::project_manifest::validate_document(&bytes)?;
+        let has_manifest = old.explicit_scripts;
+        let mut scripts = if has_manifest {
+            crate::project_manifest::discover(&old.path, &path)?
+        } else {
+            discovery::discover(&old.path)?
+        };
         let mut next = self.catalog.clone();
         for s in &mut scripts {
             if let Some(prev) = old.scripts.iter().find(|p| {
@@ -183,6 +246,7 @@ impl Service {
                 }
             }) {
                 s.id = prev.id;
+                s.custom = prev.custom;
                 s.favorite = prev.favorite;
                 s.display_name = prev.display_name.clone();
                 s.description_override = prev.description_override.clone();
@@ -202,7 +266,7 @@ impl Service {
                 s.id = next.id();
             }
         }
-        for configured in &old.scripts {
+        for configured in old.scripts.iter().filter(|_| !has_manifest) {
             if configured.custom
                 && !scripts
                     .iter()
@@ -216,7 +280,7 @@ impl Service {
             .find(|p| p.id == id)
             .ok_or("项目不存在")?
             .scripts = scripts;
-        self.commit(next)
+        self.commit_config(next, Some(id))
     }
     pub fn project_favorite(&mut self, id: u64) -> Result<(), String> {
         let mut next = self.catalog.clone();

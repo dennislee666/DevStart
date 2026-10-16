@@ -17,8 +17,6 @@ pub struct ProfileProject {
     pub name: String,
     pub path: PathBuf,
     pub scripts: Vec<ProfileScript>,
-    #[serde(default)]
-    pub project_file: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -103,7 +101,7 @@ pub fn merge(catalog: &Catalog, profile: Profile) -> Result<Catalog, String> {
             }
             if let Some(prev) = old
                 .as_ref()
-                .and_then(|p| p.scripts.iter().find(|s| s.identity() == script.identity()))
+                .and_then(|p| p.scripts.iter().find(|s| s.name == script.name))
             {
                 script.id = prev.id;
                 script.favorite = prev.favorite;
@@ -112,24 +110,6 @@ pub fn merge(catalog: &Catalog, profile: Profile) -> Result<Catalog, String> {
                 script.id = next.id();
             }
             scripts.push(script);
-        }
-        if project.project_file {
-            for mut script in crate::project_manifest::discover(&path)? {
-                script.id = old
-                    .as_ref()
-                    .and_then(|p| p.scripts.iter().find(|s| s.name == script.name))
-                    .map(|s| s.id)
-                    .unwrap_or_else(|| next.id());
-                script.favorite = old
-                    .as_ref()
-                    .and_then(|p| p.scripts.iter().find(|s| s.id == script.id))
-                    .is_some_and(|s| s.favorite);
-                script.display_name = old
-                    .as_ref()
-                    .and_then(|p| p.scripts.iter().find(|s| s.id == script.id))
-                    .and_then(|s| s.display_name.clone());
-                scripts.push(script);
-            }
         }
         let configured = Project {
             description: String::new(),

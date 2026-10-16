@@ -5,6 +5,7 @@ mod api_transport;
 mod app_identity;
 mod appearance;
 mod bulk;
+mod config_transaction;
 mod configured_ports;
 mod console_buffer;
 mod console_search;

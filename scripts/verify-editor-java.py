@@ -10,7 +10,7 @@ with tempfile.TemporaryDirectory(prefix='devstart-java-editor-',dir='/tmp') as t
  original='package editorfixture; public class Main { public static void main(String[] args) throws Exception { System.out.println("JAVA_ORIGINAL"); while(true) Thread.sleep(100); } }\n'
  source.write_text(original)
  subprocess.run([str(jdk/'bin/javac'),'-proc:none','-d',str(classes),str(source)],check=True,capture_output=True)
- (project/'.dev-start.json').write_text(json.dumps({'version':1,'launches':[{'name':'Main','file':'Main.java','description':'disposable editor test','entry':{'Java':{'program':str(jdk/'bin/java'),'main_class':'editorfixture.Main','vm_args':[],'class_paths':['classes'],'enabled':True}}}]}))
+
  env=os.environ|{'DEV_START_DATA_DIR':str(root/'data')};out=open(root/'service.log','wb');server=subprocess.Popen([binary,'--serve'],env=env,stdout=out,stderr=out)
  def rpc(m,p={}):
   raw=subprocess.run([binary,'--api',m,json.dumps(p)],env=env,capture_output=True,text=True,check=True);v=json.loads(raw.stdout);assert 'error' not in v,v;return v['result']
@@ -26,7 +26,9 @@ with tempfile.TemporaryDirectory(prefix='devstart-java-editor-',dir='/tmp') as t
  try:
   end=time.monotonic()+10
   while not (root/'data/api/control.sock').exists():assert time.monotonic()<end;time.sleep(.05)
-  p=rpc('projects.create',{'path':str(project)});sid=p['scripts'][0]['id']
+  p=rpc('projects.create',{'path':str(project)})
+  sid=rpc('scripts.create',{'project_id':p['id'],'spec':{'name':'Main','file':'Main.java','description':'disposable editor test','entry':{'Java':{'program':str(jdk/'bin/java'),'main_class':'editorfixture.Main','vm_args':[],'class_paths':['classes'],'enabled':True}}}})['id']
+  assert not (project/'.dev-start.json').exists()
   doc=rpc('editor.open',{'script_id':sid});baseline=rpc('editor.versions',{'script_id':sid})[0]['id']
   first=rpc('runs.start',{'script_id':sid})['run_id'];ready(first,'JAVA_ORIGINAL');pid=rpc('runs.get',{'id':first})['pid']
   def save(text):

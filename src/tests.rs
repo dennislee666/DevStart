@@ -916,10 +916,13 @@ fn run_tabs_use_launch_names_and_short_command_tooltips() {
         runtime: Runtime::default(),
     };
     service.import(&f.0, 1).unwrap();
-    service.catalog.projects[0].scripts[0].name = "H5 本地调试".into();
     fs::create_dir(f.0.join("work")).unwrap();
-    service.catalog.projects[0].scripts[0].cwd = f.0.join("work");
     let sid = service.catalog.projects[0].scripts[0].id;
+    api_call(
+        &mut service,
+        "scripts.update",
+        serde_json::json!({"id":sid,"patch":{"name":"H5 本地调试","cwd":f.0.join("work")}}),
+    );
     service.launch(sid).unwrap();
     let tabs = service.run_tabs();
     assert_eq!(tabs[0].label, "H5 本地调试");
@@ -1019,13 +1022,26 @@ fn native_project_fixture(f: &Fixture) -> PathBuf {
     fs::write(&java, "#!/bin/bash\nprintf '<%s>\\n' \"$@\"\n").unwrap();
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&java, fs::Permissions::from_mode(0o755)).unwrap();
-    let manifest = f.0.join(crate::project_manifest::FILE_NAME);
+    let manifest = f.0.join("launch-fixture.json");
     let entry = serde_json::json!({"Java":{"program":java,"main_class":"example.Server","vm_args":["-Dlabel=two words"],"class_paths":["classes"],"classpath_file":"runtime-classpath.txt","enabled":true}});
     fs::write(&manifest,serde_json::json!({"version":1,"launches":[
         {"name":"Service","file":"src/example/Server.java","entry":entry,"description":"native source","args":["test","$(touch marker)"]},
         {"name":"Deploy","file":"src/example/Server.java","entry":{"Java":{"program":java,"main_class":"example.Server","vm_args":[],"class_paths":["classes"],"enabled":false}},"description":"not enabled"}
     ]}).to_string()).unwrap();
     manifest
+}
+fn import_managed_java_fixture(s: &mut Service, f: &Fixture) -> u64 {
+    let pid = s.import(&f.0, 1).unwrap();
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.0.join("launch-fixture.json")).unwrap()).unwrap();
+    for spec in manifest["launches"].as_array().unwrap() {
+        api_call(
+            s,
+            "scripts.create",
+            serde_json::json!({"project_id":pid,"spec":spec}),
+        );
+    }
+    pid
 }
 #[test]
 fn project_native_launches_ignore_ide_configuration_entirely() {
@@ -1037,19 +1053,26 @@ fn project_native_launches_ignore_ide_configuration_entirely() {
         "not valid JSON; should never be read",
     )
     .unwrap();
-    let entries = discovery::discover(&f.0).unwrap();
+    let entries =
+        crate::project_manifest::discover(&f.0, &f.0.join("launch-fixture.json")).unwrap();
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].name, "Service");
     assert!(entries[0].file.ends_with("src/example/Server.java"));
     assert!(entries[1].launch_block_reason().is_some());
     fs::remove_dir_all(f.0.join(".vscode")).unwrap();
-    assert_eq!(discovery::discover(&f.0).unwrap().len(), 2);
+    assert_eq!(
+        crate::project_manifest::discover(&f.0, &f.0.join("launch-fixture.json"))
+            .unwrap()
+            .len(),
+        2
+    );
 }
 #[test]
 fn project_native_java_uses_direct_class_and_literal_args_without_maven() {
     let f = Fixture::new();
     native_project_fixture(&f);
-    let mut entries = discovery::discover(&f.0).unwrap();
+    let mut entries =
+        crate::project_manifest::discover(&f.0, &f.0.join("launch-fixture.json")).unwrap();
     entries[0].id = 1;
     let mut runtime = Runtime::default();
     runtime
@@ -1070,20 +1093,20 @@ fn project_native_java_uses_direct_class_and_literal_args_without_maven() {
 fn project_native_manifest_changes_are_checked_and_source_remains_authoritative() {
     let f = Fixture::new();
     let manifest = native_project_fixture(&f);
-    let old = discovery::discover(&f.0).unwrap();
+    let old = crate::project_manifest::discover(&f.0, &f.0.join("launch-fixture.json")).unwrap();
     let mut json: serde_json::Value =
         serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
     json["launches"][0]["args"] = serde_json::json!(["changed"]);
     fs::write(&manifest, json.to_string()).unwrap();
     assert!(crate::project_manifest::validate_launch(&old[0]).is_err());
-    let new = discovery::discover(&f.0).unwrap();
+    let new = crate::project_manifest::discover(&f.0, &f.0.join("launch-fixture.json")).unwrap();
     assert_eq!(new[0].args, vec!["changed"]);
     assert!(crate::project_manifest::validate_launch(&new[0]).is_ok());
 }
 #[test]
 fn project_native_rescan_keeps_ids_and_reads_current_project_parameters() {
     let f = Fixture::new();
-    let manifest = native_project_fixture(&f);
+    native_project_fixture(&f);
     let mut service = Service {
         editor: Default::default(),
         port_hints: Default::default(),
@@ -1091,7 +1114,8 @@ fn project_native_rescan_keeps_ids_and_reads_current_project_parameters() {
         catalog: Catalog::default(),
         runtime: Runtime::default(),
     };
-    let project = service.import(&f.0, 1).unwrap();
+    let project = import_managed_java_fixture(&mut service, &f);
+    let manifest = service.store.manifest_path(project);
     let id = service.catalog.projects[0].scripts[0].id;
     let mut json: serde_json::Value =
         serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
@@ -1107,7 +1131,7 @@ fn project_native_missing_classpath_never_triggers_a_build() {
     let f = Fixture::new();
     native_project_fixture(&f);
     fs::remove_file(f.0.join("runtime-classpath.txt")).unwrap();
-    assert!(discovery::discover(&f.0).is_err());
+    assert!(crate::project_manifest::discover(&f.0, &f.0.join("launch-fixture.json")).is_err());
     assert!(!f.0.join("marker").exists());
 }
 
@@ -1142,7 +1166,7 @@ fn custom_parameters_survive_project_native_refresh_without_an_ide() {
         catalog: Catalog::default(),
         runtime: Runtime::default(),
     };
-    let project = service.import(&f.0, 1).unwrap();
+    let project = import_managed_java_fixture(&mut service, &f);
     let source = service.catalog.projects[0].scripts[0].id;
     let preset = service
         .add_preset(source, "Service custom", vec!["custom-args".into()], None)
@@ -1545,7 +1569,9 @@ fn checked_start_detects_direct_java_main_without_an_endpoint() {
     use std::os::unix::process::CommandExt;
     let f = Fixture::new();
     native_project_fixture(&f);
-    let mut script = discovery::discover(&f.0).unwrap().remove(0);
+    let mut script = crate::project_manifest::discover(&f.0, &f.0.join("launch-fixture.json"))
+        .unwrap()
+        .remove(0);
     script.id = 1;
     fs::write(f.0.join("java"),"#!/bin/bash\ntrap 'exit 0' TERM; touch java.ready; echo JAVA_READY; while true; do sleep 1; done").unwrap();
     let (program, main) = match &script.entry {
@@ -1726,7 +1752,7 @@ fn api_script_crud_persists_manifest_and_rolls_back_invalid_edits() {
     assert_eq!(s.script(sid).unwrap().description, "运行描述");
     assert!(!s.script(sid).unwrap().enabled);
     assert!(s.script(sid).unwrap().favorite);
-    let original = fs::read(f.0.join(".dev-start.json")).unwrap();
+    let original = fs::read(s.store.manifest_path(pid)).unwrap();
     assert!(
         crate::api::dispatch(
             &mut s,
@@ -1735,7 +1761,7 @@ fn api_script_crud_persists_manifest_and_rolls_back_invalid_edits() {
         )
         .is_err()
     );
-    assert_eq!(original, fs::read(f.0.join(".dev-start.json")).unwrap());
+    assert_eq!(original, fs::read(s.store.manifest_path(pid)).unwrap());
     let added = api_call(&mut s,"scripts.create",json!({"project_id":pid,"spec":{"name":"测试","file":"dev.sh","entry":{"File":{"interpreter":"/bin/bash"}},"description":"另一个参数","args":["qa"]}}))["id"].as_u64().unwrap();
     s.rescan(pid).unwrap();
     assert_eq!(
@@ -1896,8 +1922,10 @@ fn api_manifest_catalog_failure_restores_original_and_does_not_commit_memory() {
         "scripts.update",
         json!({"id":sid,"patch":{"description":"before","args":["before"]}}),
     );
-    let manifest = fs::read(f.0.join(".dev-start.json")).unwrap();
-    fs::create_dir(f.0.join("catalog.json.tmp")).unwrap();
+    let manifest = fs::read(s.store.manifest_path(pid)).unwrap();
+    let saved_catalog = fs::read(f.0.join("catalog.json")).unwrap();
+    fs::remove_file(f.0.join("catalog.json")).unwrap();
+    fs::create_dir(f.0.join("catalog.json")).unwrap();
     assert!(
         crate::api::dispatch(
             &mut s,
@@ -1906,9 +1934,10 @@ fn api_manifest_catalog_failure_restores_original_and_does_not_commit_memory() {
         )
         .is_err()
     );
-    assert_eq!(fs::read(f.0.join(".dev-start.json")).unwrap(), manifest);
+    assert_eq!(fs::read(s.store.manifest_path(pid)).unwrap(), manifest);
     assert_eq!(s.script(sid).unwrap().description, "before");
-    fs::remove_dir(f.0.join("catalog.json.tmp")).unwrap();
+    fs::remove_dir(f.0.join("catalog.json")).unwrap();
+    fs::write(f.0.join("catalog.json"), saved_catalog).unwrap();
     s.rescan(pid).unwrap();
     assert_eq!(s.script(sid).unwrap().description, "before");
 }
@@ -1933,7 +1962,8 @@ fn loading_legacy_or_orphaned_projects_rehomes_them_in_default_group() {
 fn older_java_snapshot_defaults_do_not_invalidate_an_unchanged_source() {
     let f = Fixture::new();
     let manifest = native_project_fixture(&f);
-    let mut entries = discovery::discover(&f.0).unwrap();
+    let mut entries =
+        crate::project_manifest::discover(&f.0, &f.0.join("launch-fixture.json")).unwrap();
     if let Entry::Java { snapshot, .. } = &mut entries[0].entry {
         let mut old: serde_json::Value = serde_json::from_str(snapshot).unwrap();
         old.as_object_mut().unwrap().remove("enabled");
@@ -3049,4 +3079,276 @@ fn unified_script_information_is_atomic_and_does_not_change_execution_or_sources
     s.runtime.stop(run);
     assert_eq!(s.script_status_label(sid), "--");
     wait(&mut s.runtime, |r| r.runs.iter().all(|r| !r.state.active()));
+}
+
+#[test]
+fn managed_configuration_crud_and_discovery_leave_the_project_git_tree_unchanged() {
+    use serde_json::json;
+    let source = Fixture::new();
+    let data = Fixture::new();
+    source.script("echo MANAGED_READY");
+    // Even an invalid project-local DevStart file is irrelevant for new registrations.
+    fs::write(
+        source.0.join(".dev-start.json"),
+        "not an application configuration",
+    )
+    .unwrap();
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&source.0)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output.stdout
+    };
+    git(&["init", "--quiet"]);
+    git(&["add", "."]);
+    let before = git(&["status", "--porcelain=v1", "--untracked-files=all"]);
+    let mut service = api_service(&data);
+    let pid = service.import(&source.0, 1).unwrap();
+    let sid = service.catalog.projects[0].scripts[0].id;
+    let path = service.store.manifest_path(pid);
+    assert!(path.starts_with(&data.0));
+    assert!(path.is_file());
+    // Native refresh still discovers new startup scripts without writing to the repository.
+    fs::write(source.0.join("serve.py"), "print('ready')").unwrap();
+    service.rescan(pid).unwrap();
+    assert_eq!(service.catalog.projects[0].scripts.len(), 2);
+    fs::remove_file(source.0.join("serve.py")).unwrap();
+    service.rescan(pid).unwrap();
+    api_call(
+        &mut service,
+        "scripts.update",
+        json!({"id":sid,"patch":{"args":["literal"],"expected_port":8123}}),
+    );
+    service.script_favorite(sid).unwrap();
+    let added = api_call(&mut service,"scripts.create",json!({"project_id":pid,"spec":{"name":"Alternate","file":"dev.sh","entry":{"File":{"interpreter":"/bin/bash"}},"description":"alternate","args":["test"]}}))["id"].as_u64().unwrap();
+    api_call(&mut service, "scripts.delete", json!({"id":added}));
+    service.rescan(pid).unwrap();
+    assert!(service.script(added).is_none());
+    assert_eq!(
+        before,
+        git(&["status", "--porcelain=v1", "--untracked-files=all"])
+    );
+    assert_eq!(
+        fs::read_to_string(source.0.join(".dev-start.json")).unwrap(),
+        "not an application configuration"
+    );
+    fs::remove_file(&path).unwrap();
+    assert!(service.rescan(pid).is_err());
+    assert!(service.store.load().is_err());
+}
+
+#[test]
+fn legacy_configuration_is_archived_moved_and_loaded_only_from_app_storage() {
+    let source = Fixture::new();
+    let data = Fixture::new();
+    let mut script = source.script("echo migrated");
+    script.display_name = Some("Keep alias".into());
+    script.favorite = true;
+    script.args = vec!["test".into()];
+    let mut catalog = Catalog {
+        version: 1,
+        ..Default::default()
+    };
+    catalog.projects.push(fixture_project(&source, script));
+    let legacy = crate::project_manifest::encode(
+        crate::project_manifest::specifications(&catalog.projects[0]).unwrap(),
+    )
+    .unwrap();
+    fs::write(source.0.join(".dev-start.json"), &legacy).unwrap();
+    let original = serde_json::to_vec_pretty(&catalog).unwrap();
+    fs::write(data.0.join("catalog.json"), &original).unwrap();
+    let store = Store::at(data.0.clone()).unwrap();
+    let migrated = store.load().unwrap();
+    assert_eq!(migrated.version, 2);
+    assert_eq!(migrated.projects[0].scripts[0].id, 10);
+    assert_eq!(
+        migrated.projects[0].scripts[0].display_label(),
+        "Keep alias"
+    );
+    assert!(migrated.projects[0].scripts[0].favorite);
+    assert_eq!(migrated.projects[0].scripts[0].args, vec!["test"]);
+    assert!(!source.0.join(".dev-start.json").exists());
+    assert!(store.manifest_path(1).is_file());
+    let backup = fs::read_dir(data.0.join("migration-backups"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert_eq!(fs::read(backup.join("catalog.json")).unwrap(), original);
+    assert_eq!(fs::read(backup.join("project-1.json")).unwrap(), legacy);
+    assert!(backup.join("completed.json").is_file());
+    assert!(!data.0.join("config-migration.json").exists());
+    // Resume cleanup after publication even if the previous process exited before removal.
+    fs::write(source.0.join(".dev-start.json"), &legacy).unwrap();
+    fs::copy(
+        backup.join("plan.json"),
+        data.0.join("config-migration.json"),
+    )
+    .unwrap();
+    store.load().unwrap();
+    assert!(!source.0.join(".dev-start.json").exists());
+    // Project-local files cannot override an already-migrated workspace.
+    fs::write(source.0.join(".dev-start.json"), "invalid").unwrap();
+    assert_eq!(store.load().unwrap().projects[0].scripts[0].id, 10);
+}
+
+#[test]
+fn migration_failure_keeps_original_files_and_creates_an_exact_backup() {
+    let source = Fixture::new();
+    let data = Fixture::new();
+    let mut script = source.script("echo unchanged");
+    script.name = "duplicate".into();
+    let mut catalog = Catalog {
+        version: 1,
+        ..Default::default()
+    };
+    catalog
+        .projects
+        .push(fixture_project(&source, script.clone()));
+    script.id = 11;
+    catalog.projects[0].scripts.push(script);
+    let bytes = serde_json::to_vec(&catalog).unwrap();
+    fs::write(data.0.join("catalog.json"), &bytes).unwrap();
+    fs::write(source.0.join(".dev-start.json"), b"original").unwrap();
+    let store = Store::at(data.0.clone()).unwrap();
+    assert!(store.load().err().unwrap().contains("名称重复"));
+    assert_eq!(fs::read(data.0.join("catalog.json")).unwrap(), bytes);
+    assert_eq!(
+        fs::read(source.0.join(".dev-start.json")).unwrap(),
+        b"original"
+    );
+    assert!(!store.manifest_path(1).exists());
+}
+
+#[test]
+fn java_migration_rebinds_managed_snapshots_and_launches_after_legacy_removal() {
+    let source = Fixture::new();
+    let data = Fixture::new();
+    let fixture = native_project_fixture(&source);
+    let legacy = source.0.join(".dev-start.json");
+    fs::copy(&fixture, &legacy).unwrap();
+    let mut scripts = crate::project_manifest::discover(&source.0, &legacy).unwrap();
+    for (index, script) in scripts.iter_mut().enumerate() {
+        script.id = index as u64 + 10;
+    }
+    let mut catalog = Catalog {
+        version: 1,
+        ..Default::default()
+    };
+    let mut project = fixture_project(&source, scripts[0].clone());
+    project.scripts = scripts;
+    catalog.projects.push(project);
+    fs::write(
+        data.0.join("catalog.json"),
+        serde_json::to_vec(&catalog).unwrap(),
+    )
+    .unwrap();
+    let store = Store::at(data.0.clone()).unwrap();
+    let migrated = store.load().unwrap();
+    let script = &migrated.projects[0].scripts[0];
+    match &script.entry {
+        Entry::Java { manifest, .. } => assert_eq!(manifest, &store.manifest_path(1)),
+        _ => panic!("expected Java"),
+    }
+    assert!(!legacy.exists());
+    crate::project_manifest::validate_launch(script).unwrap();
+    let mut runtime = Runtime::default();
+    let run = runtime
+        .start("Migrated Java", script, data.0.join("logs"))
+        .unwrap();
+    wait(&mut runtime, |r| {
+        !r.runs.iter().find(|r| r.id == run).unwrap().state.active()
+    });
+    assert!(run_text(&runtime, run).contains("<example.Server>"));
+}
+
+#[test]
+fn managed_file_changes_require_refresh_before_any_cached_configuration_overwrite() {
+    use serde_json::json;
+    let source = Fixture::new();
+    let data = Fixture::new();
+    source.script("true");
+    let mut service = api_service(&data);
+    let pid = service.import(&source.0, 1).unwrap();
+    let sid = service.catalog.projects[0].scripts[0].id;
+    api_call(
+        &mut service,
+        "scripts.update",
+        json!({"id":sid,"patch":{"args":["before"]}}),
+    );
+    let path = service.store.manifest_path(pid);
+    let mut value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    value["launches"][0]["args"] = json!(["external"]);
+    let bytes = serde_json::to_vec(&value).unwrap();
+    fs::write(&path, &bytes).unwrap();
+    assert!(service.script_favorite(sid).is_err());
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    service.rescan(pid).unwrap();
+    assert_eq!(service.script(sid).unwrap().args, vec!["external"]);
+    service.script_favorite(sid).unwrap();
+}
+
+#[test]
+fn missing_business_source_does_not_prevent_loading_or_editing_app_metadata() {
+    let source = Fixture::new();
+    let data = Fixture::new();
+    source.script("true");
+    let mut service = api_service(&data);
+    service.import(&source.0, 1).unwrap();
+    let sid = service.catalog.projects[0].scripts[0].id;
+    fs::remove_file(source.0.join("dev.sh")).unwrap();
+    service
+        .set_display_name(sid, Some("Source offline".into()))
+        .unwrap();
+    assert_eq!(
+        service.store.load().unwrap().projects[0].scripts[0].display_label(),
+        "Source offline"
+    );
+}
+
+#[test]
+fn explicit_java_profile_updates_resolve_project_paths_and_keep_registered_ids() {
+    let source = Fixture::new();
+    let data = Fixture::new();
+    let fixture = native_project_fixture(&source);
+    let mut definitions: serde_json::Value =
+        serde_json::from_slice(&fs::read(fixture).unwrap()).unwrap();
+    let profile = data.0.join("import.json");
+    let write = |definitions: &serde_json::Value| {
+        fs::write(&profile, serde_json::to_vec(&serde_json::json!({"group":"Java","projects":[{"name":"Java","path":source.0,"scripts":definitions["launches"]}]})).unwrap()).unwrap();
+    };
+    write(&definitions);
+    let mut service = api_service(&data);
+    service.import_profile(&profile).unwrap();
+    let original_id = service.catalog.projects[0].scripts[0].id;
+    definitions["launches"][0]["args"] = serde_json::json!(["updated"]);
+    write(&definitions);
+    service.import_profile(&profile).unwrap();
+    let script = &service.catalog.projects[0].scripts[0];
+    assert_eq!(script.id, original_id);
+    assert_eq!(script.args, vec!["updated"]);
+    match &script.entry {
+        Entry::Java {
+            class_paths,
+            manifest,
+            ..
+        } => {
+            assert!(class_paths.iter().all(|path| path.is_absolute()));
+            assert_eq!(
+                manifest,
+                &service.store.manifest_path(service.catalog.projects[0].id)
+            );
+        }
+        _ => panic!("expected Java"),
+    }
+    crate::project_manifest::validate_launch(script).unwrap();
+    assert!(!source.0.join(".dev-start.json").exists());
 }

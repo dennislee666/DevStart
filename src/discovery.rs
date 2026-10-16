@@ -3,9 +3,6 @@ use std::{fs, path::Path};
 
 /// Discovery only reads files. Importing a project never executes its code.
 pub fn discover(root: &Path) -> Result<Vec<Script>, String> {
-    if root.join(crate::project_manifest::FILE_NAME).exists() {
-        return crate::project_manifest::discover(root);
-    }
     let mut result = vec![];
     let mut budget = 5000;
     scan(root, root, 0, &mut budget, &mut result)?;

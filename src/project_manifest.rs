@@ -1,4 +1,4 @@
-//! Project-owned launch definitions. No IDE configuration or build task is read.
+//! DevStart-owned launch definitions. Project roots are read-only resolution targets.
 use crate::{
     model::{Entry, Script},
     profile::ProfileScript,
@@ -16,17 +16,52 @@ struct Manifest {
     launches: Vec<ProfileScript>,
 }
 fn read(path: &Path) -> Result<Manifest, String> {
-    let data =
-        std::fs::read(path).map_err(|e| format!("读取项目启动清单 {}: {e}", path.display()))?;
+    decode_manifest(
+        &std::fs::read(path).map_err(|e| format!("读取启动清单 {}: {e}", path.display()))?,
+    )
+}
+fn decode_manifest(data: &[u8]) -> Result<Manifest, String> {
     if data.len() > 2_000_000 {
         return Err("项目启动清单超过2MiB".into());
     }
-    let m: Manifest =
-        serde_json::from_slice(&data).map_err(|e| format!("{}: {e}", path.display()))?;
+    let m: Manifest = serde_json::from_slice(data).map_err(|e| format!("启动清单解析失败: {e}"))?;
     if m.version != 1 {
         return Err(format!("不支持的项目清单版本 {}", m.version));
     }
     Ok(m)
+}
+/// Validate the managed document independently of project availability.
+/// Missing source files are execution/refresh errors, not a reason to lose the workspace.
+pub fn validate_document(bytes: &[u8]) -> Result<(), String> {
+    let mut names = HashSet::new();
+    for spec in decode_manifest(bytes)?.launches {
+        if !names.insert(spec.name) {
+            return Err("启动项名称重复".into());
+        }
+    }
+    Ok(())
+}
+
+pub fn bind_snapshots(
+    project: &mut crate::model::Project,
+    path: &Path,
+    specs: Vec<ProfileScript>,
+) -> Result<(), String> {
+    validate_document(&encode(specs.clone())?)?;
+    for (script, spec) in project.scripts.iter_mut().zip(specs) {
+        if let Entry::Java {
+            configuration,
+            manifest,
+            snapshot,
+            ..
+        } = &mut script.entry
+        {
+            *configuration = script.name.clone();
+            *manifest = path.to_path_buf();
+            *snapshot = serde_json::to_string(&spec).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
 fn resolve(root: &Path, path: &Path) -> Result<PathBuf, String> {
     let p = if path.is_absolute() {
@@ -37,11 +72,17 @@ fn resolve(root: &Path, path: &Path) -> Result<PathBuf, String> {
     p.canonicalize()
         .map_err(|e| format!("项目入口路径 {}: {e}", p.display()))
 }
-pub fn discover(root: &Path) -> Result<Vec<Script>, String> {
-    let manifest = resolve(root, Path::new(FILE_NAME))?;
+pub fn discover(root: &Path, manifest: &Path) -> Result<Vec<Script>, String> {
+    let bytes =
+        std::fs::read(manifest).map_err(|e| format!("读取启动清单 {}: {e}", manifest.display()))?;
+    from_bytes(root, manifest, &bytes)
+}
+
+/// Resolve project files without writing to the project or requiring a published manifest.
+pub fn from_bytes(root: &Path, manifest: &Path, bytes: &[u8]) -> Result<Vec<Script>, String> {
     let mut result = vec![];
     let mut names = HashSet::new();
-    for spec in read(&manifest)?.launches {
+    for spec in decode_manifest(bytes)?.launches {
         if !names.insert(spec.name.clone()) {
             return Err(format!("项目启动项名称重复: {}", spec.name));
         }
@@ -63,7 +104,7 @@ pub fn discover(root: &Path) -> Result<Vec<Script>, String> {
         {
             *configuration = spec.name.clone();
             *stored = snapshot;
-            *origin = manifest.clone();
+            *origin = manifest.to_path_buf();
             if main_class.is_empty()
                 || main_class.starts_with('-')
                 || main_class.contains('/')
@@ -173,25 +214,39 @@ pub fn validate_launch(script: &Script) -> Result<(), String> {
     Ok(())
 }
 
-/// Read editable definitions, preserving relative source paths and classpath-file references.
+/// Build declarative configuration from the service state. Java snapshots retain
+/// unresolved classpath-file references so repeated saves never duplicate dependencies.
 pub fn specifications(project: &crate::model::Project) -> Result<Vec<ProfileScript>, String> {
-    let path = project.path.join(FILE_NAME);
-    let existing = if path.exists() {
-        read(&path)?.launches
-    } else {
-        vec![]
-    };
     project
         .scripts
         .iter()
         .map(|script| {
-            if let Some(spec) = existing.iter().find(|s| s.name == script.name) {
-                return Ok(spec.clone());
-            }
             let mut entry = script.entry.clone();
-            if let Entry::Java { classpath_file, .. } = &mut entry {
-                // Resolved class_paths already contain classpath_file entries.
-                *classpath_file = None;
+            if let Entry::Java {
+                snapshot,
+                class_paths,
+                classpath_file,
+                manifest,
+                configuration,
+                ..
+            } = &mut entry
+            {
+                if !snapshot.is_empty() {
+                    let original: ProfileScript = serde_json::from_str(snapshot)
+                        .map_err(|e| format!("Java启动定义快照无效: {e}"))?;
+                    if let Entry::Java {
+                        class_paths: paths,
+                        classpath_file: file,
+                        ..
+                    } = original.entry
+                    {
+                        *class_paths = paths;
+                        *classpath_file = file;
+                    }
+                }
+                snapshot.clear();
+                manifest.clear();
+                configuration.clear();
             }
             Ok(ProfileScript {
                 enabled: script.enabled,
@@ -208,6 +263,54 @@ pub fn specifications(project: &crate::model::Project) -> Result<Vec<ProfileScri
             })
         })
         .collect()
+}
+
+/// Keep display-only descriptions out of the executable definition. This avoids
+/// invalidating an in-flight Java launch when its visible introduction is edited.
+pub fn storage_specifications(
+    project: &crate::model::Project,
+    path: &Path,
+) -> Result<Vec<ProfileScript>, String> {
+    let mut specs = specifications(project)?;
+    if path.exists()
+        && project
+            .scripts
+            .iter()
+            .any(|s| s.description_override.is_some())
+    {
+        let previous = read(path)?.launches;
+        for (script, spec) in project.scripts.iter().zip(&mut specs) {
+            if script.description_override.is_some()
+                && let Some(old) = previous.iter().find(|old| old.name == spec.name)
+            {
+                spec.description = old.description.clone();
+            }
+        }
+    }
+    Ok(specs)
+}
+
+/// Bind execution snapshots to the app-owned manifest while retaining stable IDs
+/// and presentation metadata. This is also used before publishing API changes.
+pub fn bind(project: &mut crate::model::Project, path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let mut scripts = from_bytes(&project.path, path, bytes)?;
+    for script in &mut scripts {
+        let old = project
+            .scripts
+            .iter()
+            .find(|old| old.name == script.name)
+            .ok_or_else(|| format!("启动项缺少稳定ID: {}", script.name))?;
+        script.id = old.id;
+        script.favorite = old.favorite;
+        script.display_name = old.display_name.clone();
+        script.description_override = old.description_override.clone();
+        script.custom = old.custom;
+        if let Some(description) = &script.description_override {
+            script.description = description.clone();
+        }
+    }
+    project.scripts = scripts;
+    Ok(())
 }
 pub fn encode(specs: Vec<ProfileScript>) -> Result<Vec<u8>, String> {
     let bytes = serde_json::to_vec_pretty(&Manifest {

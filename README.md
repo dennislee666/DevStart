@@ -51,7 +51,7 @@ cd DevStart
 cargo run --locked
 ```
 
-添加一个本地项目，读取它自己的启动脚本；复杂入口可在项目根目录放置 `.dev-start.json`。导入和刷新只读取，不执行。
+添加一个本地项目，读取它已有的启动脚本；复杂入口通过本地 API 明确登记。所有启动定义保存在 DevStart 用户数据目录的 `projects/<项目 ID>/.dev-start.json`，不往业务仓库写入配置。导入和刷新不执行启动命令。
 
 ```json
 {

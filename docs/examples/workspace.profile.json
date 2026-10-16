@@ -4,8 +4,19 @@
     {
       "name": "示例项目",
       "path": "/path/to/your/project",
-      "scripts": [],
-      "project_file": true
+      "scripts": [
+        {
+          "name": "开发服务",
+          "file": "package.json",
+          "entry": {
+            "Package": {
+              "manager": "npm",
+              "name": "dev"
+            }
+          },
+          "description": "项目原有开发入口"
+        }
+      ]
     }
   ]
 }

@@ -83,15 +83,16 @@ with tempfile.TemporaryDirectory(prefix='ds-api-', dir='/tmp') as temporary:
         group = rpc('groups.create', {'name': 'API测试'})['id']
         item = rpc('projects.create', {'path': str(project), 'name': '示例项目', 'description': 'API验证'})
         pid = item['id']
+        assert not (project / '.dev-start.json').exists()
         assert item['group'] == 1
         rpc('projects.update', {'id': pid, 'patch': {'group': group, 'favorite': True}})
         sid = item['scripts'][0]['id']
         rpc('scripts.update', {'id': sid, 'patch': {'name': '本地调试', 'description': '测试说明', 'display_command': 'dev.sh 本地', 'favorite': True}})
         rpc('projects.refresh', {'id': pid})
         assert rpc('scripts.get', {'id': sid})['display_command'] == 'dev.sh 本地'
-        manifest = (project / '.dev-start.json').read_bytes()
+        manifest = (data / 'projects' / str(pid) / '.dev-start.json').read_bytes()
         rpc('scripts.update', {'id': sid, 'patch': {'file': 'missing.sh'}}, fail=True)
-        assert (project / '.dev-start.json').read_bytes() == manifest
+        assert (data / 'projects' / str(pid) / '.dev-start.json').read_bytes() == manifest
         checks.append('project/script edits, source persistence, refresh and rollback')
         source = project / 'dev.sh'
         original_source = source.read_text()
@@ -115,7 +116,7 @@ with tempfile.TemporaryDirectory(prefix='ds-api-', dir='/tmp') as temporary:
         doc = rpc('editor.restore', {'script_id': sid, 'expected_revision': doc['revision'], 'version_id': selected['id']})
         rpc('editor.close', {'script_id': sid, 'expected_revision': doc['revision']})
         assert not rpc('editor.list')[0]['open']
-        assert (project / '.dev-start.json').read_bytes() == manifest
+        assert (data / 'projects' / str(pid) / '.dev-start.json').read_bytes() == manifest
         checks.append('editor save/restore, ten-version ring, executable permissions, dirty-close and external conflict protection, history metadata')
         run_id = rpc('runs.start', {'script_id': sid})['run_id']
         until('runs.get', {'id': run_id}, lambda r: r['state'] == 'running')
@@ -132,7 +133,7 @@ with tempfile.TemporaryDirectory(prefix='ds-api-', dir='/tmp') as temporary:
         running = rpc('runs.get', {'id': run_id})
         assert running['pid'] == before['pid'] and running['title'].startswith('example-java / ')
         assert renamed['scripts'] == before_project['scripts'] and renamed['path'] == before_project['path']
-        assert (project / '.dev-start.json').read_bytes() == manifest
+        assert (data / 'projects' / str(pid) / '.dev-start.json').read_bytes() == manifest
         rpc('projects.update', {'id': pid, 'patch': {'name': before_project['name']}})
         checks.append('project/group rename during execution preserves PID, source manifest, paths and complete launch specs')
 
@@ -141,7 +142,7 @@ with tempfile.TemporaryDirectory(prefix='ds-api-', dir='/tmp') as temporary:
         assert info['display_name']=='Unified Info' and info['description']=='Unified description'
         assert rpc('runs.get',{'id':run_id})['pid']==before['pid']
         assert rpc('scripts.status',{'id':sid})['label']=='运行中'
-        assert (project/'.dev-start.json').read_bytes()==manifest
+        assert (data / 'projects' / str(pid) / '.dev-start.json').read_bytes()==manifest
         rpc('scripts.update',{'id':sid,'patch':{'display_name':'好'*51,'description':'MUST_NOT_SAVE'}},fail=True)
         assert rpc('scripts.get',{'id':sid})['description']=='Unified description'
         rpc('projects.refresh',{'id':pid})
@@ -151,7 +152,7 @@ with tempfile.TemporaryDirectory(prefix='ds-api-', dir='/tmp') as temporary:
         after = rpc('runs.get', {'id': run_id})
         assert after['pid'] == before['pid'] and after['display_command'] == before['display_command']
         assert after['launch_name'] == 'Java-Starter'
-        assert (project / '.dev-start.json').read_bytes() == manifest
+        assert (data / 'projects' / str(pid) / '.dev-start.json').read_bytes() == manifest
         rpc('projects.refresh', {'id': pid})
         assert rpc('scripts.get', {'id': sid})['display_name'] == 'Java-Starter'
         rpc('scripts.update', {'id': sid, 'patch': {'display_name': '好' * 51}}, fail=True)
@@ -237,7 +238,8 @@ with tempfile.TemporaryDirectory(prefix='ds-api-', dir='/tmp') as temporary:
         rpc('groups.delete', {'id': group})
         assert rpc('projects.get', {'id': pid})['group'] == 1
         rpc('projects.delete', {'id': pid})
-        assert (project / 'dev.sh').exists() and (project / '.dev-start.json').exists()
+        assert (project / 'dev.sh').exists() and not (project / '.dev-start.json').exists()
+        assert (data / 'projects' / str(pid) / '.dev-start.json').exists()
         service.terminate()
         service.wait(timeout=10)
         assert not endpoint.exists()

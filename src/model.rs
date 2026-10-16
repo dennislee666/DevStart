@@ -88,7 +88,7 @@ impl Default for Catalog {
     fn default() -> Self {
         Self {
             preferences: Default::default(),
-            version: 1,
+            version: 2,
             next_id: 2,
             groups: vec![Group {
                 id: 1,

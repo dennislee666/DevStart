@@ -383,7 +383,7 @@
         ],
         "additionalProperties": false
       },
-      "description": "向指定项目新增明确启动项并写回 .dev-start.json；需真实来源文件，只配置不执行。"
+      "description": "向指定项目新增明确启动项，持久化到 DevStart 数据目录 projects/<project_id>/.dev-start.json；业务项目目录不写入配置，需真实来源文件，只配置不执行。"
     },
     "scripts.update": {
       "params": {

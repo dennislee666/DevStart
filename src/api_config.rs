@@ -43,7 +43,7 @@ fn patch<T: serde::Serialize + serde::de::DeserializeOwned>(
     }
     serde_json::from_value(value).map_err(|e| e.to_string())
 }
-/// The project manifest is authoritative. Validate it before committing the catalog and roll back failures.
+/// Presentation changes share the same service-owned transaction as launch definitions.
 #[derive(Default)]
 struct PresentationPatch {
     name: Option<(u64, Option<String>)>,
@@ -59,70 +59,57 @@ fn persist(
     presentation: PresentationPatch,
 ) -> Result<(), String> {
     let old = project(s, pid)?.clone();
-    let path = old.path.join(crate::project_manifest::FILE_NAME);
-    let current = std::fs::read(&path).ok();
+    let path = s.store.manifest_path(pid);
+    let current = Some(std::fs::read(&path).map_err(|e| format!("读取DevStart启动配置失败: {e}"))?);
     if current != expected {
         return Err("项目清单被外部修改，请重新读取后重试".into());
     }
     let bytes = crate::project_manifest::encode(specs)?;
-    crate::store::atomic_write(&path, &bytes)?;
-    let result = (|| {
-        let mut scripts = crate::project_manifest::discover(&old.path)?;
-        for (script, id) in scripts.iter_mut().zip(ids) {
-            script.id = id;
-            script.display_name = presentation
-                .name
-                .clone()
-                .filter(|(sid, _)| *sid == id)
-                .map(|(_, value)| value)
-                .unwrap_or_else(|| {
-                    old.scripts
-                        .iter()
-                        .find(|v| v.id == id)
-                        .and_then(|v| v.display_name.clone())
-                });
-            script.description_override = presentation
-                .description
-                .as_ref()
-                .filter(|(sid, _)| *sid == id)
-                .map(|(_, text)| text.clone())
-                .or_else(|| {
-                    old.scripts
-                        .iter()
-                        .find(|v| v.id == id)
-                        .and_then(|v| v.description_override.clone())
-                });
-            if let Some(text) = &script.description_override {
-                script.description = text.clone();
-            }
-            script.favorite = favorite
-                .filter(|(sid, _)| *sid == id)
-                .map(|(_, v)| v)
-                .unwrap_or_else(|| old.scripts.iter().any(|v| v.id == id && v.favorite));
+    let mut scripts = crate::project_manifest::from_bytes(&old.path, &path, &bytes)?;
+    for (script, id) in scripts.iter_mut().zip(ids) {
+        script.id = id;
+        script.display_name = presentation
+            .name
+            .clone()
+            .filter(|(sid, _)| *sid == id)
+            .map(|(_, value)| value)
+            .unwrap_or_else(|| {
+                old.scripts
+                    .iter()
+                    .find(|v| v.id == id)
+                    .and_then(|v| v.display_name.clone())
+            });
+        script.description_override = presentation
+            .description
+            .as_ref()
+            .filter(|(sid, _)| *sid == id)
+            .map(|(_, text)| text.clone())
+            .or_else(|| {
+                old.scripts
+                    .iter()
+                    .find(|v| v.id == id)
+                    .and_then(|v| v.description_override.clone())
+            });
+        if let Some(text) = &script.description_override {
+            script.description = text.clone();
         }
-        let mut next = s.catalog.clone();
-        next.next_id = next
-            .next_id
-            .max(scripts.iter().map(|v| v.id + 1).max().unwrap_or(2));
-        next.projects
-            .iter_mut()
-            .find(|p| p.id == pid)
-            .ok_or("项目不存在")?
-            .scripts = scripts;
-        s.commit(next)
-    })();
-    if let Err(error) = result {
-        let rollback = if let Some(bytes) = expected {
-            crate::store::atomic_write(&path, &bytes)
-        } else {
-            std::fs::remove_file(&path).map_err(|e| e.to_string())
-        };
-        return Err(match rollback {
-            Ok(()) => error,
-            Err(e) => format!("{error}; 清单回滚失败: {e}"),
-        });
+        script.favorite = favorite
+            .filter(|(sid, _)| *sid == id)
+            .map(|(_, v)| v)
+            .unwrap_or_else(|| old.scripts.iter().any(|v| v.id == id && v.favorite));
     }
-    Ok(())
+    let mut next = s.catalog.clone();
+    next.next_id = next
+        .next_id
+        .max(scripts.iter().map(|v| v.id + 1).max().unwrap_or(2));
+    let project = next
+        .projects
+        .iter_mut()
+        .find(|p| p.id == pid)
+        .ok_or("项目不存在")?;
+    project.scripts = scripts;
+    project.explicit_scripts = true;
+    s.commit(next)
 }
 pub fn handle(s: &mut Service, method: &str, p: &Value) -> Result<Value, String> {
     match method {
@@ -341,10 +328,9 @@ pub fn handle(s: &mut Service, method: &str, p: &Value) -> Result<Value, String>
                 return Ok(json!(s.script(sid)));
             }
             let proj = project(s, pid)?;
-            let path = proj.path.join(crate::project_manifest::FILE_NAME);
+            let path = s.store.manifest_path(pid);
             let expected = match std::fs::read(&path) {
                 Ok(v) => Some(v),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
                 Err(e) => return Err(e.to_string()),
             };
             let mut specs = crate::project_manifest::specifications(proj)?;
