@@ -44,6 +44,7 @@ pub struct DevStart {
     query: String,
     expanded: HashSet<u64>,
     selected_run: Option<u64>,
+    open_console_as_tab: Option<u64>,
     close_run: Option<u64>,
     delete_script: Option<u64>,
     bulk_confirm: Option<crate::bulk::Plan>,
@@ -103,6 +104,7 @@ impl DevStart {
             query: String::new(),
             expanded,
             selected_run: None,
+            open_console_as_tab: None,
             close_run: None,
             delete_script: None,
             bulk_confirm: None,
@@ -672,6 +674,11 @@ impl DevStart {
     fn running_content(&mut self, ui: &mut egui::Ui) {
         if self.tiled {
             self.tiled_consoles(ui);
+            if let Some(id) = self.open_console_as_tab.take() {
+                self.selected_run = Some(id);
+                self.tiled = false;
+                self.filter = Filter::Running;
+            }
             return;
         }
         if let Some(id) = self.selected_run {
@@ -1291,6 +1298,12 @@ impl DevStart {
                                 restart = Some(run.script_id);
                             }
                         });
+                        if self.tiled
+                            && ui.ctx().viewport_id() == egui::ViewportId::ROOT
+                            && small(ui, icon::CORNERS_OUT, "在标签视图中打开当前 Console")
+                        {
+                            self.open_console_as_tab = Some(id);
+                        }
                     });
                 });
                 if compact {
