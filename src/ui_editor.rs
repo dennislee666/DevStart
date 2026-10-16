@@ -13,7 +13,7 @@ impl DevStart {
         let result = self
             .service
             .as_mut()
-            .ok_or("工作空间不可用".to_string())
+            .ok_or(tr("工作空间不可用").to_string())
             .and_then(|s| s.editor_open(sid));
         match result {
             Ok(_) => {
@@ -34,7 +34,7 @@ impl DevStart {
         }
         ui.add_space(12.0);
         ui.label(
-            RichText::new("启动代码")
+            RichText::new(tr("启动代码"))
                 .small()
                 .color(tone(self.light, MUTED)),
         );
@@ -71,7 +71,10 @@ impl DevStart {
                     if ui
                         .add_sized([ui.available_width(), row_height], button)
                         .on_hover_text(if selected {
-                            format!("当前编辑\n{}", record["tooltip"].as_str().unwrap_or(""))
+                            tf(
+                                "当前编辑\n{0}",
+                                &[("0", (record["tooltip"].as_str().unwrap_or("")).to_string())],
+                            )
                         } else {
                             record["tooltip"].as_str().unwrap_or("").to_owned()
                         })
@@ -87,7 +90,7 @@ impl DevStart {
         let result = self
             .service
             .as_mut()
-            .ok_or("工作空间不可用".into())
+            .ok_or(tr("工作空间不可用").into())
             .and_then(|s| s.editor_action(method, &params))
             .map(|_| ());
         let ok = result.is_ok();
@@ -183,7 +186,7 @@ impl DevStart {
     }
     pub(super) fn editor_page(&mut self, ui: &mut egui::Ui) {
         let Some(sid) = self.selected_editor else {
-            ui.label("选择一个启动文件开始编辑");
+            ui.label(tr("选择一个启动文件开始编辑"));
             return;
         };
         let Some(doc) = self
@@ -192,7 +195,7 @@ impl DevStart {
             .and_then(|s| s.editor.read(sid).ok())
             .cloned()
         else {
-            ui.label("文件已关闭，可从左侧历史重新打开");
+            ui.label(tr("文件已关闭，可从左侧历史重新打开"));
             return;
         };
         let association = self
@@ -224,22 +227,30 @@ impl DevStart {
                 .strong(),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                close |= small(ui, icon::X, "关闭编辑 · ⌘W");
-                history = small(ui, icon::CLOCK_COUNTER_CLOCKWISE, "版本历史 · 最近 10 次");
-                reload = small(ui, icon::ARROW_CLOCKWISE, "重新载入磁盘文件");
+                close |= small(ui, icon::X, tr("关闭编辑 · ⌘W"));
+                history = small(
+                    ui,
+                    icon::CLOCK_COUNTER_CLOCKWISE,
+                    tr("版本历史 · 最近 10 次"),
+                );
+                reload = small(ui, icon::ARROW_CLOCKWISE, tr("重新载入磁盘文件"));
                 run = action_button(
                     ui,
                     can_start,
                     icon::PLAY,
-                    "保存并启动",
+                    tr("保存并启动"),
                     Some(tone(self.light, GREEN)),
                 )
                 .clicked();
-                save |= small(ui, icon::FLOPPY_DISK, "保存 · ⌘S");
+                save |= small(ui, icon::FLOPPY_DISK, tr("保存 · ⌘S"));
                 ui.label(
-                    RichText::new(if doc.dirty { "未保存" } else { "已保存" })
-                        .small()
-                        .color(tone(self.light, MUTED)),
+                    RichText::new(if doc.dirty {
+                        tr("未保存")
+                    } else {
+                        tr("已保存")
+                    })
+                    .small()
+                    .color(tone(self.light, MUTED)),
                 );
             });
         });
@@ -392,14 +403,14 @@ impl DevStart {
             self.editor_quit_pending = true;
         }
         if self.editor_quit_pending {
-            dialog_ui::window(ctx, "退出前保存修改")
+            dialog_ui::window(ctx, tr("退出前保存修改"))
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
                     dialog_ui::content(ui);
-                    ui.label("有启动文件尚未保存。");
+                    ui.label(tr("有启动文件尚未保存。"));
                     dialog_ui::actions(ui, |ui| {
-                        if ui.button("全部保存并退出").clicked() {
+                        if ui.button(tr("全部保存并退出")).clicked() {
                             let ids: Vec<_> = self
                                 .service
                                 .as_ref()
@@ -425,12 +436,12 @@ impl DevStart {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                             }
                         }
-                        if ui.button("放弃修改并退出").clicked() {
+                        if ui.button(tr("放弃修改并退出")).clicked() {
                             self.editor_quit_confirmed = true;
                             self.editor_quit_pending = false;
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
-                        if ui.button("取消").clicked() {
+                        if ui.button(tr("取消")).clicked() {
                             self.editor_quit_pending = false;
                         }
                     });
@@ -444,22 +455,22 @@ impl DevStart {
                 | EditorAction::Reload(id)
                 | EditorAction::Restore(id, _) => id,
             };
-            dialog_ui::window(ctx, "未保存的修改")
+            dialog_ui::window(ctx, tr("未保存的修改"))
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
                     dialog_ui::content(ui);
-                    ui.label("保存当前修改后继续？");
+                    ui.label(tr("保存当前修改后继续？"));
                     dialog_ui::actions(ui, |ui| {
-                        if ui.button("保存并继续").clicked() && self.save_editor(sid) {
+                        if ui.button(tr("保存并继续")).clicked() && self.save_editor(sid) {
                             self.editor_pending = None;
                             self.perform_editor_action(action.clone(), false);
                         }
-                        if ui.button("放弃修改").clicked() {
+                        if ui.button(tr("放弃修改")).clicked() {
                             self.editor_pending = None;
                             self.perform_editor_action(action.clone(), true);
                         }
-                        if ui.button("取消").clicked() {
+                        if ui.button(tr("取消")).clicked() {
                             self.editor_pending = None;
                         }
                     });
@@ -468,14 +479,14 @@ impl DevStart {
         if let Some((sid, versions)) = self.editor_versions.clone() {
             let mut opened = true;
             let mut restore = None;
-            dialog_ui::window(ctx, "版本历史")
+            dialog_ui::window(ctx, tr("版本历史"))
                 .open(&mut opened)
                 .collapsible(false)
                 .default_width(480.0)
                 .show(ctx, |ui| {
                     dialog_ui::content(ui);
                     ui.label(
-                        RichText::new("回退会保留当前版本，下次启动使用回退后的文件。")
+                        RichText::new(tr("回退会保留当前版本，下次启动使用回退后的文件。"))
                             .small()
                             .color(tone(self.light, MUTED)),
                     );
@@ -487,7 +498,7 @@ impl DevStart {
                                     ui.label(format!(
                                         "{}  ·  {}",
                                         crate::editor::display_time(version.created_ms),
-                                        crate::editor::reason_label(&version.reason)
+                                        tr(crate::editor::reason_label(&version.reason))
                                     ));
                                     ui.label(
                                         RichText::new(format!("{} B", version.bytes))
@@ -495,11 +506,13 @@ impl DevStart {
                                             .color(tone(self.light, MUTED)),
                                     );
                                     if ui
-                                        .button("回退")
-                                        .on_hover_text(format!(
-                                            "版本 {}\n{}",
-                                            version.id,
-                                            version.path.display()
+                                        .button(tr("回退"))
+                                        .on_hover_text(tf(
+                                            "版本 {0}\n{1}",
+                                            &[
+                                                ("0", (version.id).to_string()),
+                                                ("1", (version.path.display()).to_string()),
+                                            ],
                                         ))
                                         .clicked()
                                     {

@@ -228,9 +228,13 @@ pub(super) fn show(
                             response
                                 .clone()
                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .on_hover_text(format!(
-                                    "Control + 点击打开\n{}",
-                                    crate::presentation::command_preview(&link.target)
+                                .on_hover_text(tf(
+                                    "Control + 点击打开\n{0}",
+                                    &[(
+                                        "0",
+                                        (crate::presentation::command_preview(&link.target))
+                                            .to_string(),
+                                    )],
                                 ));
                             if ui.input(|i| i.modifiers.ctrl)
                                 && (response.clicked() || response.secondary_clicked())

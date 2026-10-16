@@ -2,6 +2,9 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub fn duration(seconds: u64) -> String {
+    duration_for_locale(seconds, crate::i18n::Locale::Chinese)
+}
+pub fn duration_for_locale(seconds: u64, locale: crate::i18n::Locale) -> String {
     let mut text = String::new();
     for (amount, unit) in [
         (seconds / 86400, "天"),
@@ -9,10 +12,13 @@ pub fn duration(seconds: u64) -> String {
         (seconds / 60 % 60, "分钟"),
     ] {
         if amount > 0 {
-            text.push_str(&format!("{amount}{unit}"));
+            text.push_str(&format!("{amount}{}", locale.text(unit)));
+            if locale == crate::i18n::Locale::English {
+                text.push(' ');
+            }
         }
     }
-    text.push_str(&format!("{}秒", seconds % 60));
+    text.push_str(&format!("{}{}", seconds % 60, locale.text("秒")));
     text
 }
 pub fn local_timestamp(seconds: u64) -> String {
@@ -102,13 +108,20 @@ pub struct RunTiming {
 }
 impl crate::runtime::Run {
     pub fn timing(&self) -> RunTiming {
+        self.timing_for_locale(crate::i18n::Locale::Chinese)
+    }
+    pub fn timing_for_locale(&self, locale: crate::i18n::Locale) -> RunTiming {
         let elapsed = self.elapsed_offset.saturating_add(if self.state.active() {
             self.started.elapsed()
         } else {
             self.elapsed
         });
         let elapsed_seconds = elapsed.as_secs();
-        let elapsed_display = duration(elapsed_seconds);
+        let elapsed_display = if locale == crate::i18n::Locale::Chinese {
+            duration(elapsed_seconds)
+        } else {
+            duration_for_locale(elapsed_seconds, locale)
+        };
         let epoch = self
             .started_at
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok());
@@ -117,9 +130,15 @@ impl crate::runtime::Run {
         let display = if let Some(timestamp) = &started_at {
             format!("{timestamp} - {elapsed_display}")
         } else if self.external.is_some() {
-            format!("启动时间未知 - 已监测 {elapsed_display}")
+            locale.format(
+                "启动时间未知 - 已监测 {elapsed}",
+                &[("elapsed", elapsed_display.clone())],
+            )
         } else {
-            format!("未启动 - {elapsed_display}")
+            locale.format(
+                "未启动 - {elapsed}",
+                &[("elapsed", elapsed_display.clone())],
+            )
         };
         RunTiming {
             started_at_unix_ms,

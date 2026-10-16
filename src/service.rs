@@ -694,6 +694,39 @@ impl Service {
             })
             .collect()
     }
+    /// Locale-specific DTOs keep user names, arguments, identifiers and API defaults stable.
+    pub fn localize_tabs(
+        &self,
+        mut tabs: Vec<crate::presentation::RunTab>,
+        locale: crate::i18n::Locale,
+    ) -> Vec<crate::presentation::RunTab> {
+        for tab in &mut tabs {
+            let Some(run) = self
+                .runtime
+                .runs
+                .iter()
+                .find(|run| run.id == tab.id && run.external.is_some())
+            else {
+                continue;
+            };
+            if let Some(project) = self
+                .catalog
+                .projects
+                .iter()
+                .find(|p| p.scripts.iter().any(|s| s.id == run.script_id))
+            {
+                tab.full_name =
+                    locale.format("{project} · 外部运行", &[("project", project.name.clone())]);
+                tab.label = crate::presentation::tab_label(&tab.full_name);
+                tab.tooltip = crate::presentation::run_tooltip(
+                    &tab.full_name,
+                    &run.display_command,
+                    &path_label(&project.path),
+                );
+            }
+        }
+        tabs
+    }
     /// Navigation keeps active sessions above history without reordering workspace tabs.
     pub fn sidebar_sessions(&self) -> Vec<crate::presentation::RunTab> {
         let mut sessions = self.session_tabs();
@@ -773,6 +806,13 @@ impl Service {
             }))
     }
     pub fn running_port_cell(&self, script_id: u64) -> crate::presentation::PortCell {
+        self.running_port_cell_for_locale(script_id, crate::i18n::Locale::Chinese)
+    }
+    pub fn running_port_cell_for_locale(
+        &self,
+        script_id: u64,
+        locale: crate::i18n::Locale,
+    ) -> crate::presentation::PortCell {
         let ports = self.running_ports(script_id);
         let configured = self.configured_port_hint(script_id);
         if !ports.is_empty() {
@@ -781,17 +821,29 @@ impl Service {
                 .map(u16::to_string)
                 .collect::<Vec<_>>()
                 .join(", ");
-            let mut tooltip = format!("实际 TCP 监听端口（含子进程）：{label}");
+            let mut tooltip = locale.format(
+                "实际 TCP 监听端口（含子进程）：{label}",
+                &[("label", label.clone())],
+            );
             if let Ok(Some(hint)) = configured {
-                tooltip.push_str(&format!("\n配置端口：{}\n来源：{}", hint.port, hint.source));
+                tooltip.push_str(&locale.format(
+                    "\n配置端口：{0}\n来源：{1}",
+                    &[
+                        ("0", hint.port.to_string()),
+                        ("1", locale.text(&hint.source).to_owned()),
+                    ],
+                ));
             }
             crate::presentation::PortCell { label, tooltip }
         } else if let Ok(Some(hint)) = configured {
             crate::presentation::PortCell {
                 label: hint.port.to_string(),
-                tooltip: format!(
-                    "配置端口：{}\n来源：{}\n尚未确认实际监听",
-                    hint.port, hint.source
+                tooltip: locale.format(
+                    "配置端口：{0}\n来源：{1}\n尚未确认实际监听",
+                    &[
+                        ("0", hint.port.to_string()),
+                        ("1", locale.text(&hint.source).to_owned()),
+                    ],
                 ),
             }
         } else {
@@ -799,10 +851,9 @@ impl Service {
                 label: "--".into(),
                 tooltip: configured
                     .err()
-                    .map(|e| format!("读取端口配置失败：{e}"))
+                    .map(|e| locale.format("读取端口配置失败：{e}", &[("e",e)]))
                     .unwrap_or_else(|| {
-                        "无法静态确定启动端口，且尚未确认实际监听；可在启动清单中声明 expected_port"
-                            .into()
+                        locale.text("无法静态确定启动端口，且尚未确认实际监听；可在启动清单中声明 expected_port").to_owned()
                     }),
             }
         }

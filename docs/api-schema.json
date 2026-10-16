@@ -636,6 +636,13 @@
               },
               "sidebar_collapsed": {
                 "type": "boolean"
+              },
+              "language": {
+                "enum": [
+                  "system",
+                  "zh-CN",
+                  "en"
+                ]
               }
             },
             "required": [],

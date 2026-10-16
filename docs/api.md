@@ -522,3 +522,20 @@ Console 各视图自动换行，保留最多3000行/2MiB；可搜索纯文本。
 ` scripts.update {"id":12,"patch":{"display_name":"Java-Starter","description":"本地调试后端"}} ` 同时原子保存展示名和简介；校验失败两项均不变。纯 `display_name/description` 更新在运行时也可调用，不改启动清单、argv 或 PID。`display_name:null` 恢复来源默认名。简介作为 `description_override` 展示覆盖值持久化，刷新项目仍保留覆盖；该字段为后端维护，客户端只编辑 description。
 
 ` scripts.status {"id":12} ` 返回 `{id,label}`；label 仅为 `运行中` 或 `--`。启动中、停止中、已结束以及不能确认具体参数的外部实例显示 `--`，与项目列表的状态列一致。
+
+
+## 界面语言 / Interface language
+
+`settings.get` 返回 `language`，`settings.update` 接受 `patch.language`：
+
+| 值 | 含义 |
+|---|---|
+| `system` | 默认；跟随系统首个受支持的界面语言 |
+| `zh-CN` | 固定简体中文 |
+| `en` | 固定 English |
+
+例如 `settings.update {"patch":{"language":"en"}}`。变更通过 Service 原子保存，GUI 下一帧应用，无须重启软件或业务启动项。`settings.reset` 恢复 `system`。旧偏好没有此字段时采用默认值。未知语言值会拒绝整个 patch，不部分提交其它字段。
+
+界面语言不改变 API 方法名、参数、枚举、ID、状态协议或日志游标。项目/分组自定义名称、启动项显示名、简介、命令、源文件内容和业务 Console 日志不自动翻译。默认分组的内置名称只在界面翻译。机器 API 的既有状态 DTO 和原始诊断保持协议稳定；语言影响 GUI 展示。
+
+Choose `system`, `zh-CN`, or `en` through `settings.update`. GUI text updates immediately after the atomic save. Language changes do not restart services or rewrite launch definitions. API identifiers and raw logs remain unchanged. See [localization design](localization.md).

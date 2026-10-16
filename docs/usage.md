@@ -41,3 +41,10 @@ Java 若经内置编辑器保存，会在后续启动检查中用配置的同一
 API/CLI/MCP 的项目管理、启停、日志与编辑接口见 [api.md](api.md)。示例 profile 必须由用户主动导入，不自动执行任何启动项。
 
 应用内确认弹窗与配置表单统一在主窗口居中，内容和底部操作保留独立间距；取消不会提交修改。
+
+
+## 界面语言
+
+设置 → 语言 → 界面语言，可选择“跟随系统”“简体中文”或“English”，然后“应用并保存”。默认跟随系统，保存后即时生效，不会重启业务服务。默认分组及应用状态标签会翻译，用户自定义名称、简介、代码和原始日志保持原文。
+
+Settings → Language → Interface language offers Follow system, 简体中文, and English. Apply and save to switch immediately. Your project names, descriptions, source files, and raw console output remain unchanged.

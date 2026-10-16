@@ -29,6 +29,7 @@ pub enum Density {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Preferences {
+    pub language: crate::i18n::Language,
     pub theme: Theme,
     pub ui_font: UiFont,
     pub ui_font_size: f32,
@@ -41,6 +42,7 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
+            language: crate::i18n::Language::System,
             theme: Theme::Dark,
             ui_font: UiFont::System,
             ui_font_size: 12.0,

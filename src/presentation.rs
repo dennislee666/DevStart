@@ -52,8 +52,14 @@ pub fn launch_label(full: &str) -> String {
 
 /// Display actual monitored listeners only; configured ports do not prove a live listener.
 pub fn run_state_display(run: &crate::runtime::Run) -> String {
+    run_state_display_for_locale(run, crate::i18n::Locale::Chinese)
+}
+pub fn run_state_display_for_locale(
+    run: &crate::runtime::Run,
+    locale: crate::i18n::Locale,
+) -> String {
     if run.state != State::Running {
-        return run.state.label().into();
+        return locale.text(run.state.label()).into();
     }
     let ports: std::collections::BTreeSet<_> = run.listening_ports.iter().copied().collect();
     let ports = if ports.is_empty() {
@@ -65,5 +71,9 @@ pub fn run_state_display(run: &crate::runtime::Run) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     };
-    format!("{}：{ports}", run.state.label())
+    if locale == crate::i18n::Locale::Chinese {
+        format!("{}：{ports}", run.state.label())
+    } else {
+        format!("{}: {ports}", locale.text(run.state.label()))
+    }
 }

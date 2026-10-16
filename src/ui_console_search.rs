@@ -36,11 +36,13 @@ pub(super) fn controls(ui: &mut egui::Ui, state: &mut SearchUi, id: u64) -> Inpu
             .add(
                 egui::TextEdit::singleline(&mut state.query.keyword)
                     .id_salt(("console-find", id))
-                    .hint_text("搜索日志…")
+                    .hint_text(tr("搜索日志…"))
                     .char_limit(256)
                     .desired_width(width),
             )
-            .on_hover_text("在当前保留的最近日志中搜索，按 Enter / Shift+Enter 跳转");
+            .on_hover_text(tr(
+                "在当前保留的最近日志中搜索，按 Enter / Shift+Enter 跳转",
+            ));
         if state.focus {
             response.request_focus();
             state.focus = false;
@@ -57,7 +59,7 @@ pub(super) fn controls(ui: &mut egui::Ui, state: &mut SearchUi, id: u64) -> Inpu
         }
         if ui
             .selectable_label(state.query.case_sensitive, "Aa")
-            .on_hover_text("区分大小写")
+            .on_hover_text(tr("区分大小写"))
             .clicked()
         {
             state.query.case_sensitive = !state.query.case_sensitive;
@@ -65,9 +67,13 @@ pub(super) fn controls(ui: &mut egui::Ui, state: &mut SearchUi, id: u64) -> Inpu
         if ui
             .selectable_label(
                 state.query.only_matches,
-                button_label(ui, &format!("{} 只看匹配", icon::FUNNEL), ui.is_enabled()),
+                button_label(
+                    ui,
+                    &tf("{0} 只看匹配", &[("0", (icon::FUNNEL).to_string())]),
+                    ui.is_enabled(),
+                ),
             )
-            .on_hover_text("仅显示包含关键词的日志行")
+            .on_hover_text(tr("仅显示包含关键词的日志行"))
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
         {
@@ -77,7 +83,7 @@ pub(super) fn controls(ui: &mut egui::Ui, state: &mut SearchUi, id: u64) -> Inpu
             ui,
             state.matched > 0,
             icon::CARET_UP,
-            "上一处 · Shift+Enter",
+            tr("上一处 · Shift+Enter"),
             None,
         )
         .clicked()
@@ -88,7 +94,7 @@ pub(super) fn controls(ui: &mut egui::Ui, state: &mut SearchUi, id: u64) -> Inpu
             ui,
             state.matched > 0,
             icon::CARET_DOWN,
-            "下一处 · Enter",
+            tr("下一处 · Enter"),
             None,
         )
         .clicked()
@@ -97,19 +103,26 @@ pub(super) fn controls(ui: &mut egui::Ui, state: &mut SearchUi, id: u64) -> Inpu
         }
         ui.label(
             RichText::new(if state.matched == 0 {
-                "0 行".into()
+                tr("0 行").into()
             } else if state.query.only_matches {
-                format!("{} 行", state.matched)
+                tf_count(
+                    "{0} 行",
+                    &[("0", (state.matched).to_string())],
+                    state.matched,
+                )
             } else {
-                format!(
-                    "{}/{} 行",
-                    state.current.map_or(0, |v| v + 1),
-                    state.matched
+                tf_count(
+                    "{0}/{1} 行",
+                    &[
+                        ("0", (state.current.map_or(0, |v| v + 1)).to_string()),
+                        ("1", (state.matched).to_string()),
+                    ],
+                    state.matched,
                 )
             })
             .small(),
         );
-        if small(ui, icon::X, "关闭搜索，恢复完整视图")
+        if small(ui, icon::X, tr("关闭搜索，恢复完整视图"))
             || response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape))
         {
             state.toggle();

@@ -80,6 +80,13 @@ with tempfile.TemporaryDirectory(prefix='ds-api-', dir='/tmp') as temporary:
         assert rpc('settings.get')['console_font_size'] == 16
         rpc('settings.reset')
         checks.append('appearance preferences update, validation and reset')
+        assert rpc('settings.get')['language'] == 'system'
+        for language in ['en', 'zh-CN', 'system']:
+            rpc('settings.update', {'patch': {'language': language}})
+            assert rpc('settings.get')['language'] == language
+        rpc('settings.update', {'patch': {'language': 'unsupported', 'theme': 'light'}}, fail=True)
+        assert rpc('settings.get')['language'] == 'system' and rpc('settings.get')['theme'] == 'dark'
+        checks.append('interface language selection, system default and atomic invalid-language rejection')
         group = rpc('groups.create', {'name': 'API测试'})['id']
         item = rpc('projects.create', {'path': str(project), 'name': '示例项目', 'description': 'API验证'})
         pid = item['id']

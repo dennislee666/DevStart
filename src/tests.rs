@@ -3352,3 +3352,73 @@ fn explicit_java_profile_updates_resolve_project_paths_and_keep_registered_ids()
     crate::project_manifest::validate_launch(script).unwrap();
     assert!(!source.0.join(".dev-start.json").exists());
 }
+
+#[test]
+fn language_setting_is_atomic_persistent_and_independent_of_launch_definitions() {
+    use crate::i18n::Language;
+    use serde_json::json;
+    let source = Fixture::new();
+    let data = Fixture::new();
+    source.script("printf '原始业务日志\\n'");
+    let mut service = api_service(&data);
+    let pid = service.import(&source.0, 1).unwrap();
+    let sid = service.catalog.projects[0].scripts[0].id;
+    service
+        .set_display_name(sid, Some("用户自定义名称".into()))
+        .unwrap();
+    let original = serde_json::to_value(&service.catalog.projects).unwrap();
+    let manifest = fs::read(service.store.manifest_path(pid)).unwrap();
+    assert_eq!(service.catalog.preferences.language, Language::System);
+    for (code, expected) in [
+        ("en", Language::English),
+        ("zh-CN", Language::Chinese),
+        ("system", Language::System),
+    ] {
+        api_call(
+            &mut service,
+            "settings.update",
+            json!({"patch":{"language":code}}),
+        );
+        assert_eq!(service.store.load().unwrap().preferences.language, expected);
+        assert_eq!(
+            serde_json::to_value(&service.catalog.projects).unwrap(),
+            original
+        );
+        assert_eq!(
+            fs::read(service.store.manifest_path(pid)).unwrap(),
+            manifest
+        );
+    }
+    assert!(
+        crate::api::dispatch(
+            &mut service,
+            "settings.update",
+            &json!({"patch":{"language":"unsupported","theme":"light"}})
+        )
+        .is_err()
+    );
+    assert_eq!(service.catalog.preferences.language, Language::System);
+    assert_eq!(
+        service.catalog.preferences.theme,
+        crate::preferences::Theme::Dark
+    );
+    api_call(
+        &mut service,
+        "settings.update",
+        json!({"patch":{"language":"en"}}),
+    );
+    let run = service.launch(sid).unwrap();
+    wait(&mut service.runtime, |r| {
+        !r.runs.iter().find(|r| r.id == run).unwrap().state.active()
+    });
+    assert!(run_text(&service.runtime, run).contains("原始业务日志"));
+    assert_eq!(
+        service.script(sid).unwrap().display_label(),
+        "用户自定义名称"
+    );
+    api_call(&mut service, "settings.reset", json!({}));
+    assert_eq!(service.catalog.preferences.language, Language::System);
+    let older: crate::preferences::Preferences =
+        serde_json::from_value(json!({"theme":"light"})).unwrap();
+    assert_eq!(older.language, Language::System);
+}

@@ -126,3 +126,8 @@ python3 scripts/verify-editor-java.py
 ## 许可证
 
 项目代码使用 [MIT License](LICENSE)。第三方依赖、字体和图标保留其各自许可，见[第三方声明](docs/third-party-notices.md)。
+
+
+### Interface language
+
+DevStart supports English and Simplified Chinese. The default follows your system’s preferred supported language. Override it in Settings → Language → Interface language, then Apply and save. Switching languages never restarts your services or translates user content and raw logs.
