@@ -109,7 +109,7 @@ impl DevStart {
             delete_script: None,
             bulk_confirm: None,
             collapsed_groups: HashSet::new(),
-            tiled: false,
+            tiled: true,
             preset: None,
             group_dialog: false,
             group_name: String::new(),
@@ -277,7 +277,7 @@ impl DevStart {
                         self.filter = filter;
                         if filter == Filter::Running {
                             self.selected_run = None;
-                            self.tiled = false;
+                            self.tiled = true;
                         }
                     }
                 }
@@ -492,20 +492,6 @@ impl DevStart {
                     if running {
                         if ui
                             .selectable_label(
-                                !self.tiled,
-                                button_label(
-                                    ui,
-                                    &format!("{} 标签视图", icon::TERMINAL_WINDOW),
-                                    ui.is_enabled(),
-                                ),
-                            )
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
-                        {
-                            self.tiled = false;
-                        }
-                        if ui
-                            .selectable_label(
                                 self.tiled,
                                 button_label(
                                     ui,
@@ -517,6 +503,20 @@ impl DevStart {
                             .clicked()
                         {
                             self.tiled = true;
+                        }
+                        if ui
+                            .selectable_label(
+                                !self.tiled,
+                                button_label(
+                                    ui,
+                                    &format!("{} 标签视图", icon::TERMINAL_WINDOW),
+                                    ui.is_enabled(),
+                                ),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            self.tiled = false;
                         }
                         for (action, symbol, label) in [
                             (crate::bulk::Action::Stop, icon::STOP, "全部停止"),
@@ -572,7 +572,7 @@ impl DevStart {
             match service.launch(id) {
                 Ok(run) => {
                     self.selected_run = Some(run);
-                    self.tiled = false;
+                    self.tiled = true;
                     self.filter = Filter::Running;
                 }
                 Err(e) => {
@@ -701,7 +701,7 @@ impl DevStart {
         }
     }
     fn tiled_consoles(&mut self, ui: &mut egui::Ui) {
-        let tabs = self
+        let mut tabs = self
             .service
             .as_ref()
             .map(|s| s.run_tabs())
@@ -710,6 +710,7 @@ impl DevStart {
             ui.label("暂无启动记录");
             return;
         }
+        sort_tiled_tabs_newest_first(&mut tabs);
         let columns = ((ui.available_width() / 480.0).floor() as usize)
             .max(1)
             .min(tabs.len());
@@ -2222,6 +2223,10 @@ fn run_status(ui: &mut egui::Ui, run: &crate::runtime::Run, light: bool) {
     }
 }
 
+fn sort_tiled_tabs_newest_first(tabs: &mut [crate::presentation::RunTab]) {
+    tabs.sort_by_key(|tab| std::cmp::Reverse(tab.id));
+}
+
 fn launch_widths(width: f32) -> (f32, f32, f32, f32) {
     let name = (width * 0.24).clamp(100.0, 210.0);
     let port = 92.0;
@@ -2257,6 +2262,20 @@ fn launch_header(ui: &mut egui::Ui) {
 #[cfg(test)]
 mod action_cursor_tests {
     use super::*;
+    #[test]
+    fn tiled_consoles_show_newest_start_first() {
+        let mut tabs = [8, 12, 10].map(|id| crate::presentation::RunTab {
+            console_id: id,
+            id,
+            label: id.to_string(),
+            full_name: id.to_string(),
+            tooltip: String::new(),
+            state: State::Running,
+        });
+        sort_tiled_tabs_newest_first(&mut tabs);
+        assert_eq!(tabs.map(|tab| tab.id), [12, 10, 8]);
+    }
+
     #[test]
     fn enabled_actions_show_hand_but_disabled_and_disabled_parent_keep_arrow() {
         for (enabled, parent_enabled, expected) in [
