@@ -556,6 +556,9 @@ impl DevStart {
                                 }
                             }
                         }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add(egui::Label::new(run_state_legend(ui, self.light)));
+                        });
                     }
                 });
                 if running && !self.tiled && has_tabs {
@@ -595,12 +598,12 @@ impl DevStart {
                         ui.push_id(tab.console_id, |ui| {
                             let selected = self.selected_run == Some(tab.id);
                             let response = ui.add(
-                                egui::Button::new(button_label(
+                                egui::Button::new(run_tab_button_label(
                                     ui,
-                                    &format!("{}  {}", icon::TERMINAL_WINDOW, tab.label),
+                                    &tab,
+                                    self.light,
                                     ui.is_enabled(),
                                 ))
-                                .right_text(RichText::new("   ").size(8.0))
                                 .selected(selected)
                                 .fill(if selected {
                                     if self.light { Color32::WHITE } else { SURFACE }
@@ -618,7 +621,6 @@ impl DevStart {
                                 .min_size(Vec2::new(110.0, self.preferences().row_height())),
                             );
                             let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-                            paint_run_marker(ui, &response, tab.state, self.light);
                             if std::env::var_os("DEV_START_TRACE_TABS").is_some() {
                                 eprintln!(
                                     "[tab-hover] id={} hovered={} rect={:?} pointer={:?}",
@@ -1250,33 +1252,9 @@ impl DevStart {
                                 egui::Layout::left_to_right(egui::Align::Center),
                                 |ui| {
                                     if tiled_root {
-                                        ui.horizontal(|ui| {
-                                            let marker_width = 10.0;
-                                            let (rect, _) = ui.allocate_exact_size(
-                                                Vec2::new(marker_width, 22.0),
-                                                egui::Sense::hover(),
-                                            );
-                                            let center = rect.center();
-                                            let color = state_color(run.state, self.light);
-                                            if run.state.active() {
-                                                ui.painter().circle_filled(center, 2.6, color);
-                                            } else {
-                                                ui.painter().circle_stroke(
-                                                    center,
-                                                    2.6,
-                                                    egui::Stroke::new(1.0, color),
-                                                );
-                                            }
-                                            let title_width = ui.available_width().max(20.0);
-                                            ui.add_sized(
-                                                [title_width, 22.0],
-                                                egui::Label::new(
-                                                    RichText::new(&run.title).strong(),
-                                                )
-                                                .truncate(),
-                                            )
+                                        let title = tiled_console_title(ui, run, self.light);
+                                        ui.add(egui::Label::new(title).truncate())
                                             .on_hover_text(&run.title);
-                                        });
                                     } else {
                                         ui.add(
                                             egui::Label::new(RichText::new(&run.title).strong())
@@ -2109,6 +2087,129 @@ fn button_label(ui: &egui::Ui, text: &str, enabled: bool) -> egui::text::LayoutJ
         icon_run = Some(is_icon);
     }
     job
+}
+fn run_tab_button_label(
+    ui: &egui::Ui,
+    tab: &crate::presentation::RunTab,
+    light: bool,
+    enabled: bool,
+) -> egui::text::LayoutJob {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let mut job = egui::text::LayoutJob::default();
+    let icon_family = egui::FontFamily::Name(
+        if enabled {
+            "action-fill"
+        } else {
+            "action-outline"
+        }
+        .into(),
+    );
+    job.append(
+        icon::TERMINAL_WINDOW,
+        0.0,
+        egui::TextFormat {
+            font_id: egui::FontId::new(font.size, icon_family),
+            color: Color32::PLACEHOLDER,
+            ..Default::default()
+        },
+    );
+    job.append(
+        " ",
+        0.0,
+        egui::TextFormat {
+            font_id: font.clone(),
+            color: Color32::PLACEHOLDER,
+            ..Default::default()
+        },
+    );
+    job.append(
+        state_marker(tab.state),
+        0.0,
+        egui::TextFormat {
+            font_id: egui::FontId::new(font.size * 0.75, font.family.clone()),
+            color: state_color(tab.state, light),
+            ..Default::default()
+        },
+    );
+    job.append(
+        " ",
+        0.0,
+        egui::TextFormat {
+            font_id: font.clone(),
+            color: Color32::PLACEHOLDER,
+            ..Default::default()
+        },
+    );
+    job.append(
+        &tab.label,
+        0.0,
+        egui::TextFormat {
+            font_id: font,
+            color: Color32::PLACEHOLDER,
+            ..Default::default()
+        },
+    );
+    job
+}
+fn run_state_legend(ui: &egui::Ui, light: bool) -> egui::text::LayoutJob {
+    let font = egui::TextStyle::Small.resolve(ui.style());
+    let mut job = egui::text::LayoutJob::default();
+    for (text, color) in [
+        ("●", tone(light, GREEN)),
+        (" 运行中    ", tone(light, MUTED)),
+        ("○", tone(light, MUTED)),
+        (" 已停止", tone(light, MUTED)),
+    ] {
+        job.append(
+            text,
+            0.0,
+            egui::TextFormat {
+                font_id: font.clone(),
+                color,
+                ..Default::default()
+            },
+        );
+    }
+    job
+}
+fn tiled_console_title(
+    ui: &egui::Ui,
+    run: &crate::runtime::Run,
+    light: bool,
+) -> egui::text::LayoutJob {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        state_marker(run.state),
+        0.0,
+        egui::TextFormat {
+            font_id: egui::FontId::new(font.size * 0.72, font.family.clone()),
+            color: state_color(run.state, light),
+            ..Default::default()
+        },
+    );
+    job.append(
+        " ",
+        0.0,
+        egui::TextFormat {
+            font_id: font.clone(),
+            color: Color32::PLACEHOLDER,
+            ..Default::default()
+        },
+    );
+    job.append(
+        &run.title,
+        0.0,
+        egui::TextFormat {
+            font_id: font,
+            color: ui.visuals().strong_text_color(),
+            ..Default::default()
+        },
+    );
+    job
+}
+fn state_marker(state: State) -> &'static str {
+    if state.active() { "●" } else { "○" }
 }
 /// Filled icons identify actions; disabled controls retain the outline variant.
 fn button_icon(symbol: &str, enabled: bool) -> RichText {
