@@ -755,6 +755,10 @@ impl DevStart {
         egui::ScrollArea::vertical()
             .id_salt("grouped-projects")
             .show(ui, |ui| {
+                let launch_columns = launch_widths(
+                    (ui.available_width() - ui.spacing().indent * 2.0).max(0.0),
+                    ui.spacing().item_spacing.x,
+                );
                 for (group, group_projects) in grouped {
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
@@ -971,10 +975,10 @@ impl DevStart {
                                 if self.expanded.contains(&project.id) {
                                     ui.indent("launch-options", |ui| {
                                         if !project.scripts.is_empty() {
-                                            launch_header(ui);
+                                            launch_header(ui, launch_columns);
                                         }
                                         for script in &project.scripts {
-                                            self.launch_row(ui, script);
+                                            self.launch_row(ui, script, launch_columns);
                                         }
                                         if project.scripts.is_empty() {
                                             ui.label(
@@ -992,10 +996,13 @@ impl DevStart {
                 }
             });
     }
-    fn launch_row(&mut self, ui: &mut egui::Ui, script: &crate::model::Script) {
+    fn launch_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        script: &crate::model::Script,
+        (name_width, command_width, status_width, port_width): (f32, f32, f32, f32),
+    ) {
         ui.push_id(script.id, |ui| {
-            let width = ui.available_width();
-            let (name_width, command_width, status_width, port_width) = launch_widths(width);
             let port = self
                 .service
                 .as_ref()
@@ -1092,33 +1099,39 @@ impl DevStart {
                 } else {
                     "启动".into()
                 };
-                if action_button(
-                    ui,
-                    active.is_none() && script.launch_block_reason().is_none(),
-                    icon::PLAY,
-                    &launch_hint,
-                    Some(tone(self.light, GREEN)),
-                )
-                .clicked()
-                {
+                let row_height = self.preferences().row_height();
+                let launch_clicked = launch_action_slot(ui, row_height, |ui| {
+                    action_button(
+                        ui,
+                        active.is_none() && script.launch_block_reason().is_none(),
+                        icon::PLAY,
+                        &launch_hint,
+                        Some(tone(self.light, GREEN)),
+                    )
+                    .clicked()
+                });
+                if launch_clicked {
                     self.launch(script.id);
                 }
-                if action_button(ui, active.is_some(), icon::STOP, "停止", None).clicked()
-                    && let Some(run) = active
-                {
+                let stop_clicked = launch_action_slot(ui, row_height, |ui| {
+                    action_button(ui, active.is_some(), icon::STOP, "停止", None).clicked()
+                });
+                if stop_clicked && let Some(run) = active {
                     self.service.as_mut().unwrap().runtime.stop(run);
                 }
-                if action_button(
-                    ui,
-                    self.service
-                        .as_ref()
-                        .is_some_and(|s| s.can_restart_script(script.id)),
-                    icon::ARROW_CLOCKWISE,
-                    "重启",
-                    None,
-                )
-                .clicked()
-                {
+                let restart_clicked = launch_action_slot(ui, row_height, |ui| {
+                    action_button(
+                        ui,
+                        self.service
+                            .as_ref()
+                            .is_some_and(|s| s.can_restart_script(script.id)),
+                        icon::ARROW_CLOCKWISE,
+                        "重启",
+                        None,
+                    )
+                    .clicked()
+                });
+                if restart_clicked {
                     match self.service.as_mut().unwrap().restart(script.id) {
                         Ok(run) => {
                             self.selected_run = Some(run);
@@ -1127,81 +1140,89 @@ impl DevStart {
                         Err(e) => self.report(Err(e)),
                     }
                 }
-                if favorite_button(
-                    ui,
-                    script.favorite,
-                    if script.favorite {
-                        "取消收藏启动项"
-                    } else {
-                        "收藏启动项"
-                    },
-                    self.light,
-                ) {
+                let favorite_clicked = launch_action_slot(ui, row_height, |ui| {
+                    favorite_button(
+                        ui,
+                        script.favorite,
+                        if script.favorite {
+                            "取消收藏启动项"
+                        } else {
+                            "收藏启动项"
+                        },
+                        self.light,
+                    )
+                });
+                if favorite_clicked {
                     let result = self.service.as_mut().unwrap().script_favorite(script.id);
                     self.report(result);
                 }
-                if small(ui, icon::PENCIL_SIMPLE, "编辑原脚本文件") {
+                let edit_clicked = launch_action_slot(ui, row_height, |ui| {
+                    small(ui, icon::PENCIL_SIMPLE, "编辑原脚本文件")
+                });
+                if edit_clicked {
                     self.open_editor(script.id);
                 }
-                icon_menu(ui, icon::DOTS_THREE, |ui| {
-                    if let Some(run) = active
-                        && ui.button("查看 Console").clicked()
-                    {
-                        self.selected_run = Some(run);
-                        self.filter = Filter::Running;
-                        ui.close();
-                    }
-                    if ui.button("另存参数预设").clicked() {
-                        self.preset = Some((
-                            script.id,
-                            format!("{} · 新参数", script.name),
-                            script.args.join("\n"),
-                            script
-                                .expected_port
-                                .map(|p| p.to_string())
-                                .unwrap_or_default(),
-                        ));
-                        ui.close();
-                    }
-                    if ui.button("修改信息").clicked() {
-                        self.script_info = Some(ScriptInfoDraft {
-                            id: script.id,
-                            name: script.display_label().to_owned(),
-                            description: script.description.clone(),
-                            default_name: script.name.clone(),
-                            reset_name: script.display_name.is_none(),
-                        });
-                        ui.close();
-                    }
-                    if ui.button("根据执行情况生成简介").clicked() {
-                        let result = self
-                            .service
-                            .as_mut()
-                            .unwrap()
-                            .generate_description(script.id);
-                        self.report(result);
-                        ui.close();
-                    }
-                    if ui
-                        .button(if script.favorite {
-                            "取消收藏"
-                        } else {
-                            "收藏启动项"
-                        })
-                        .clicked()
-                    {
-                        let result = self.service.as_mut().unwrap().script_favorite(script.id);
-                        self.report(result);
-                        ui.close();
-                    }
-                    if ui
-                        .button("删除启动项")
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
-                    {
-                        self.delete_script = Some(script.id);
-                        ui.close();
-                    }
+                launch_action_slot(ui, row_height, |ui| {
+                    icon_menu(ui, icon::DOTS_THREE, |ui| {
+                        if let Some(run) = active
+                            && ui.button("查看 Console").clicked()
+                        {
+                            self.selected_run = Some(run);
+                            self.filter = Filter::Running;
+                            ui.close();
+                        }
+                        if ui.button("另存参数预设").clicked() {
+                            self.preset = Some((
+                                script.id,
+                                format!("{} · 新参数", script.name),
+                                script.args.join("\n"),
+                                script
+                                    .expected_port
+                                    .map(|p| p.to_string())
+                                    .unwrap_or_default(),
+                            ));
+                            ui.close();
+                        }
+                        if ui.button("修改信息").clicked() {
+                            self.script_info = Some(ScriptInfoDraft {
+                                id: script.id,
+                                name: script.display_label().to_owned(),
+                                description: script.description.clone(),
+                                default_name: script.name.clone(),
+                                reset_name: script.display_name.is_none(),
+                            });
+                            ui.close();
+                        }
+                        if ui.button("根据执行情况生成简介").clicked() {
+                            let result = self
+                                .service
+                                .as_mut()
+                                .unwrap()
+                                .generate_description(script.id);
+                            self.report(result);
+                            ui.close();
+                        }
+                        if ui
+                            .button(if script.favorite {
+                                "取消收藏"
+                            } else {
+                                "收藏启动项"
+                            })
+                            .clicked()
+                        {
+                            let result = self.service.as_mut().unwrap().script_favorite(script.id);
+                            self.report(result);
+                            ui.close();
+                        }
+                        if ui
+                            .button("删除启动项")
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            self.delete_script = Some(script.id);
+                            ui.close();
+                        }
+                    });
                 });
             });
         });
@@ -2419,19 +2440,35 @@ fn sort_tiled_tabs_newest_first(tabs: &mut [crate::presentation::RunTab]) {
     tabs.sort_by_key(|tab| std::cmp::Reverse(tab.id));
 }
 
-fn launch_widths(width: f32) -> (f32, f32, f32, f32) {
+fn launch_widths(width: f32, item_spacing: f32) -> (f32, f32, f32, f32) {
+    let actions = LAUNCH_ACTION_SLOT_WIDTH * LAUNCH_ACTION_SLOT_COUNT as f32;
+    let gaps = (LAUNCH_DATA_COLUMN_COUNT + LAUNCH_ACTION_SLOT_COUNT - 1) as f32 * item_spacing;
     let name = (width * 0.24).clamp(100.0, 210.0);
     let port = 92.0;
     let status = 64.0;
     (
         name,
-        (width - name - status - port - 196.0).max(60.0),
+        (width - name - status - port - actions - gaps).max(60.0),
         status,
         port,
     )
 }
-fn launch_header(ui: &mut egui::Ui) {
-    let (name, command, status, port) = launch_widths(ui.available_width());
+const LAUNCH_ACTION_SLOT_WIDTH: f32 = 28.0;
+const LAUNCH_ACTION_SLOT_COUNT: usize = 6;
+const LAUNCH_DATA_COLUMN_COUNT: usize = 4;
+fn launch_action_slot<R>(
+    ui: &mut egui::Ui,
+    height: f32,
+    content: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.allocate_ui_with_layout(
+        Vec2::new(LAUNCH_ACTION_SLOT_WIDTH, height),
+        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+        content,
+    )
+    .inner
+}
+fn launch_header(ui: &mut egui::Ui, (name, command, status, port): (f32, f32, f32, f32)) {
     ui.horizontal(|ui| {
         for (label, width) in [
             ("启动项", name),
@@ -2454,6 +2491,25 @@ fn launch_header(ui: &mut egui::Ui) {
 #[cfg(test)]
 mod action_cursor_tests {
     use super::*;
+
+    #[test]
+    fn launch_columns_reserve_a_fixed_action_region() {
+        let width = 1200.0;
+        let item_spacing = 8.0;
+        let (name, command, status, port) = launch_widths(width, item_spacing);
+        assert!(
+            (name
+                + command
+                + status
+                + port
+                + LAUNCH_ACTION_SLOT_WIDTH * LAUNCH_ACTION_SLOT_COUNT as f32
+                + item_spacing * (LAUNCH_DATA_COLUMN_COUNT + LAUNCH_ACTION_SLOT_COUNT - 1) as f32
+                - width)
+                .abs()
+                < 0.01
+        );
+    }
+
     #[test]
     fn tiled_consoles_show_newest_start_first() {
         let mut tabs = [8, 12, 10].map(|id| crate::presentation::RunTab {
