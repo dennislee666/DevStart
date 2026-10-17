@@ -53,7 +53,7 @@ jobs:
           binary="$app/Contents/MacOS/dev-start"
           test "$("$binary" --edition)" = open-source
           test "$("$binary" --version)" = 1.0.0
-          lipo -verify_arch x86_64 arm64 "$binary"
+          lipo "$binary" -verify_arch x86_64 arm64
           codesign --verify --deep --strict "$app"
           xcrun vtool -show-build "$binary"
           python3 scripts/verify-api.py "$binary"
