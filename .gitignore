@@ -23,3 +23,7 @@
 /docs/validation/
 /docs/*verification*.json
 /docs/*integration*.json
+
+# Python release-tool bytecode is a local build artifact.
+__pycache__/
+*.py[cod]

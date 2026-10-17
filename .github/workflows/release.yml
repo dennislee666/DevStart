@@ -1,6 +1,11 @@
 name: Build DevStart 1.0
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the final release and remove intermediate builds of this version
+        type: boolean
+        default: true
 permissions:
   contents: read
 concurrency:
@@ -40,6 +45,7 @@ jobs:
           fi
       - name: Verify public source
         run: |
+          python3 scripts/test_publish_release.py
           cargo fmt --check
           cargo clippy --locked --all-targets --no-default-features -- -D warnings
           cargo test --locked --no-default-features
@@ -62,18 +68,19 @@ jobs:
           ln -s /Applications "$RUNNER_TEMP/dmg-root/Applications"
           hdiutil create -volname DevStart -srcfolder "$RUNNER_TEMP/dmg-root" -format UDZO -ov release-assets/DevStart-1.0.0-macOS-universal.dmg
           ditto -c -k --sequesterRsrc --keepParent "$app" release-assets/DevStart-1.0.0-macOS-universal.zip
+          hdiutil verify release-assets/DevStart-1.0.0-macOS-universal.dmg
+          unzip -tq release-assets/DevStart-1.0.0-macOS-universal.zip
           (cd release-assets && shasum -a 256 *.dmg *.zip > SHA256SUMS.txt)
+          python3 scripts/publish-release.py release-assets --check-only
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: DevStart-1.0.0-macOS-universal
           path: release-assets/*
           if-no-files-found: error
           retention-days: 30
-      - name: Publish immutable 1.0 build
+      - name: Publish the final release for this version
+        if: inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          tag="v1.0.0-build.${GITHUB_RUN_ID}"
-          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "DevStart 1.0 · Build ${GITHUB_RUN_NUMBER}" --notes-file docs/releases/1.0.md --latest
+        run: python3 scripts/publish-release.py release-assets --sha "$GITHUB_SHA"
