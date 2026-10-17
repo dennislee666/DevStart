@@ -291,6 +291,7 @@ fn scan(root: &Path, catalog: &Catalog, cancel: &AtomicBool) -> Result<Report, S
             })
         });
         let mut identities = HashSet::new();
+        let mut names = HashSet::new();
         let mut launches = vec![];
         for mut script in scripts {
             if !identities.insert(script.identity()) {
@@ -300,6 +301,7 @@ fn scan(root: &Path, catalog: &Catalog, cancel: &AtomicBool) -> Result<Report, S
                 report.truncated = true;
                 break;
             }
+            script.name = unique_name(&script.name, &mut names);
             let hint = match crate::configured_ports::resolve(&script) {
                 Ok(v) => v,
                 Err(e) => {
@@ -365,8 +367,23 @@ fn scan(root: &Path, catalog: &Catalog, cancel: &AtomicBool) -> Result<Report, S
     report.warnings.truncate(100);
     Ok(report)
 }
+fn unique_name(base: &str, names: &mut HashSet<String>) -> String {
+    if names.insert(base.to_owned()) {
+        return base.to_owned();
+    }
+    for suffix in 2.. {
+        let name = format!("{base} ({suffix})");
+        if names.insert(name.clone()) {
+            return name;
+        }
+    }
+    unreachable!("unbounded suffix sequence")
+}
 fn same_launch(a: &Script, b: &Script) -> bool {
-    a.file == b.file && a.invocation() == b.invocation() && a.cwd == b.cwd
+    a.file == b.file
+        && a.invocation() == b.invocation()
+        && a.cwd == b.cwd
+        && a.environment == b.environment
 }
 /// Validate the immutable report and every selected source before one service-owned commit.
 pub fn apply(catalog: &Catalog, job: Job, ids: &[u64]) -> Result<(Catalog, usize), String> {
@@ -391,6 +408,13 @@ pub fn apply(catalog: &Catalog, job: Job, ids: &[u64]) -> Result<(Catalog, usize
     let mut added = 0;
     for project in report.projects {
         let mut scripts = vec![];
+        let mut names: HashSet<_> = next
+            .projects
+            .iter()
+            .filter(|p| p.path == project.path)
+            .flat_map(|p| &p.scripts)
+            .map(|s| s.name.clone())
+            .collect();
         for launch in project
             .launches
             .into_iter()
@@ -419,6 +443,7 @@ pub fn apply(catalog: &Catalog, job: Job, ids: &[u64]) -> Result<(Catalog, usize
                 continue;
             }
             let mut script = launch.script;
+            script.name = unique_name(&script.name, &mut names);
             script.id = next.id();
             script.custom = true;
             scripts.push(script);

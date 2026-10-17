@@ -444,7 +444,7 @@ fn ide_launches(root: &Path) -> Result<Vec<Script>, String> {
         let arguments = match &config["args"] {
             serde_json::Value::Array(items) => items
                 .iter()
-                .map(|v| v.as_str().and_then(&expand))
+                .map(|v| v.as_str().and_then(expand))
                 .collect::<Option<Vec<_>>>(),
             serde_json::Value::String(s) => crate::configured_ports::words(s)
                 .and_then(|v| v.iter().map(|s| expand(s)).collect()),
@@ -467,7 +467,7 @@ fn ide_launches(root: &Path) -> Result<Vec<Script>, String> {
                 let Some(interpreter) = expand(interpreter) else {
                     continue;
                 };
-                if let Some(program) = config["program"].as_str().and_then(&expand) {
+                if let Some(program) = config["program"].as_str().and_then(expand) {
                     let path = if Path::new(&program).is_absolute() {
                         PathBuf::from(program)
                     } else {
@@ -482,7 +482,7 @@ fn ide_launches(root: &Path) -> Result<Vec<Script>, String> {
                         continue;
                     }
                     script(root, path, name, Entry::File { interpreter }, &[])
-                } else if python && let Some(module) = config["module"].as_str().and_then(&expand) {
+                } else if python && let Some(module) = config["module"].as_str().and_then(expand) {
                     command(
                         root,
                         ".vscode/launch.json",
@@ -495,7 +495,7 @@ fn ide_launches(root: &Path) -> Result<Vec<Script>, String> {
                 }
             }
             Some("java") => {
-                let Some(main_class) = config["mainClass"].as_str().and_then(&expand) else {
+                let Some(main_class) = config["mainClass"].as_str().and_then(expand) else {
                     continue;
                 };
                 let Some(paths) = config["classPaths"].as_array() else {
@@ -504,7 +504,7 @@ fn ide_launches(root: &Path) -> Result<Vec<Script>, String> {
                 let Some(paths) = paths
                     .iter()
                     .map(|v| {
-                        v.as_str().and_then(&expand).map(|p| {
+                        v.as_str().and_then(expand).map(|p| {
                             if Path::new(&p).is_absolute() {
                                 PathBuf::from(p)
                             } else {
@@ -544,7 +544,7 @@ fn ide_launches(root: &Path) -> Result<Vec<Script>, String> {
             _ => continue,
         };
         launch.args.extend(args);
-        if let Some(cwd) = config["cwd"].as_str().and_then(&expand) {
+        if let Some(cwd) = config["cwd"].as_str().and_then(expand) {
             let cwd = if Path::new(&cwd).is_absolute() {
                 PathBuf::from(cwd)
             } else {
@@ -558,7 +558,7 @@ fn ide_launches(root: &Path) -> Result<Vec<Script>, String> {
         }
         if let Some(env) = config["env"].as_object() {
             for (k, v) in env {
-                if let Some(v) = v.as_str().and_then(&expand) {
+                if let Some(v) = v.as_str().and_then(expand) {
                     launch.environment.insert(k.clone(), v);
                 }
             }

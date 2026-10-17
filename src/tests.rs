@@ -3533,4 +3533,41 @@ fn project_scan_api_adds_only_selected_launches_to_app_storage() {
         )["added"],
         0
     );
+    let sid = s.catalog.projects[0].scripts[0].id;
+    api_call(
+        &mut s,
+        "scripts.update",
+        json!({"id":sid,"patch":{"environment":{"MODE":"production"}}}),
+    );
+    let other = api_call(&mut s, "scan.start", json!({"path":f.0.join("workspace")}))["job_id"]
+        .as_u64()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let report = loop {
+        let result = api_call(&mut s, "scan.get", json!({"id":other}));
+        if result["state"] != "running" {
+            break result;
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let entry = &report["report"]["projects"][0]["launches"][0];
+    assert_eq!(entry["existing"], false);
+    assert_eq!(
+        api_call(
+            &mut s,
+            "scan.import",
+            json!({"id":other,"launch_ids":[entry["id"].as_u64().unwrap()]})
+        )["added"],
+        1
+    );
+    assert_eq!(s.catalog.projects[0].scripts.len(), 2);
+    assert_ne!(
+        s.catalog.projects[0].scripts[0].name,
+        s.catalog.projects[0].scripts[1].name
+    );
+    assert_eq!(
+        s.catalog.projects[0].scripts[0].environment["MODE"],
+        "production"
+    );
 }
