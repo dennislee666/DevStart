@@ -598,3 +598,12 @@ terminal.read 附加返回 segments：每段包含 text、role（output/prompt/i
 - `git.commit_diff {"project_id":123,"commit":"完整提交哈希","file":"src/main.rs"}`：返回 output（unified diff），使用与文件列表一致的比较基准，重命名包含旧、新路径。file 必须属于该提交；删除文件、二进制文件、子模块由 Git 原样报告。不是与当前工作区比较。
 
 两者不 checkout、reset 或修改工作区，不运行 external diff/textconv。保留既有 Git 输出上限；过大的 diff 返回明确错误。UI 单击历史进入“项目 / 历史 / 提交文件”布局，双击文件打开 diff，“返回工作区”恢复工作区布局。
+
+### 自动扫描项目与选择导入
+
+完整规则见 [项目扫描](project-scan.md)。扫描不执行程序或写入业务项目，后台任务与 GUI 共用。
+
+- `scan.start {"path":"/path/to/workspaces"}` → `{job_id,state:"running"}`。
+- `scan.get {"id":job_id}` → `{id,state,report,error}`；state 为 running/completed/failed/cancelled。report 包含 projects，每项目有 name/path/group/stack/launches；每入口有 id/script/command/port/port_source/existing。port=null 表示无法静态判断；必须检查 warnings 与 truncated，不能声称截断扫描是完整结果。
+- `scan.import {"id":job_id,"launch_ids":[入口ID]}` → `{added,project_ids}`。只允许已完成报告内的唯一入口 ID，校验源文件未改变后一次提交。保留已有项目元数据和旧启动项；重复入口忽略。仅将配置写入 DevStart 应用目录。不会启动服务，后续显式调用 runs.start。
+- `scan.cancel {"id":job_id}` 请求取消。最多一份运行中扫描和四份结果，过期报告需重新扫描。

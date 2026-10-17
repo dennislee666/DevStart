@@ -15,6 +15,7 @@ pub enum Filter {
     Editor,
 }
 pub struct Service {
+    pub scans: crate::project_scan::Manager,
     pub terminals: crate::project_terminal::Manager,
     pub editor: crate::editor::Workspace,
     pub catalog: Catalog,
@@ -29,6 +30,7 @@ impl Service {
         let editor = crate::editor::Workspace::load(&store.root)?;
         let port_hints = crate::configured_ports::collect(&catalog.projects);
         Ok(Self {
+            scans: Default::default(),
             terminals: Default::default(),
             editor,
             port_hints,

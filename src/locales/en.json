@@ -320,5 +320,18 @@
   "二进制": "Binary",
   "适合 AI Coding 时代的多项目启动工作台。": "A multi-project launch workbench for the AI Coding era.",
   "需要相关服务时，找到对应项目、点击启动，再切回当前项目。项目依赖与启动顺序由你掌握。": "Need a related service? Find its project, click to start it, then switch back. You choose the dependencies and launch order.",
-  "项目多也不乱。快速找到项目，启动、停止、看日志，再切回手头的工作。": "More projects. Less friction. Find a project, start or stop it, check its logs, and get back to your work."
+  "项目多也不乱。快速找到项目，启动、停止、看日志，再切回手头的工作。": "More projects. Less friction. Find a project, start or stop it, check its logs, and get back to your work.",
+  "自动扫描项目": "Auto-scan projects",
+  "选择扫描目录": "Choose a directory to scan",
+  "选择目录": "Choose directory",
+  "开始扫描": "Start scan",
+  "正在扫描项目与启动脚本…": "Scanning projects and launch scripts…",
+  "已达到扫描上限，部分目录未扫描。请选择更具体的目录继续扫描。": "Scan limit reached. Some directories were not scanned. Choose a more specific directory.",
+  "扫描提示": "Scan details",
+  "发现 {count} 个项目，勾选需要添加的启动项": "Found {count} projects. Select launch entries to add.",
+  "未识别到可添加的启动项": "No supported launch entry detected",
+  "已添加": "Already added",
+  "添加所选启动项": "Add selected entries",
+  "自动扫描识别项目与启动项": "Automatically discover projects and launch entries",
+  "开始": "Start"
 }

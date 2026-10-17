@@ -158,7 +158,7 @@ fn option(args: &[String], key: &str) -> Option<String> {
     value
 }
 /// Tokenize a single shell command only. Reject pipelines/subshells rather than guessing which process binds.
-fn words(command: &str) -> Option<Vec<String>> {
+pub(crate) fn words(command: &str) -> Option<Vec<String>> {
     let mut words = vec![];
     let mut word = String::new();
     let mut quote = None;

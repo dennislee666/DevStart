@@ -26,32 +26,43 @@ DevStart 聚焦日常启动与切换，不自动解析跨项目依赖，也不�
 
 ## 下载 1.0
 
-[正式发布与下载](https://github.com/dennislee666/DevStart/releases/tag/v1.0.0)：macOS 12 及以上，Universal（Intel x86_64 / Apple Silicon）。安装及签名说明见[1.0 发布说明](docs/releases/1.0.md)。
+[正式发布与下载](https://github.com/dennislee666/DevStart/releases/latest)：macOS 12 及以上，Universal（Intel x86_64 / Apple Silicon）。安装及签名说明见[1.0 发布说明](docs/releases/1.0.md)。
 
 ## 界面预览
 
-下面是 **Facebook 虚构项目分组**的真实应用截图：Java API、后台管理、官网、手机 H5，每个项目分别提供“正式生产库”和“测试库”两个启动项。
+以下截图使用 **demo project 虚拟工作区**：Java API、Admin、Website、Mobile H5，每个项目有“正式生产库”和“测试库”两个演示启动项。
 
-![Facebook 分组：四个项目、八个启动项，展示配置端口与运行状态](docs/screenshots/facebook-projects.png)
+![demo project：四个项目、八个启动项与配置端口](docs/screenshots/demo-projects.png)
 
-多个启动项同时运行时，可以切换标签查看各自的输出，也可以使用平铺视图。项目信息区显示状态、端口、PID、启动时间和运行时长；Console 支持搜索、过滤、彩色输出和 Control + 点击打开链接。
+### 自动扫描项目
 
-![运行 Console：标签切换、端口状态与彩色模拟日志](docs/screenshots/facebook-console.png)
+选择一个目录，后台识别项目、技术栈、已有启动脚本和可确定的端口；勾选需要的启动项，确认后自动创建分组与项目。支持 Vue、UniApp、Next.js、Node.js、Python、Java、PHP 等已有启动协议。扫描不运行项目代码，不向项目仓库写管理配置；未知端口显示 `--`。完整范围与限制见[自动扫描说明](docs/project-scan.md)。
 
-平铺视图同时查看四个项目的 Console，快速定位服务状态与日志。
+![选择目录，扫描后勾选项目与启动项](docs/screenshots/demo-scan.png)
 
-![Facebook 虚构工作区：四个服务的平铺 Console](docs/screenshots/facebook-tiles.png)
+<details><summary>首次打开：从空项目页开始</summary>
 
-| 项目 | 正式生产库端口 | 测试库端口 | 示例目录 |
-| --- | --- | --- | --- |
-| Java API | 18080 | 18081 | `~/Projects/facebook/java-api` |
-| 后台管理 | 13000 | 13001 | `~/Projects/facebook/admin` |
-| 官网 | 14000 | 14001 | `~/Projects/facebook/website` |
-| 手机 H5 | 18000 | 18001 | `~/Projects/facebook/mobile-h5` |
+![空项目页：自动扫描识别项目与启动项](docs/screenshots/demo-empty.png)
 
-**演示说明：** Facebook 仅作为虚构工作区名称，与 Meta / Facebook 无关联。截图来自隔离工作空间；Java/npm 命令是显示示例，实际由本地模拟进程产生输出，不连接生产或测试数据库，也不部署、打包或上传。示例分组不会预装到应用中，首次启动仍为空数据。详见[截图与演示说明](docs/showcase.md)。
+</details>
+
+### Git 工作台
+
+项目分支与远程选择、Update Project、修改文件清单、提交/推送、交互终端和提交历史集中展示。点击历史可查看文件增删行数，双击文件打开多标签 Diff。详见[Git 工作台](docs/git-workspace.md)。
+
+![demo project Git 主窗口：分支、工作区、终端与提交历史](docs/screenshots/demo-git.png)
+
+### 启动日志与平铺
+
+![标签 Console：端口、状态与彩色模拟日志](docs/screenshots/demo-console.png)
+
+![平铺查看三个本机模拟服务的日志](docs/screenshots/demo-tiles.png)
+
+**演示说明：** 所有项目、Git 提交、远程地址与日志均为虚拟示例，不连接真实生产/测试数据库，不执行部署。演示分组不预装到应用中，首次启动仍为空数据。详见[截图与演示说明](docs/showcase.md)。
 
 ## 功能
+
+- **自动扫描**：按目录批量识别项目与启动项，勾选后导入，自动分组及去重；支持扫描 API。
 
 - **项目与启动项**：分组、收藏、搜索、“修改信息”统一编辑显示名和简介，同一项目多个运行参数；独立状态列与启动前配置端口展示。
 - **进程管理**：同时启动多个项目；启动前核实旧实例，先优雅退出，超时再强制关闭；生命周期事件输出到 Console；当前标签内重启，批量启动/停止/重启均有二次确认。
@@ -60,9 +71,12 @@ DevStart 聚焦日常启动与切换，不自动解析跨项目依赖，也不�
 - **外观设置**：深色/浅色/系统主题，界面与 Console 字体、字号、行距、密度，可折叠侧栏。
 - **AI 与自动化**：本地 JSON-RPC API、CLI、MCP，配置管理、启停、日志查询和编辑/回退均可调用。
 
+- **基础 Git 工作区**：在已登记项目间切换，选择已有本地分支和远程地址，查看变更、提交、推送及拉取更新并合并；浏览提交历史、文件新增/删除行数和多标签 Diff。详见 [Git 工作区](docs/git-workspace.md)。
+- **项目交互终端**：在项目目录使用持续 shell 会话，支持命令历史、实时彩色输出和 Ctrl+C；Git 页与运行页共享项目终端，运行页可切换启动日志与终端。
+
 ## 路线图
 
-计划增加**多项目、多账户 Git 管理**，让跨项目开发中的仓库与账户切换更顺手。该能力尚未实现，具体范围与时间待定。后续改进继续围绕多项目高频切换，保持操作简单。
+基础 Git 工作区已提供跨项目的日常仓库操作；用户身份与凭据沿用现有 Git 配置，选择远程地址不等于切换账户。计划增加**多账户身份与凭据管理**，具体范围与时间待定。后续改进继续围绕多项目高频切换，保持操作简单。
 
 ## 平台与依赖
 

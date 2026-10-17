@@ -1492,6 +1492,78 @@
         "additionalProperties": false
       },
       "description": "Read the selected commit file unified diff against the same comparison base. File must belong to this commit; renames include both paths. Binary changes are reported by Git. No checkout, external diff or textconv."
+    },
+    "scan.start": {
+      "description": "只读后台扫描目录；不执行项目代码，不写入项目目录。返回 job_id；同一时刻最多一个扫描，最多保留四个结果。",
+      "params": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scan.get": {
+      "description": "读取扫描状态与完成结果。状态 running/completed/failed/cancelled；结果含 projects、launches、port、existing、warnings、truncated。",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scan.cancel": {
+      "description": "请求取消后台扫描；已完成结果保持可读。",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scan.import": {
+      "description": "仅添加指定扫描结果的 launch_ids，不执行启动。全部验证后原子保存于 DevStart 数据目录；重复启动项忽略，保留已有项目配置。",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "launch_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minItems": 1
+          }
+        },
+        "required": [
+          "id",
+          "launch_ids"
+        ],
+        "additionalProperties": false
+      }
     }
   }
 }

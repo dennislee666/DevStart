@@ -24,6 +24,8 @@ mod dialog_ui;
 mod editor_ui;
 #[path = "ui_git.rs"]
 mod git_ui;
+#[path = "ui_project_scan.rs"]
+mod scan_ui;
 #[path = "ui_console_search.rs"]
 mod search_ui;
 #[path = "ui_settings.rs"]
@@ -40,6 +42,7 @@ struct ScriptInfoDraft {
     reset_name: bool,
 }
 pub struct DevStart {
+    scan_ui: scan_ui::ScanUi,
     git_page: git_ui::GitPage,
     console_terminal_tabs: HashSet<u64>,
     console_terminals: HashMap<u64, terminal_ui::TerminalView>,
@@ -120,6 +123,7 @@ impl DevStart {
             .map(|s| s.catalog.projects.iter().map(|p| p.id).collect())
             .unwrap_or_default();
         let mut app = Self {
+            scan_ui: Default::default(),
             git_page: git_ui::GitPage::default(),
             console_terminal_tabs: Default::default(),
             console_terminals: Default::default(),
@@ -500,6 +504,18 @@ impl DevStart {
                             .strong(),
                         );
                     }
+                    if self.filter == Filter::All
+                        && ui
+                            .button(button_label(
+                                ui,
+                                &format!("{} {}", icon::MAGNIFYING_GLASS, tr("自动扫描项目")),
+                                true,
+                            ))
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                    {
+                        self.scan_ui.open = true;
+                    }
                     if !running
                         && !matches!(self.filter, Filter::Settings | Filter::Editor | Filter::Git)
                     {
@@ -801,6 +817,24 @@ impl DevStart {
             ui.label(tr("工作空间不可用"));
             return;
         };
+        if service.catalog.projects.is_empty() {
+            let height = ui.available_height();
+            ui.vertical_centered(|ui| {
+                ui.add_space(((height - 76.0) * 0.5).max(0.0));
+                ui.label(
+                    RichText::new(tr("自动扫描识别项目与启动项")).color(tone(self.light, MUTED)),
+                );
+                ui.add_space(8.0);
+                if ui
+                    .add_sized([88.0, 32.0], egui::Button::new(tr("开始")))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    self.scan_ui.open = true;
+                }
+            });
+            return;
+        }
         let grouped = service.grouped_projects(self.filter, &self.query);
         egui::ScrollArea::vertical()
             .id_salt("grouped-projects")
@@ -1807,6 +1841,7 @@ impl DevStart {
         }
     }
     fn dialogs(&mut self, ctx: &egui::Context) {
+        self.project_scan_dialog(ctx);
         if let Some(id) = self.delete_script {
             let target = self.service.as_ref().and_then(|service| {
                 service.catalog.projects.iter().find_map(|project| {

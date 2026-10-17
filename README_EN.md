@@ -26,32 +26,43 @@ DevStart focuses on everyday launching and switching. It does not automatically 
 
 ## Download 1.0
 
-[Release and downloads](https://github.com/dennislee666/DevStart/releases/tag/v1.0.0): macOS 12 or later, Universal (Intel x86_64 / Apple Silicon). See the [1.0 release notes](docs/releases/1.0.md) for installation and signing details.
+[Release and downloads](https://github.com/dennislee666/DevStart/releases/latest): macOS 12 or later, Universal (Intel x86_64 / Apple Silicon). See the [1.0 release notes](docs/releases/1.0.md) for installation and signing details.
 
 ## Preview
 
-These are real application screenshots using a **fictional Facebook project group**: Java API, admin, website, and mobile H5, each with production-database and test-database launch entries.
+The **demo project** fictional workspace contains Java API, Admin, Website and Mobile H5, with production/test demo entries for each project.
 
-![Fictional Facebook group: four projects and eight launch entries, with configured ports and status](docs/screenshots/facebook-projects.png)
+![Four projects, eight launch entries and configured ports](docs/screenshots/demo-projects.png)
 
-Switch Console tabs or use the tiled view while multiple entries run. The information area shows status, ports, PID, start time, and elapsed time. Consoles support search, filtering, colored output, and Control-click to open links.
+### Auto-scan projects
 
-![Console tabs, port status, and colored simulated logs](docs/screenshots/facebook-console.png)
+Choose a directory, review detected projects, launch entries and known ports, then select what to import. DevStart creates groups and projects without executing code or writing management files into your repositories. Vue, UniApp, Next.js, Node.js, Python, Java and PHP are supported through existing startup declarations; unknown ports remain `--`. See [scan protocols and limits](docs/project-scan.md).
 
-Tile four project Consoles to inspect service status and logs together.
+![Review and select detected launch entries](docs/screenshots/demo-scan.png)
 
-![Four local simulated services in tiled Consoles](docs/screenshots/facebook-tiles.png)
+<details><summary>First launch: start from an empty workspace</summary>
 
-| Project | Production-database port | Test-database port | Example directory |
-| --- | --- | --- | --- |
-| Java API | 18080 | 18081 | `~/Projects/facebook/java-api` |
-| Admin | 13000 | 13001 | `~/Projects/facebook/admin` |
-| Website | 14000 | 14001 | `~/Projects/facebook/website` |
-| Mobile H5 | 18000 | 18001 | `~/Projects/facebook/mobile-h5` |
+![Empty workspace with a centered Start button](docs/screenshots/demo-empty.png)
 
-**Demo note:** Facebook is a fictional workspace name, with no affiliation to Meta / Facebook. Screenshots use an isolated workspace. Java/npm commands are display examples; local simulated processes produce the output without connecting to production or test databases, deploying, packaging, or uploading. The demo group is not preinstalled. See [demo details](docs/showcase.md).
+</details>
+
+### Git workspace
+
+View branches, choose existing remotes, update/merge, inspect changed files, commit, push and use a project terminal. Browse commit history and per-file line statistics, then open tabbed diffs. See [Git workspace](docs/git-workspace.md).
+
+![Fictional Git workspace with working changes and history](docs/screenshots/demo-git.png)
+
+### Logs and tiled Consoles
+
+![Tabbed Console with status, ports and colored mock logs](docs/screenshots/demo-console.png)
+
+![Three local mock services in tiled Consoles](docs/screenshots/demo-tiles.png)
+
+All projects, commit history, remote URLs and logs shown here are fictional. The demo does not access production/test databases or deploy code, and is not preloaded into the app. See [showcase notes](docs/showcase.md).
 
 ## Features
+
+- **Auto-scan**: discover projects and launch entries, review selections, group and import without duplicates; also available through the local API.
 
 - **Projects and launch entries**: groups, favorites, search, a single form for display names and descriptions, multiple launch configurations per project, separate status columns, and configured ports shown before launch.
 - **Process management**: run multiple projects; check existing instances before launch; attempt graceful shutdown, then force termination after a timeout; show lifecycle events in the Console; restart within the current tab. Batch start/stop/restart actions require confirmation and apply to open Console tabs as described in the [usage guide](docs/usage.md).
@@ -60,9 +71,12 @@ Tile four project Consoles to inspect service status and logs together.
 - **Appearance**: dark/light/system themes, interface and Console fonts, font size, line spacing, density, and a collapsible sidebar.
 - **AI and automation access**: local JSON-RPC API, CLI, and MCP for configuration, launch controls, log queries, editing, and rollback.
 
+- **Basic Git workspace**: switch between registered projects, select existing local branches and remote addresses, inspect changes, commit, push, and fetch updates with a merge; browse commit history, per-file additions/deletions, and multi-tab diffs. See the [Git workspace guide](docs/git-workspace.md).
+- **Interactive project terminals**: persistent shell sessions in project directories, with command history, live colored output, and Ctrl+C. Git and run views share the project terminal; the run view lets you switch between launch logs and the terminal.
+
 ## Roadmap
 
-**Git management across multiple projects and accounts** is planned, to make repository and account switching easier during development. This is not implemented yet; scope and timing remain to be determined. Future improvements will continue to prioritize simple, frequent multi-project operations.
+The basic Git workspace already supports everyday repository operations across projects. Identities and credentials follow your existing Git configuration; selecting a remote address does not switch accounts. **Multi-account identity and credential management** is planned, with scope and timing to be determined. Future improvements will continue to prioritize simple, frequent multi-project operations.
 
 ## Platforms and dependencies
 

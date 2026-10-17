@@ -56,6 +56,12 @@ with tempfile.TemporaryDirectory(prefix='ds-api-', dir='/tmp') as temporary:
     try:
         service = start()
         assert rpc('projects.list') == []
+        scan_job = rpc('scan.start', {'path': str(project)})['job_id']
+        scan_result = until('scan.get', {'id': scan_job}, lambda job: job['state'] != 'running')
+        assert scan_result['state'] == 'completed', scan_result
+        assert scan_result['report']['projects'][0]['launches']
+        assert rpc('projects.list') == [], 'Scanning must not import or execute entries'
+        checks.append('read-only background project scan')
         assert endpoint.stat().st_mode & 0o777 == 0o600
         assert endpoint.parent.stat().st_mode & 0o777 == 0o700
         with socket.socket(socket.AF_UNIX) as delayed:

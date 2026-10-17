@@ -31,6 +31,7 @@ mod preferences;
 mod presentation;
 mod profile;
 mod project_manifest;
+mod project_scan;
 mod project_terminal;
 mod runtime;
 mod runtime_ports;

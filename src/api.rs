@@ -3,6 +3,10 @@ use crate::{api_config as config, service::Service};
 use serde_json::{Value, json};
 
 pub const METHODS: &[&str] = &[
+    "scan.start",
+    "scan.get",
+    "scan.cancel",
+    "scan.import",
     "terminal.open",
     "terminal.read",
     "terminal.line",
@@ -103,6 +107,28 @@ pub fn error(id: Value, code: i64, message: &str) -> Value {
 }
 pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, String> {
     match method {
+        "scan.start" => {
+            config::fields(p, &["path"])?;
+            let id = s
+                .scans
+                .start(std::path::Path::new(config::text(p, "path")?), &s.catalog)?;
+            Ok(json!({"job_id":id,"state":"running"}))
+        }
+        "scan.get" | "scan.cancel" => {
+            config::fields(p, &["id"])?;
+            let id = config::id(p, "id")?;
+            if method == "scan.cancel" {
+                s.scans.cancel(id)?;
+            }
+            Ok(json!(s.scans.get(id)?))
+        }
+        "scan.import" => {
+            config::fields(p, &["id", "launch_ids"])?;
+            let ids: Vec<u64> =
+                serde_json::from_value(p["launch_ids"].clone()).map_err(|e| e.to_string())?;
+            Ok(json!(s.import_scan(config::id(p, "id")?, &ids)?))
+        }
+
         m if m.starts_with("editor.") => s.editor_action(m, p),
         "git.list" => {
             config::fields(p, &[])?;
