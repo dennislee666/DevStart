@@ -55,6 +55,7 @@ with tempfile.TemporaryDirectory(prefix='ds-api-', dir='/tmp') as temporary:
 
     try:
         service = start()
+        assert rpc('projects.list') == []
         assert endpoint.stat().st_mode & 0o777 == 0o600
         assert endpoint.parent.stat().st_mode & 0o777 == 0o700
         with socket.socket(socket.AF_UNIX) as delayed:

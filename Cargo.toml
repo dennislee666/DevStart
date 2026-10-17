@@ -3,7 +3,7 @@ name = "dev-start"
 version = "1.0.0"
 edition = "2024"
 rust-version = "1.88"
-description = "A native local development script launcher"
+description = "A multi-project launch workbench for the AI Coding era"
 license = "MIT"
 
 [features]

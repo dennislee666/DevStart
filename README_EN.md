@@ -1,0 +1,173 @@
+<p align="center"><img src="assets/devstart-window-icon.png" width="88" alt="DevStart"></p>
+
+<h1 align="center">DevStart</h1>
+<p align="center">A multi-project launch workbench for the AI Coding era.</p>
+<p align="center">More projects. Less friction.</p>
+
+<p align="center"><a href="README.md">简体中文</a> · English</p>
+
+AI Coding makes it common for one person to work across several projects. Starting and stopping them, checking logs, and switching between them still takes attention. DevStart brings these frequent tasks into one native Rust desktop window: find a project, click to start it, check its status and logs, then get back to your work.
+
+## Why DevStart
+
+- **Simple controls for frequent project switching**: find projects through groups, search, favorites, and the running filter, with fewer trips through directories and terminals.
+- **Launch controls and logs in one place**: keep multiple launch entries per project, start, stop, or restart them individually, and switch or tile Consoles to inspect output from several projects.
+- **Straightforward even when projects depend on each other**: when your frontend needs a local API, find the API project, click to start it, then return to the frontend Console. You select related projects and start each as needed.
+
+## Use cases
+
+- One developer switching frequently between AI Coding projects, prototypes, and ongoing maintenance work.
+- Local frontend, API, and admin projects that need related services started during development.
+- Several projects running at once, with status, ports, and logs visible in one window, and individual launch entries restarted when needed.
+
+DevStart focuses on everyday launching and switching. It does not automatically resolve cross-project dependencies, schedule dependency startup order, check service readiness, or orchestrate complex workflows.
+
+**Scripts stay with their projects.** DevStart references each project's own files, commands, and arguments. It does not manage project dependencies or execute scripts during import. The open-source edition starts with an empty default group and no projects, launch entries, or personal groups.
+
+## Download 1.0
+
+[Release and downloads](https://github.com/dennislee666/DevStart/releases/tag/v1.0.0): macOS 12 or later, Universal (Intel x86_64 / Apple Silicon). See the [1.0 release notes](docs/releases/1.0.md) for installation and signing details.
+
+## Preview
+
+These are real application screenshots using a **fictional Facebook project group**: Java API, admin, website, and mobile H5, each with production-database and test-database launch entries.
+
+![Fictional Facebook group: four projects and eight launch entries, with configured ports and status](docs/screenshots/facebook-projects.png)
+
+Switch Console tabs or use the tiled view while multiple entries run. The information area shows status, ports, PID, start time, and elapsed time. Consoles support search, filtering, colored output, and Control-click to open links.
+
+![Console tabs, port status, and colored simulated logs](docs/screenshots/facebook-console.png)
+
+Tile four project Consoles to inspect service status and logs together.
+
+![Four local simulated services in tiled Consoles](docs/screenshots/facebook-tiles.png)
+
+| Project | Production-database port | Test-database port | Example directory |
+| --- | --- | --- | --- |
+| Java API | 18080 | 18081 | `~/Projects/facebook/java-api` |
+| Admin | 13000 | 13001 | `~/Projects/facebook/admin` |
+| Website | 14000 | 14001 | `~/Projects/facebook/website` |
+| Mobile H5 | 18000 | 18001 | `~/Projects/facebook/mobile-h5` |
+
+**Demo note:** Facebook is a fictional workspace name, with no affiliation to Meta / Facebook. Screenshots use an isolated workspace. Java/npm commands are display examples; local simulated processes produce the output without connecting to production or test databases, deploying, packaging, or uploading. The demo group is not preinstalled. See [demo details](docs/showcase.md).
+
+## Features
+
+- **Projects and launch entries**: groups, favorites, search, a single form for display names and descriptions, multiple launch configurations per project, separate status columns, and configured ports shown before launch.
+- **Process management**: run multiple projects; check existing instances before launch; attempt graceful shutdown, then force termination after a timeout; show lifecycle events in the Console; restart within the current tab. Batch start/stop/restart actions require confirmation and apply to open Console tabs as described in the [usage guide](docs/usage.md).
+- **Consoles**: tabs and tiled views, keyword search/filtering, follow output, disk-log limits and cleanup, separate windows, ANSI colors, wrapping, and opening links; runtime status, ports, start date, and elapsed time.
+- **Source-file editing**: syntax highlighting for Rust, Java, Python, Shell, and frontend files; line numbers, wrapping, conflict detection, atomic saves, and rollback through the latest 10 source-file versions per launch entry.
+- **Appearance**: dark/light/system themes, interface and Console fonts, font size, line spacing, density, and a collapsible sidebar.
+- **AI and automation access**: local JSON-RPC API, CLI, and MCP for configuration, launch controls, log queries, editing, and rollback.
+
+## Roadmap
+
+**Git management across multiple projects and accounts** is planned, to make repository and account switching easier during development. This is not implemented yet; scope and timing remain to be determined. Future improvements will continue to prioritize simple, frequent multi-project operations.
+
+## Platforms and dependencies
+
+The currently validated release platform is **macOS 12 Monterey or later**. Packages include Intel `x86_64` and Apple Silicon `arm64` by default. Built with Rust / eframe / egui; DevStart does not require Node.js or a WebView. Linux graphics and process-tool paths still require adaptation and validation. Windows process-group management is not implemented; Windows usability is not guaranteed.
+
+- Rust **1.88+**; a stable toolchain is recommended. Universal packaging uses RsProxy to fetch missing macOS architecture standard libraries. The application's minimum macOS version is 12.0.
+- macOS Command Line Tools. External-process and port detection use system `ps` and `lsof`.
+- Each launched project still needs its own JDK, Node.js, Python, Rust, or other runtime and dependencies.
+
+## Quick start
+
+```bash
+git clone --branch open-source https://github.com/dennislee666/DevStart.git
+cd DevStart
+cargo run --locked
+```
+
+Add a local project to read its existing launch scripts. Register complex entries explicitly through the local API. Launch definitions live in `projects/<project ID>/.dev-start.json` inside DevStart's user-data directory; no management configuration is written into your project repository. Import and refresh do not execute launch commands.
+
+```json
+{
+  "version": 1,
+  "launches": [
+    {
+      "name": "Frontend development",
+      "file": "package.json",
+      "entry": { "Package": { "manager": "npm", "name": "dev" } },
+      "description": "Run the project's own dev command",
+      "expected_port": 5173
+    }
+  ]
+}
+```
+
+Your project's `package.json` must actually define `scripts.dev`, and the port must match your project. See the [launch manifest](docs/project-launch-manifest.md) for File / Package / Command / Java definitions. Repository examples are not imported automatically.
+
+## Everyday workflow
+
+1. **Add and organize projects**: add a local project, group projects by the work they belong to, and favorite frequently used projects or launch entries. Review discovered entries first; register complex entries through the local API.
+2. **Find and start**: use search, favorites, or the running filter to locate a project. Click a launch entry's play button, then check its status and Console output.
+3. **Start related services**: if your frontend needs a local API, find the API project and start it, then select the frontend Console tab to continue working. You choose related projects and their launch order.
+4. **Inspect and adjust**: switch tabs or tile Consoles to read logs, then stop or restart an individual entry as needed. Batch start/stop/restart actions apply only to open Console tabs and require confirmation.
+
+See the [usage guide](docs/usage.md) for arguments, ports, logs, editing, and keyboard shortcuts.
+
+## macOS packaging
+
+```bash
+bash scripts/package-macos.sh
+open dist/DevStart.app
+```
+
+Builds a Universal app; set `DEVSTART_MACOS_ARCH=native` to build only the current architecture. Packages use a local ad-hoc signature and are not Apple-notarized. The repository contains no preloaded personal configuration or packaged applications.
+
+## AI / API / MCP
+
+Start the GUI, or run `cargo run --locked -- --serve` to serve the same workspace without a GUI. Then call it from another terminal:
+
+```bash
+cargo run --locked -- --api api.describe
+cargo run --locked -- --api projects.list
+```
+
+MCP clients connect to the local service over stdio using the compiled `target/release/dev-start --mcp`. The backend validates and persists all configuration. See the [API documentation](docs/api.md) and [schema](docs/api-schema.json) for methods, parameters, log pagination, and editor protocols. The API guide includes AI execution rules, call ordering, IDs, states, and retry guidance. Call `api.describe` first and treat the running binary's contract as authoritative.
+
+## Data and privacy
+
+The open-source edition defaults to `~/Library/Application Support/devstart`, isolated from the personal edition's `dev-start` directory. CLI, MCP, and GUI follow the same rules. Set `DEV_START_DATA_DIR` explicitly to use another isolated directory.
+
+Configuration, logs, backups, and edit history remain on your computer and are not committed to the repository. Source files are written only on an explicit save or rollback; backup directories use private user permissions. You choose third-party scripts and are responsible for their behavior and permissions. Import does not run commands. Automatic scanning excludes entries named for build, deployment, or upload tasks; explicitly disabled entries remain disabled.
+
+## Development and verification
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
+cargo build --release --locked
+python3 scripts/verify-api.py
+# Optional, with a JDK: Java source saves, compile-failure isolation, and rollback
+python3 scripts/verify-editor-java.py
+```
+
+Verification scripts use temporary directories and sample processes, with no dependency on personal projects. Dependencies are pinned in `Cargo.lock`; the default registry mirror is RsProxy. See [dependency sources](docs/dependency-sources.md) for details and overrides.
+
+## Documentation and contributions
+
+Most technical guides are currently in Simplified Chinese.
+
+- [Usage](docs/usage.md)
+- [Architecture](docs/architecture.md)
+- [Launch manifest](docs/project-launch-manifest.md)
+- [API and AI access](docs/api.md)
+- [Contributing](docs/contributing.md)
+- [Security and data](docs/security.md)
+- [Open-source/personal edition isolation](docs/release-channels.md)
+- [Dependencies and third-party notices](docs/third-party-notices.md)
+- [About DevStart — Chinese and English](docs/about.md)
+
+Issues and pull requests are welcome. Remove local paths, accounts, tokens, and business data before submitting logs, screenshots, or examples.
+
+## License
+
+Project code is licensed under the [MIT License](LICENSE). Dependencies, fonts, and icons retain their own licenses; see [third-party notices](docs/third-party-notices.md).
+
+## Interface language
+
+DevStart supports English and Simplified Chinese. The default follows your system's preferred supported language. Override it in Settings → Language → Interface language, then Apply and save. Switching languages does not restart services or translate user content and raw logs.

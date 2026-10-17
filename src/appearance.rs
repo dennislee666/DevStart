@@ -9,6 +9,9 @@ pub const MUTED: Color32 = Color32::from_rgb(139, 144, 153);
 pub const TEXT: Color32 = Color32::from_rgb(218, 221, 226);
 pub const ACCENT: Color32 = Color32::from_rgb(148, 191, 208);
 pub const GREEN: Color32 = Color32::from_rgb(129, 201, 174);
+/// Lifecycle dots use semantic colors independent of the theme accent.
+pub const STARTING_BLUE: Color32 = Color32::from_rgb(96, 165, 250);
+pub const RUNNING_GREEN: Color32 = Color32::from_rgb(74, 201, 120);
 pub const RED: Color32 = Color32::from_rgb(229, 137, 140);
 pub fn light(p: &Preferences, system: Option<egui::Theme>) -> bool {
     p.theme == Theme::Light || p.theme == Theme::System && system == Some(egui::Theme::Light)

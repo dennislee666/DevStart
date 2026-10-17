@@ -18,9 +18,9 @@ impl DevStart {
                     });
                 });
                 ui.add_space(8.0);
-                ui.label(RichText::new(tr("一个软件，启动您电脑上的所有项目。")).strong());
-                ui.label(tr("AI 与 Vibe Coding 正在加快软件开发，也让开发者同时维护更多项目。"));
-                ui.label(tr("DevStart 将项目分组、启动控制、端口与实时日志监控集中在一个窗口，并提供启动代码编辑和本地 API，方便开发者与 AI 工具协作。"));
+                ui.label(RichText::new(tr("适合 AI Coding 时代的多项目启动工作台。")).strong());
+                ui.label(tr("项目多也不乱。快速找到项目，启动、停止、看日志，再切回手头的工作。"));
+                ui.label(tr("需要相关服务时，找到对应项目、点击启动，再切回当前项目。项目依赖与启动顺序由你掌握。"));
                 ui.add_space(6.0);
                 ui.separator();
                 let labels = [tr("作者"), "GitHub", tr("反馈与捐赠")];

@@ -1,4 +1,6 @@
-use crate::appearance::{ACCENT, BG, BORDER, GREEN, MUTED, RED, SIDE, SURFACE};
+use crate::appearance::{
+    ACCENT, BG, BORDER, GREEN, MUTED, RED, RUNNING_GREEN, SIDE, STARTING_BLUE, SURFACE,
+};
 use crate::i18n::{tf, tf_count, tr};
 use crate::preferences::Preferences;
 use crate::{
@@ -20,10 +22,14 @@ mod console_render;
 mod dialog_ui;
 #[path = "ui_editor.rs"]
 mod editor_ui;
+#[path = "ui_git.rs"]
+mod git_ui;
 #[path = "ui_console_search.rs"]
 mod search_ui;
 #[path = "ui_settings.rs"]
 mod settings_ui;
+#[path = "ui_terminal.rs"]
+mod terminal_ui;
 
 #[derive(Clone)]
 struct ScriptInfoDraft {
@@ -34,6 +40,9 @@ struct ScriptInfoDraft {
     reset_name: bool,
 }
 pub struct DevStart {
+    git_page: git_ui::GitPage,
+    console_terminal_tabs: HashSet<u64>,
+    console_terminals: HashMap<u64, terminal_ui::TerminalView>,
     brand_icon: egui::TextureHandle,
     about_open: bool,
     native_menu: Option<crate::application_menu::NativeMenu>,
@@ -111,6 +120,9 @@ impl DevStart {
             .map(|s| s.catalog.projects.iter().map(|p| p.id).collect())
             .unwrap_or_default();
         let mut app = Self {
+            git_page: git_ui::GitPage::default(),
+            console_terminal_tabs: Default::default(),
+            console_terminals: Default::default(),
             brand_icon,
             about_open: false,
             native_menu: None,
@@ -274,6 +286,7 @@ impl DevStart {
                 ui.add_space(12.0);
                 for (filter, symbol, name) in [
                     (Filter::All, icon::STACK, tr("项目")),
+                    (Filter::Git, icon::GIT_BRANCH, "Git"),
                     (Filter::Favorites, icon::STAR, tr("收藏")),
                     (Filter::Running, icon::TERMINAL_WINDOW, tr("运行中")),
                 ] {
@@ -481,12 +494,15 @@ impl DevStart {
                             RichText::new(match self.filter {
                                 Filter::Favorites => tr("收藏"),
                                 Filter::Settings => tr("设置"),
+                                Filter::Git => "Git",
                                 _ => tr("项目"),
                             })
                             .strong(),
                         );
                     }
-                    if !running && !matches!(self.filter, Filter::Settings | Filter::Editor) {
+                    if !running
+                        && !matches!(self.filter, Filter::Settings | Filter::Editor | Filter::Git)
+                    {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
                                 .button(button_label(
@@ -789,6 +805,8 @@ impl DevStart {
         egui::ScrollArea::vertical()
             .id_salt("grouped-projects")
             .show(ui, |ui| {
+                // Reserve a stable trailing gutter, including when the scrollbar overlays content.
+                ui.set_max_width((ui.available_width() - 15.0).max(0.0));
                 let launch_columns = launch_widths(
                     (ui.available_width() - ui.spacing().indent * 2.0).max(0.0),
                     ui.spacing().item_spacing.x,
@@ -1271,10 +1289,18 @@ impl DevStart {
         });
     }
     fn console(&mut self, ui: &mut egui::Ui, id: u64) {
+        let tabbed = !self.tiled && ui.ctx().viewport_id() == egui::ViewportId::ROOT;
+        let console_id = self
+            .service
+            .as_ref()
+            .and_then(|s| s.runtime.runs.iter().find(|r| r.id == id))
+            .map_or(id, |r| r.console_id);
+        let mut terminal_active = tabbed && self.console_terminal_tabs.contains(&console_id);
         let can_find =
             self.selected_run == Some(id) || ui.ctx().viewport_id() != egui::ViewportId::ROOT;
-        let find =
-            can_find && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F));
+        let find = !terminal_active
+            && can_find
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F));
         let search = self.console_queries.entry(id).or_default();
         if find {
             search.open = true;
@@ -1427,11 +1453,13 @@ impl DevStart {
                                 toggle_favorite = true;
                             }
                         } else if tab_root {
-                            if small(ui, icon::MAGNIFYING_GLASS, tr("搜索日志 · ⌘F")) {
-                                search.toggle();
+                            if !terminal_active {
+                                if small(ui, icon::MAGNIFYING_GLASS, tr("搜索日志 · ⌘F")) {
+                                    search.toggle();
+                                }
+                                clear = small(ui, icon::ERASER, tr("清空视图"));
+                                open = small(ui, icon::FILE_TEXT, tr("打开日志文件"));
                             }
-                            clear = small(ui, icon::ERASER, tr("清空视图"));
-                            open = small(ui, icon::FILE_TEXT, tr("打开日志文件"));
                             if let Some(favorite) = favorite_state
                                 && favorite_button(
                                     ui,
@@ -1453,19 +1481,58 @@ impl DevStart {
                     ui.horizontal_wrapped(|ui| run_status(ui, run, self.light));
                 }
                 if tiled_root || tab_root {
-                    if !compact {
+                    if !compact || tab_root {
                         ui.horizontal(|ui| {
-                            let preview =
-                                crate::presentation::command_preview(&run.display_command);
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(&preview)
-                                        .monospace()
-                                        .color(tone(self.light, MUTED)),
-                                )
-                                .truncate(),
-                            )
-                            .on_hover_text(crate::presentation::command_preview(&run.command));
+                            let reserve = if tab_root { 170.0 } else { 0.0 };
+                            let width = (ui.available_width() - reserve).max(0.0);
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(width, ui.text_style_height(&egui::TextStyle::Body)),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.set_max_width(width);
+                                    ui.set_min_width(width);
+                                    if !compact {
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(
+                                                    crate::presentation::command_preview(
+                                                        &run.display_command,
+                                                    ),
+                                                )
+                                                .monospace()
+                                                .color(tone(self.light, MUTED)),
+                                            )
+                                            .truncate(),
+                                        )
+                                        .on_hover_text(
+                                            crate::presentation::command_preview(&run.command),
+                                        );
+                                    }
+                                },
+                            );
+                            if tab_root {
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui
+                                            .selectable_label(terminal_active, tr("终端"))
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
+                                            terminal_active = true;
+                                            self.console_terminal_tabs.insert(console_id);
+                                        }
+                                        if ui
+                                            .selectable_label(!terminal_active, tr("启动日志"))
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
+                                            terminal_active = false;
+                                            self.console_terminal_tabs.remove(&console_id);
+                                        }
+                                    },
+                                );
+                            }
                         });
                     }
                 } else {
@@ -1515,62 +1582,100 @@ impl DevStart {
                     });
                 }
             });
-        ui.add_space(4.0);
-        let input = search_ui::controls(ui, search, id);
-        let view =
-            match s.runtime.runs[index]
-                .lines
-                .query(&search.query, search.current, input.direction)
-            {
+        if terminal_active {
+            match s.run_project_context(id) {
+                Err(error) => {
+                    ui.colored_label(tone(self.light, RED), error);
+                }
+                Ok((project, path)) => {
+                    let view = self.console_terminals.entry(project).or_default();
+                    if view.session.is_none() {
+                        match s.terminals.open(project, &path) {
+                            Ok(session) => view.attach(session),
+                            Err(error) => {
+                                ui.colored_label(tone(self.light, RED), error);
+                            }
+                        }
+                    }
+                    if view.session.is_some() {
+                        let height = (ui.available_height() - 72.0).max(120.0);
+                        match view.show(ui, &mut s.terminals, self.light, "", height, true) {
+                            Ok(outcome) => {
+                                if outcome.reopen {
+                                    view.session = None;
+                                }
+                            }
+                            Err(error) => {
+                                ui.colored_label(tone(self.light, RED), error);
+                                if ui.button(tr("重开终端")).clicked() {
+                                    view.session = None;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            ui.add_space(4.0);
+            let input = search_ui::controls(ui, search, id);
+            let view = match s.runtime.runs[index].lines.query(
+                &search.query,
+                search.current,
+                input.direction,
+            ) {
                 Ok(view) => view,
                 Err(e) => {
                     ui.colored_label(tone(self.light, RED), e);
                     return;
                 }
             };
-        search.current = view.current;
-        search.matched = view.matched_lines;
-        let jump = input.direction != 0
-            || input.changed && !search.query.keyword.is_empty() && !search.query.only_matches;
-        let run = &s.runtime.runs[index];
-        if run.lines.dropped > 0 || run.lines.shortened {
-            ui.label(
-                RichText::new(tr("仅显示最近输出；日志文件也有保留上限"))
-                    .small()
-                    .color(tone(self.light, MUTED)),
-            );
+            search.current = view.current;
+            search.matched = view.matched_lines;
+            let jump = input.direction != 0
+                || input.changed && !search.query.keyword.is_empty() && !search.query.only_matches;
+            let run = &s.runtime.runs[index];
+            if run.lines.dropped > 0 || run.lines.shortened {
+                ui.label(
+                    RichText::new(tr("仅显示最近输出；日志文件也有保留上限"))
+                        .small()
+                        .color(tone(self.light, MUTED)),
+                );
+            }
+            ui.add_space(2.0);
+            egui::Frame::new()
+                .fill(if self.light {
+                    Color32::from_gray(249)
+                } else {
+                    BG
+                })
+                .inner_margin(10.0)
+                .show(ui, |ui| {
+                    if search.open && search.query.only_matches && view.rows.is_empty() {
+                        ui.label(
+                            RichText::new(tr("没有匹配的日志")).color(tone(self.light, MUTED)),
+                        );
+                    }
+                    let cache = self
+                        .console_layouts
+                        .entry((ui.ctx().viewport_id(), id))
+                        .or_default();
+                    if let Some(target) = console_render::show(
+                        ui,
+                        run,
+                        &view,
+                        search,
+                        cache,
+                        &s.catalog.preferences,
+                        self.light,
+                        true,
+                        jump,
+                    ) && let Err(e) = crate::console_text::open(&target, &run.cwd)
+                    {
+                        self.error = Some(e);
+                    }
+                });
         }
-        ui.add_space(2.0);
-        egui::Frame::new()
-            .fill(if self.light {
-                Color32::from_gray(249)
-            } else {
-                BG
-            })
-            .inner_margin(10.0)
-            .show(ui, |ui| {
-                if search.open && search.query.only_matches && view.rows.is_empty() {
-                    ui.label(RichText::new(tr("没有匹配的日志")).color(tone(self.light, MUTED)));
-                }
-                let cache = self
-                    .console_layouts
-                    .entry((ui.ctx().viewport_id(), id))
-                    .or_default();
-                if let Some(target) = console_render::show(
-                    ui,
-                    run,
-                    &view,
-                    search,
-                    cache,
-                    &s.catalog.preferences,
-                    self.light,
-                    true,
-                    jump,
-                ) && let Err(e) = crate::console_text::open(&target, &run.cwd)
-                {
-                    self.error = Some(e);
-                }
-            });
+        let run = &s.runtime.runs[index];
         let path = run.log_path.clone();
         let mut restarted = None;
         let restart_result = if let Some(script_id) = restart {
@@ -2234,6 +2339,8 @@ impl eframe::App for DevStart {
                     self.editor_page(ui);
                 } else if self.filter == Filter::Settings {
                     self.settings_page(ui);
+                } else if self.filter == Filter::Git {
+                    self.git_page(ui);
                 } else if self.filter == Filter::Running {
                     self.running_content(ui);
                 } else {
@@ -2353,7 +2460,9 @@ fn run_state_legend(ui: &egui::Ui, light: bool) -> egui::text::LayoutJob {
     let font = egui::TextStyle::Small.resolve(ui.style());
     let mut job = egui::text::LayoutJob::default();
     for (text, color) in [
-        ("●", tone(light, GREEN)),
+        ("●", state_color(State::Starting, light)),
+        (tr(" 启动中    "), tone(light, MUTED)),
+        ("●", state_color(State::Running, light)),
         (tr(" 运行中    "), tone(light, MUTED)),
         ("○", tone(light, MUTED)),
         (tr(" 已停止"), tone(light, MUTED)),
@@ -2484,8 +2593,9 @@ fn paint_run_marker(ui: &egui::Ui, response: &egui::Response, state: State, ligh
 
 fn state_color(state: State, light: bool) -> Color32 {
     match state {
-        State::Starting => tone(light, ACCENT),
-        State::Running | State::Succeeded => tone(light, GREEN),
+        State::Starting => tone(light, STARTING_BLUE),
+        State::Running | State::Stopping => tone(light, RUNNING_GREEN),
+        State::Succeeded => tone(light, GREEN),
         State::Failed => tone(light, RED),
         _ => tone(light, MUTED),
     }
@@ -2518,6 +2628,8 @@ fn tone(light: bool, dark: Color32) -> Color32 {
     match dark {
         MUTED => Color32::from_rgb(93, 98, 116),
         GREEN => Color32::from_rgb(29, 116, 75),
+        RUNNING_GREEN => Color32::from_rgb(24, 125, 62),
+        STARTING_BLUE => Color32::from_rgb(37, 99, 210),
         RED => Color32::from_rgb(182, 51, 51),
         ACCENT => Color32::from_rgb(46, 94, 160),
         other => other,

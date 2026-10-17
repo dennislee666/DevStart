@@ -2,6 +2,12 @@
 
 这是一组用于说明 DevStart 的虚构数据，与 Meta / Facebook 没有关联。截图由当前原生应用在独立 HOME、独立数据目录中实际渲染并捕获，没有使用私人项目截图。
 
+## 使用场景 / Use case
+
+这组截图展示一个人在多个项目间工作的日常：找到并启动 API，再切回前端 Console；需要时平铺查看多个项目的日志。相关项目与启动顺序由用户选择，演示不表示 DevStart 会自动解析项目依赖或编排服务。
+
+These screenshots illustrate one developer working across several projects: find and start the API, then return to the frontend Console, or tile multiple Consoles to inspect their logs. The user selects related projects and their launch order; the demo does not imply automatic dependency resolution or service orchestration.
+
 ## 分组与启动项
 
 Facebook 包含 Java API、后台管理、官网、手机 H5 四个项目；每个项目都有正式生产库和测试库两个启动项，分别展示不同命令参数和预设端口。所有路径均为虚构的 `~/Projects/facebook/` 路径。

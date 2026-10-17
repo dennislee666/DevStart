@@ -1,8 +1,52 @@
-# DevStart 1.0 — About
+# DevStart 1.0 — 项目介绍 / About
 
-一个软件，启动您电脑上的所有项目。
+## 中文
 
-AI 与 Vibe Coding 正在加快软件开发，也让开发者同时维护更多项目。DevStart 将项目分组、启动控制、端口与实时日志监控集中在一个窗口，并提供启动代码编辑和本地 API，方便开发者与 AI 工具协作。
+**适合 AI Coding 时代的多项目启动工作台。**
+
+**项目多也不乱。** AI Coding 让一个人同时推进多个项目变得常见。DevStart 将找项目、启动、停止、重启和看日志集中在一个 Rust 原生桌面窗口，减少在目录和终端间反复切换。
+
+用分组、搜索、收藏和运行中筛选找到项目，通过标签或平铺 Console 查看输出。当前项目需要本地 API 等相关服务时，找到对应项目、点击启动，再切回当前项目继续开发。相关项目与启动顺序由用户选择；DevStart 不自动解析跨项目依赖或提供复杂流程编排。
+
+适合独立开发者在多个 AI Coding 项目、原型和前后端联调任务间高频切换。现有能力还包括端口与状态展示、启动文件编辑，以及供 AI 工具调用的本地 API、CLI 和 MCP。
+
+### 当前能力
+
+- **项目管理**：分组、搜索、收藏和运行中筛选；同一项目可保留多个启动项及不同参数，显示名与简介可编辑。
+- **运行与观察**：独立启动、停止、重启；状态、端口、PID 和运行时长；标签、平铺及独立 Console，支持日志搜索过滤、ANSI 颜色和链接打开。批量控制仅作用于已打开的 Console 标签，并需确认。
+- **启动文件编辑**：语法高亮、冲突检测、原子保存及最近 10 个源文件版本回退；继续使用项目自身的文件和命令。
+- **界面与接入**：中英文界面、主题与字体设置，以及本地 JSON-RPC API、CLI 和 MCP，供开发者和 AI 工具调用已有能力。
+
+当前正式验证平台为 macOS 12 及以上，提供 Intel / Apple Silicon Universal 安装包。DevStart 本身无需 Node.js 或 WebView；项目所需的运行时与依赖仍需自行准备。开源版首次启动为空工作区，仅有默认分组；配置、日志与编辑历史保存在本机，不随仓库分发。
+
+下载、安装、启动和技术说明见[中文 README](../README.md)。
+
+**未来计划：** 多项目、多账户 Git 管理尚未实现，范围与时间待定。产品继续围绕日常多项目操作，保持简单。
+
+## English
+
+**A multi-project launch workbench for the AI Coding era.**
+
+**More projects. Less friction.** AI Coding makes it common for one person to work across several projects. DevStart brings finding projects, starting, stopping, restarting, and reading logs into one native Rust desktop window, reducing repeated trips between directories and terminals.
+
+Use groups, search, favorites, and the running filter to find a project. Switch Console tabs or tile them to inspect output. When your current project needs a local API or another related service, find that project, click to start it, then switch back and keep working. You choose related projects and their launch order; DevStart does not automatically resolve cross-project dependencies or provide complex workflow orchestration.
+
+Built for individual developers switching frequently between AI Coding projects, prototypes, and frontend/API work. Current features also include port and status information, launch-file editing, and a local API, CLI, and MCP for AI tools.
+
+### Current capabilities
+
+- **Project management**: groups, search, favorites, and a running filter; multiple launch entries and argument sets per project, with editable display names and descriptions.
+- **Running and observing**: individual start/stop/restart controls; status, ports, PID, and elapsed time; tabbed, tiled, and separate Consoles with log search/filtering, ANSI colors, and link opening. Batch controls apply only to open Console tabs and require confirmation.
+- **Launch-file editing**: syntax highlighting, conflict detection, atomic saves, and rollback through the latest 10 source-file versions, while continuing to use each project's own files and commands.
+- **Interface and access**: English and Simplified Chinese, theme and font settings, and a local JSON-RPC API, CLI, and MCP for developers and AI tools to use existing capabilities.
+
+The currently validated release platform is macOS 12 or later, with Intel / Apple Silicon Universal packages. DevStart itself needs no Node.js or WebView; each project still requires its own runtime and dependencies. The open-source edition starts with an empty workspace and a default group. Configuration, logs, and edit history remain on the local computer and are not distributed with the repository.
+
+See the [English README](../README_EN.md) for downloads, installation, launching, and technical details.
+
+**Planned:** Git management across multiple projects and accounts. This is not available yet; scope and timing remain to be determined. Future improvements will keep everyday multi-project operations simple.
+
+## 联系 / Contact
 
 - 作者：dennis lee
 - GitHub：https://github.com/dennislee666/DevStart
@@ -16,6 +60,6 @@ macOS 菜单栏在 DevStart 右侧提供“关于”（英语 About US），其�
 
 原生菜单仅发出打开请求，由主界面显示本地化模态框；不会阻塞后台服务与本地 API。版本统一来自 Cargo.toml，安装包及 API 使用 1.0.0，界面显示 1.0。介绍框列出作者、仓库和联系邮箱；链接须点击才打开。
 
-## 验证
+## 文案维护
 
-已验证中英文介绍框、菜单随语言切换、居中布局与独立侧栏按钮。Universal macOS 包包含 arm64 和 x86_64，最低系统要求保持 macOS 12。语言验证完成后恢复用户原有设置，3 个服务进程保持运行。
+中英文介绍位于 `src/ui_about.rs` 和 `src/locales/en.json`，与中英文 README 的定位保持一致。修改介绍不代表重新构建或发布安装包；构建与验证步骤见 [README](../README.md#开发与验证)。

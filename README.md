@@ -1,9 +1,26 @@
 <p align="center"><img src="assets/devstart-window-icon.png" width="88" alt="DevStart"></p>
 
 <h1 align="center">DevStart</h1>
-<p align="center">一个简洁的 Rust 原生开发项目启动器。<br>A native Rust launcher for local development projects.</p>
+<p align="center">适合 AI Coding 时代的多项目启动工作台。<br>A multi-project launch workbench for the AI Coding era.</p>
+<p align="center">项目多也不乱。<br>More projects. Less friction.</p>
 
-DevStart 把散落在不同项目中的启动命令集中到一个桌面窗口：按分组管理项目，为同一项目配置多个启动项，同时运行、停止、重启，并切换或平铺查看 Console。
+<p align="center">简体中文 · <a href="README_EN.md">English</a></p>
+
+AI Coding 让一个人同时推进多个项目变得常见，启动、停止、看日志和来回切换却仍然占用注意力。DevStart 把这些高频操作集中到一个 Rust 原生桌面窗口：快速找到项目，点击启动，随时查看状态和日志，再切回手头的工作。
+
+## 核心价值
+
+- **多项目高频切换，操作尽量简单**：通过分组、搜索、收藏和运行中筛选找到项目，少翻目录、少找终端。
+- **启停和日志集中可见**：为同一项目保留多个启动项，独立启动、停止和重启；通过标签或平铺 Console 查看多个项目的输出。
+- **有依赖，也保持直接**：当前端需要本地 API 时，找到 API 项目、点击启动，再切回前端 Console。相关项目由你选择，按需要分别启动。
+
+## 适用场景
+
+- 一个人在多个 AI Coding 项目、原型或日常维护项目间反复切换。
+- 联调前端、API、后台等本地项目，需要临时启动相关服务，再回到当前项目继续开发。
+- 多个项目同时运行，需要在一个窗口查看状态、端口和日志，或只重启其中一个启动项。
+
+DevStart 聚焦日常启动与切换，不自动解析跨项目依赖，也不安排依赖启动顺序、就绪检查或复杂流程编排。
 
 **脚本仍属于原项目。** DevStart 引用项目自己的文件、命令和参数，不接管项目依赖，不在导入时运行脚本。开源版初次启动没有项目、启动项或个人分组，只有一个空的默认分组。
 
@@ -43,6 +60,10 @@ DevStart 把散落在不同项目中的启动命令集中到一个桌面窗口�
 - **外观设置**：深色/浅色/系统主题，界面与 Console 字体、字号、行距、密度，可折叠侧栏。
 - **AI 与自动化**：本地 JSON-RPC API、CLI、MCP，配置管理、启停、日志查询和编辑/回退均可调用。
 
+## 路线图
+
+计划增加**多项目、多账户 Git 管理**，让跨项目开发中的仓库与账户切换更顺手。该能力尚未实现，具体范围与时间待定。后续改进继续围绕多项目高频切换，保持操作简单。
+
 ## 平台与依赖
 
 当前正式验证平台是 **macOS 12 Monterey 及以上**；安装包默认同时包含 Intel `x86_64` 与 Apple Silicon `arm64`。使用 Rust / eframe / egui，无需为 DevStart 安装 Node.js 或 WebView。Linux 的图形与进程工具路径仍需适配验证；Windows 暂未实现进程组管理，不承诺可用。
@@ -77,6 +98,15 @@ cargo run --locked
 ```
 
 原项目的 `package.json` 需实际提供 `scripts.dev`，端口需与实际项目一致。更多 File / Package / Command / Java 定义见[启动清单](docs/project-launch-manifest.md)。仓库中的示例不会自动导入。
+
+## 日常使用
+
+1. **添加并整理项目**：添加本地项目，按工作内容分组，把常用项目或启动项加入收藏。先确认扫描得到的入口；复杂入口通过本地 API 登记。
+2. **找到并启动**：用搜索、收藏或运行中筛选定位项目，点击启动项的播放按钮启动，查看状态和 Console 输出。
+3. **补上相关服务**：例如前端需要本地 API，就找到 API 项目并启动，再点击前端 Console 标签继续工作。相关项目及启动顺序由你选择。
+4. **查看与调整**：在标签间切换或平铺查看日志；按需停止或重启某个启动项。批量启停与重启仅作用于当前已打开的 Console 标签，并需确认。
+
+更多参数、端口、日志、编辑及快捷键说明见[使用说明](docs/usage.md)。
 
 ## macOS 打包
 
@@ -120,6 +150,7 @@ python3 scripts/verify-editor-java.py
 
 ## 文档与参与
 
+- [项目介绍 / About](docs/about.md)
 - [使用说明](docs/usage.md)
 - [架构](docs/architecture.md)
 - [项目启动清单](docs/project-launch-manifest.md)
@@ -136,6 +167,6 @@ python3 scripts/verify-editor-java.py
 项目代码使用 [MIT License](LICENSE)。第三方依赖、字体和图标保留其各自许可，见[第三方声明](docs/third-party-notices.md)。
 
 
-### Interface language
+### 界面语言
 
-DevStart supports English and Simplified Chinese. The default follows your system’s preferred supported language. Override it in Settings → Language → Interface language, then Apply and save. Switching languages never restarts your services or translates user content and raw logs.
+DevStart 支持简体中文和英文，默认跟随系统首选的受支持语言。可在设置 → 语言 → 界面语言中选择，然后应用并保存。切换语言不会重启服务，也不会翻译用户内容和原始日志。

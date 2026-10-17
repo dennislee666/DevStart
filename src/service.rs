@@ -9,11 +9,13 @@ use std::{path::Path, process::Command};
 pub enum Filter {
     All,
     Favorites,
+    Git,
     Running,
     Settings,
     Editor,
 }
 pub struct Service {
+    pub terminals: crate::project_terminal::Manager,
     pub editor: crate::editor::Workspace,
     pub catalog: Catalog,
     pub runtime: Runtime,
@@ -27,6 +29,7 @@ impl Service {
         let editor = crate::editor::Workspace::load(&store.root)?;
         let port_hints = crate::configured_ports::collect(&catalog.projects);
         Ok(Self {
+            terminals: Default::default(),
             editor,
             port_hints,
             catalog,
@@ -480,7 +483,37 @@ impl Service {
         }
         Ok(run)
     }
+    /// Resolve terminal ownership from registered launch entries, then exact known project paths.
+    /// Historical runs whose projects were removed fail explicitly instead of opening another directory.
+    pub fn run_project_context(&self, id: u64) -> Result<(u64, std::path::PathBuf), String> {
+        let run = self
+            .runtime
+            .runs
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or("启动记录不存在")?;
+        let project = self
+            .catalog
+            .projects
+            .iter()
+            .find(|p| {
+                p.scripts
+                    .iter()
+                    .any(|s| s.id == run.script_id || run.associated_scripts.contains(&s.id))
+            })
+            .or_else(|| self.catalog.projects.iter().find(|p| p.path == run.cwd))
+            .ok_or("启动记录对应的项目不存在")?;
+        Ok((project.id, project.path.clone()))
+    }
     pub fn poll(&mut self) {
+        self.terminals.retain_projects(
+            &self
+                .catalog
+                .projects
+                .iter()
+                .map(|p| p.id)
+                .collect::<Vec<_>>(),
+        );
         if let Err(error) = crate::log_store::maintain(&self.store.root.join("logs"), false) {
             self.runtime.error = Some(format!("日志保留策略维护失败: {error}"));
         }

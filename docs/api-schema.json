@@ -1052,6 +1052,446 @@
         "additionalProperties": false
       },
       "description": "只读简化状态列 {id,label}：确认具体入口运行中为运行中，其它为 --；不能代替 runs.get 完整状态。"
+    },
+    "git.list": {
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "description": "List all registered projects and repository state; per-project errors are returned in error."
+    },
+    "git.branches": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "List existing local branches. No network request."
+    },
+    "git.history": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "default": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Read commits reachable from HEAD, newest first. Version is the commit hash."
+    },
+    "git.switch": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "branch": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "branch"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Switch to an existing local branch. Refuses dirty worktrees; no force, stash, or fetch. This changes files in the entire repository, including other registered projects sharing it. Returns {job_id,state:running}; poll git.job with id=job_id for terminal status. Do not retry before reading actual result."
+    },
+    "git.changes": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "List changed files with raw XY status, path and optional previous rename path. Paths are repository-root relative."
+    },
+    "git.diff": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "file": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "file"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Read HEAD-to-worktree diff, or untracked text preview (256 KiB). No external diff or textconv."
+    },
+    "git.commit": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 1000
+          }
+        },
+        "required": [
+          "project_id",
+          "message",
+          "files"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Stage and commit only the selected changed paths. Failed commit may leave them staged. Returns {job_id,state:running}; poll git.job with id=job_id for terminal status. Do not retry before reading actual result."
+    },
+    "git.push": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Push current branch using configured upstream. No force. Requires explicit authorization to publish commits. Returns {job_id,state:running}; poll git.job with id=job_id for terminal status. Do not retry before reading actual result."
+    },
+    "git.pull": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Fetch and merge current upstream, refusing local changes. Merge conflicts are preserved and returned as errors. Returns {job_id,state:running}; poll git.job with id=job_id for terminal status. Do not retry before reading actual result."
+    },
+    "git.restore": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "file": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "file"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Restore tracked file worktree and index to HEAD after saving binary patches in application storage (last ten backups). Destructive; obtain user authorization. Returns {job_id,state:running}; poll git.job with id=job_id for terminal status. Do not retry before reading actual result."
+    },
+    "git.command": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "command": {
+            "type": "string",
+            "maxLength": 8192
+          }
+        },
+        "required": [
+          "project_id",
+          "command"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Run a noninteractive Git command with quoting, without shell expansion. Command may mutate local or remote Git state; caller must obtain authorization. Requires git prefix. Returns {job_id,state:running}; poll git.job with id=job_id for terminal status. Do not retry before reading actual result."
+    },
+    "git.job": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Poll an asynchronous Git job. Returns id/state/output/error; state is running, succeeded or failed. Last 16 jobs retained in memory; at most four running."
+    },
+    "terminal.open": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Open or reuse a project PTY shell, initially in the actual project directory, not the repository root. At most eight live sessions."
+    },
+    "terminal.read": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Read bounded terminal transcript, prompt, active/busy/echo, generation, exit_code and non-secret history. Poll for live output."
+    },
+    "terminal.line": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 8192
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Send one line plus Enter to the shell or foreground program. May execute arbitrary shell commands or publish data; requires corresponding authorization. Password input is excluded from history when terminal echo is off."
+    },
+    "terminal.interrupt": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Send terminal Ctrl+C to interrupt the foreground command."
+    },
+    "terminal.clear": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Clear in-memory display; does not reset shell state or working directory."
+    },
+    "terminal.close": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Close a project terminal; terminate its process group gracefully then force after two seconds."
+    },
+    "git.remotes": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "List all configured fetch addresses as stable key/name/url/preferred targets. URL credentials and query strings are redacted. No network call or Git configuration mutation."
+    },
+    "git.update": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "remote_key": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "remote_key",
+          "branch"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Fetch and merge the selected remote address current branch, no rebase/force; rejects dirty trees and stale branches/target keys. Returns {job_id,state:running}; poll git.job for completion. Select remote_key from git.remotes; do not guess it."
+    },
+    "git.push_target": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "remote_key": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "remote_key",
+          "branch"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Push HEAD to the selected remote address current branch without force; requires publish authorization. Returns {job_id,state:running}; poll git.job for completion. Select remote_key from git.remotes; do not guess it."
+    },
+    "git.commit_files": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "commit": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"
+          }
+        },
+        "required": [
+          "project_id",
+          "commit"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Read immutable commit metadata, parents, comparison base and changed files. Merge commits compare to the first parent; initial commits compare to the empty tree."
+    },
+    "git.commit_diff": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "commit": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"
+          },
+          "file": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "commit",
+          "file"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Read the selected commit file unified diff against the same comparison base. File must belong to this commit; renames include both paths. Binary changes are reported by Git. No checkout, external diff or textconv."
     }
   }
 }

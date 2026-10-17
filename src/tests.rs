@@ -130,6 +130,7 @@ fn catalog_rescan_preserves_identity_favorites_and_description() {
     f.script("# server\necho ready");
     let store = Store::at(f.0.clone()).unwrap();
     let mut service = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store,
@@ -345,6 +346,7 @@ fn explicit_profile_import_is_idempotent_and_rescan_never_adds_release_commands(
     let profile = f.0.join("profile.json");
     fs::write(&profile,serde_json::json!({"group":"Example","projects":[{"name":"Frontend","path":f.0,"scripts":[{"name":"Development","file":"package.json","entry":{"Package":{"manager":"npm","name":"dev"}},"description":"development only"}]}]}).to_string()).unwrap();
     let mut s = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         catalog: Catalog::default(),
@@ -398,6 +400,7 @@ fn argument_presets_remain_distinct_and_survive_rescan() {
     let f = Fixture::new();
     f.script("printf '%s\\n' \"$1\"; sleep 60 & wait");
     let mut s = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         catalog: Catalog::default(),
@@ -503,6 +506,7 @@ fn preset_form_parsing_is_atomic_and_port_constraint_is_configurable() {
     let f = Fixture::new();
     f.script("echo development");
     let mut s = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         catalog: Catalog::default(),
@@ -534,6 +538,7 @@ fn default_console_is_the_last_started_entry_even_after_it_finishes() {
     };
     second.args = vec!["finished".into()];
     let mut s = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         catalog: Catalog::default(),
@@ -556,6 +561,7 @@ fn grouped_project_projection_keeps_launch_choices_under_their_group() {
     let f = Fixture::new();
     f.script("echo development");
     let mut s = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         catalog: Catalog::default(),
@@ -878,6 +884,7 @@ fn stopped_console_can_restart_but_old_console_cannot_stop_a_new_instance() {
     let store = Store::at(f.0.clone()).unwrap();
     f.script("echo READY; while true; do sleep 1; done");
     let mut service = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store,
@@ -909,6 +916,7 @@ fn run_tabs_use_launch_names_and_short_command_tooltips() {
     f.script("echo done");
     let store = Store::at(f.0.clone()).unwrap();
     let mut service = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store,
@@ -1108,6 +1116,7 @@ fn project_native_rescan_keeps_ids_and_reads_current_project_parameters() {
     let f = Fixture::new();
     native_project_fixture(&f);
     let mut service = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store: Store::at(f.0.clone()).unwrap(),
@@ -1160,6 +1169,7 @@ fn custom_parameters_survive_project_native_refresh_without_an_ide() {
     let f = Fixture::new();
     native_project_fixture(&f);
     let mut service = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store: Store::at(f.0.clone()).unwrap(),
@@ -1667,6 +1677,7 @@ fn command_tooltips_bound_unicode_without_changing_execution() {
 
 fn api_service(f: &Fixture) -> Service {
     Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store: Store::at(f.0.clone()).unwrap(),
@@ -2323,6 +2334,7 @@ fn display_alias_changes_live_presentation_without_changing_execution() {
     let f = Fixture::new();
     f.script("trap 'exit 0' TERM\nwhile true; do sleep 0.1; done");
     let mut service = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store: Store::at(f.0.join("data")).unwrap(),
@@ -2688,6 +2700,7 @@ fn restart_reuses_console_position_and_stopped_console_can_restart_repeatedly() 
     let store = Store::at(f.0.clone()).unwrap();
     f.script("echo READY; trap 'exit 0' TERM; while true; do sleep 1; done");
     let mut s = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store,
@@ -2744,6 +2757,7 @@ fn restart_from_old_duplicate_tab_collapses_duplicate_launch_tabs() {
     let store = Store::at(f.0.clone()).unwrap();
     f.script("echo READY; while true; do sleep 1; done");
     let mut s = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store,
@@ -2827,6 +2841,7 @@ fn bulk_plans_require_confirmation_reject_changes_and_restore_only_the_stopped_b
     let store = Store::at(f.0.clone()).unwrap();
     f.script("echo BULK_READY; trap 'exit 0' TERM; while true; do sleep 1; done");
     let mut s = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store,
@@ -2894,6 +2909,7 @@ fn bulk_actions_select_current_tab_states_and_never_start_closed_history() {
     f.script("echo SCOPE_A; trap 'exit 0' TERM; while true; do sleep 1; done");
     other.script("echo SCOPE_B; trap 'exit 0' TERM; while true; do sleep 1; done");
     let mut s = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store: Store::at(f.0.clone()).unwrap(),
@@ -2998,6 +3014,7 @@ fn bulk_stop_during_restart_also_stops_the_retiring_generation() {
     let f = Fixture::new();
     f.script("echo CANCEL_READY; trap 'exit 0' TERM; while true; do sleep 1; done");
     let mut s = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store: Store::at(f.0.clone()).unwrap(),
@@ -3030,6 +3047,7 @@ fn unified_script_information_is_atomic_and_does_not_change_execution_or_sources
     let f = Fixture::new();
     f.script("echo INFO_READY; while true; do sleep 1; done");
     let mut s = Service {
+        terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store: Store::at(f.0.clone()).unwrap(),
@@ -3421,4 +3439,33 @@ fn language_setting_is_atomic_persistent_and_independent_of_launch_definitions()
     let older: crate::preferences::Preferences =
         serde_json::from_value(json!({"theme":"light"})).unwrap();
     assert_eq!(older.language, Language::System);
+}
+
+#[test]
+fn console_terminal_resolves_project_root_instead_of_launch_working_directory() {
+    let f = Fixture::new();
+    let mut service = api_service(&f);
+    let mut script = f.script("echo console-terminal-test");
+    let nested = f.0.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    script.cwd = nested;
+    service.catalog.projects.push(crate::model::Project {
+        id: 3,
+        name: "Renamed example".into(),
+        description: String::new(),
+        path: f.0.clone(),
+        group: 1,
+        favorite: false,
+        scripts: vec![script.clone()],
+        explicit_scripts: true,
+    });
+    let run = service
+        .runtime
+        .start("Renamed example", &script, f.0.join("logs"))
+        .unwrap();
+    let (id, path) = service.run_project_context(run).unwrap();
+    assert_eq!(id, 3);
+    assert_eq!(path, f.0);
+    service.catalog.projects.clear();
+    assert!(service.run_project_context(run).is_err());
 }

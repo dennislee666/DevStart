@@ -3,7 +3,7 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
 };
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct Style {
     pub color: Option<[u8; 3]>,
     pub bold: bool,
@@ -20,6 +20,9 @@ pub struct Ansi {
     style: Style,
 }
 impl Ansi {
+    pub fn current_style(&self) -> Style {
+        self.style
+    }
     pub fn parse(&mut self, text: &str) -> Vec<(Style, String)> {
         let mut out = Vec::new();
         let mut rest = text;

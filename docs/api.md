@@ -539,3 +539,62 @@ Console 各视图自动换行，保留最多3000行/2MiB；可搜索纯文本。
 界面语言不改变 API 方法名、参数、枚举、ID、状态协议或日志游标。项目/分组自定义名称、启动项显示名、简介、命令、源文件内容和业务 Console 日志不自动翻译。默认分组的内置名称只在界面翻译。机器 API 的既有状态 DTO 和原始诊断保持协议稳定；语言影响 GUI 展示。
 
 Choose `system`, `zh-CN`, or `en` through `settings.update`. GUI text updates immediately after the atomic save. Language changes do not restart services or rewrite launch definitions. API identifiers and raw logs remain unchanged. See [localization design](localization.md).
+
+## Git 工作区
+
+所有方法只操作已登记项目，以 `project_id` 定位。先用 `git.list {}` 获取项目与仓库状态，不能按项目名猜测目标。`root` 是真实仓库根目录；多个项目可能共享它，切换分支会影响整个仓库。
+
+- `git.list {}`：返回所有项目及 `project_id/name/path/root/branch/version/dirty/latest/error`。version 是 HEAD 前 10 位哈希，不是 Cargo/npm 包版本。非仓库或不可读取项目在各自 error 中报告，不隐藏该项目。空仓库的 version、latest 为空。
+- `git.branches {"project_id":123}`：已有本地分支列表；不自动拉取远程或建立跟踪分支。
+- `git.history {"project_id":123,"offset":0,"limit":50}`：HEAD 历史，新到旧，返回完整提交 id、author、ISO 日期 date、subject。limit 范围 1–100，offset 范围 0–100000。不足 limit 表示末页；空仓库返回空数组。
+- `git.switch {"project_id":123,"branch":"main"}`：切换已有本地分支，返回后台任务编号（见下文）。UI 二次确认；API 不弹窗，调用方必须获得切换的授权。未提交改动（含未跟踪文件）会拒绝切换；没有强制、自动 stash、reset、fetch 或推送。Git 原始失败原因会返回错误并写入应用调试日志。
+
+每条 Git 命令最多等待 120 秒、输出不超过 2 MiB。失败或超时后先重新读取实际状态，不盲目重试写操作。运行中服务可能读取被切换的代码，切换前应先停止相关服务。Git 未安装时返回明确执行错误；本模块不负责安装 Git。
+
+
+### 三栏 Git 操作与后台任务
+
+以下写操作立即返回 `{"job_id":123,"state":"running"}`：git.switch、git.commit、git.push、git.pull、git.restore、git.command。随后调用 `git.job {"id":123}`，直到 state 为 succeeded 或 failed；成功读取 output，失败读取 error。任务不持久化，最近保留 16 个，最多同时运行 4 个，同一真实仓库只允许一个写操作。超时或断线后先查任务及实际仓库状态，不盲目重试。
+
+- `git.changes {"project_id":123}`：修改文件数组，path 是仓库根目录相对路径，status 为 Git XY 状态，previous 为重命名前路径（否则 null）。
+- `git.diff {"project_id":123,"file":"src/main.rs"}`：返回 output，包含 HEAD 到工作区的 diff；未跟踪文件显示文本预览（256 KiB 上限）。不执行外部 diff/textconv。
+- `git.commit {"project_id":123,"message":"说明","files":["src/main.rs"]}`：暂存并仅提交所选文件（最多 1000 个）；失败可能留下暂存状态，先检查 changes。使用用户 Git 身份与 hooks，不自动修改身份。不会把别的已暂存文件提交。
+- `git.push {"project_id":123}`：将已有本地提交推送到配置的 upstream，不强制推送，不自动创建上游。需要发布授权。
+- `git.pull {"project_id":123}`：拒绝脏工作区，以 merge 方式拉取上游，不 rebase。冲突保留，错误展示原始 Git 输出，后续通过 Git 命令解决。
+- `git.restore {"project_id":123,"file":"src/main.rs"}`：破坏性操作，需要用户明确授权；将该文件的工作区和暂存区恢复到 HEAD。先保存 worktree.patch、index.patch、metadata.json 到 DevStart 的 git-backups，只保留最近十次。未跟踪文件不能回滚。二进制补丁包含修改内容，不上传。可在对应仓库使用 git apply 备份补丁恢复；index.patch 记录原暂存状态。
+- `git.command {"project_id":123,"command":"git status --short"}`：非交互 Git 参数命令，支持单/双引号及转义，不经过 shell；管道、重定向、环境变量替换不生效。可写仓库或远程，调用方必须获得对应操作授权。没有通用系统终端或交互式密码输入。
+
+命令反馈合并 stdout/stderr，最大 2 MiB；GUI 只保留最近 256 KiB。Git 超时后停止本次进程组（含子进程）。网络认证使用用户已有 Git 凭据配置；缺少认证时显示失败，不要求用户把令牌写进项目或应用配置。
+
+### 项目终端（PTY）
+
+GUI 终端使用独立持久 PTY，默认进入登记项目目录本身；登录环境提供开发 PATH。cd、命令链、git pull 等按真实 shell 执行，输出实时读取。
+
+- `terminal.open {"project_id":123}` 返回 id；同项目复用活动会话，最多 8 个。
+- `terminal.read {"id":456}` 返回 text（最近 256 KiB / 3000 行）、prompt、active、busy、echo、generation、exit_code、history。首次等待 generation > 0，代表 shell 提示符已就绪。
+- `terminal.line {"id":456,"text":"git pull"}` 发送一行及 Enter，最多 8192 字节，不接受嵌入换行。命令可修改、删除文件或发布远程，调用方必须先获得对应操作授权。程序关闭回显时，输入不进入应用历史。
+- 持续读取 terminal.read 获取完整的最新缓存。busy 表示等待下次 shell 提示符，generation 增加表示前台命令已完成，exit_code 为其退出码。
+- `terminal.interrupt {"id":456}` 相当于 Ctrl+C；terminal.clear 只清屏，不重置目录；terminal.close 关闭会话，先 HUP/TERM，2 秒后仍存活则结束进程组。
+
+长命令不自动超时，可持续输出或由用户中断。上下键历史最多 100 条，仅在内存中。退出 DevStart 或移除项目时关闭终端，不向项目写管理文件。终端为行式交互，Git pager 已关闭；不提供全屏 vim/top 的屏幕仿真，提交可使用表单或 git commit -m。早先 git.command 接口仍是独立的非交互后台 Git 任务，与持久终端不同。
+
+### 显式远程目标与 Update
+
+`git.remotes {"project_id":123}` 列出项目已配置的所有 fetch 地址，返回 key、name、url、preferred。同名 remote 有多个地址时分别列出。url 的凭据及查询参数隐藏，key 绑定真实名称与地址；不要猜测或缓存已过期的 key。preferred 优先为当前跟踪分支的远程，其次 origin，再其次首个地址。
+
+`git.update {"project_id":123,"remote_key":"从 git.remotes 获取","branch":"main"}` 精确获取所选地址的当前分支并 merge，不 rebase、不强制覆盖。执行前验证分支仍是 main、地址仍存在；本地有改动时拒绝操作。返回 job_id，查询 git.job 获取完成结果。冲突保留并返回原始失败原因。
+
+`git.push_target` 使用相同参数，把 HEAD 非强制推送到所选地址的同名当前分支，需要发布授权。GUI 的推送按钮遵循此选择；原 git.push / git.pull 接口和终端内直接输入的 Git 命令仍遵循 Git 自身的上游配置。
+
+选择地址本身仅切换当前 Git 面板操作目标，不改写 remote URL 或 branch upstream。更换项目、修改配置后先刷新；Update 和推送确认框会列出所选地址与分支。
+
+terminal.read 附加返回 segments：每段包含 text、role（output/prompt/input/error/warning/success/hint）、style（color 为 RGB 或 null、bold/italic/underline）。text 保持原有纯文本，便于 AI 搜索；segments 用于保留终端颜色，ANSI 样式优先于语义配色。提示符单独由 prompt 返回，输入回显仅在启用回显时进行匹配标记，不记录密码。前景色支持基础/高亮、256 色和 24 位 RGB。
+
+### 提交文件与历史 diff（只读）
+
+先从 git.history 取得完整提交 id（40 位 SHA-1 或 64 位 SHA-256），再调用：
+
+- `git.commit_files {"project_id":123,"commit":"完整提交哈希"}`：返回 commit（id/author/date/subject）、parents、base、files。普通提交相对其父提交，合并提交相对第一父提交，初始提交相对空目录（base=null）。files 每项为 status、path、previous、file_name（仅文件名）、full_path（完整绝对路径）、tooltip（含重命名来源的完整路径）、additions（新增行数）、deletions（删除行数）；二进制文件的 additions/deletions 均为 null，纯重命名为 0/0；重命名的 path 是新路径。调用 diff 时仍传 path，不要传 file_name。
+- `git.commit_diff {"project_id":123,"commit":"完整提交哈希","file":"src/main.rs"}`：返回 output（unified diff），使用与文件列表一致的比较基准，重命名包含旧、新路径。file 必须属于该提交；删除文件、二进制文件、子模块由 Git 原样报告。不是与当前工作区比较。
+
+两者不 checkout、reset 或修改工作区，不运行 external diff/textconv。保留既有 Git 输出上限；过大的 diff 返回明确错误。UI 单击历史进入“项目 / 历史 / 提交文件”布局，双击文件打开 diff，“返回工作区”恢复工作区布局。

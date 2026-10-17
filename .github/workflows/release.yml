@@ -1,0 +1,79 @@
+name: Build DevStart 1.0
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: devstart-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.event.repository.private == false
+    runs-on: macos-latest
+    timeout-minutes: 50
+    permissions:
+      contents: write
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+      CARGO_HTTP_TIMEOUT: '30'
+      CARGO_NET_RETRY: '0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install Rust and both macOS targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! RUSTUP_DIST_SERVER=https://rsproxy.cn RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup rustup toolchain install stable --profile minimal --component rustfmt --component clippy --target aarch64-apple-darwin --target x86_64-apple-darwin; then
+            echo 'China Rust mirror unavailable; retrying official Rust distribution after the logged failure.'
+            RUSTUP_DIST_SERVER=https://static.rust-lang.org RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup rustup toolchain install stable --profile minimal --component rustfmt --component clippy --target aarch64-apple-darwin --target x86_64-apple-darwin
+          fi
+          rustup default stable
+          rustc --version
+      - name: Fetch dependencies with explicit source fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! cargo fetch --locked; then
+            echo 'China crate mirror unavailable; retrying official crates.io after the logged failure.'
+            printf '' > .cargo/config.toml
+            cargo fetch --locked
+          fi
+      - name: Verify public source
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets --no-default-features -- -D warnings
+          cargo test --locked --no-default-features
+      - name: Package Universal app
+        run: bash scripts/package-macos.sh --no-default-features
+      - name: Verify bundle and create downloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          app=dist/DevStart.app
+          binary="$app/Contents/MacOS/dev-start"
+          test "$("$binary" --edition)" = open-source
+          test "$("$binary" --version)" = 1.0.0
+          lipo -verify_arch x86_64 arm64 "$binary"
+          codesign --verify --deep --strict "$app"
+          xcrun vtool -show-build "$binary"
+          python3 scripts/verify-api.py "$binary"
+          mkdir -p release-assets "$RUNNER_TEMP/dmg-root"
+          cp -R "$app" "$RUNNER_TEMP/dmg-root/DevStart.app"
+          ln -s /Applications "$RUNNER_TEMP/dmg-root/Applications"
+          hdiutil create -volname DevStart -srcfolder "$RUNNER_TEMP/dmg-root" -format UDZO -ov release-assets/DevStart-1.0.0-macOS-universal.dmg
+          ditto -c -k --sequesterRsrc --keepParent "$app" release-assets/DevStart-1.0.0-macOS-universal.zip
+          (cd release-assets && shasum -a 256 *.dmg *.zip > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DevStart-1.0.0-macOS-universal
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish immutable 1.0 build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="v1.0.0-build.${GITHUB_RUN_ID}"
+          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "DevStart 1.0 · Build ${GITHUB_RUN_NUMBER}" --notes-file docs/releases/1.0.md --latest

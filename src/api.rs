@@ -3,6 +3,29 @@ use crate::{api_config as config, service::Service};
 use serde_json::{Value, json};
 
 pub const METHODS: &[&str] = &[
+    "terminal.open",
+    "terminal.read",
+    "terminal.line",
+    "terminal.interrupt",
+    "terminal.clear",
+    "terminal.close",
+    "git.commit_files",
+    "git.commit_diff",
+    "git.remotes",
+    "git.update",
+    "git.push_target",
+    "git.job",
+    "git.changes",
+    "git.diff",
+    "git.commit",
+    "git.push",
+    "git.pull",
+    "git.restore",
+    "git.command",
+    "git.list",
+    "git.branches",
+    "git.history",
+    "git.switch",
     "editor.list",
     "editor.open",
     "editor.read",
@@ -81,6 +104,186 @@ pub fn error(id: Value, code: i64, message: &str) -> Value {
 pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, String> {
     match method {
         m if m.starts_with("editor.") => s.editor_action(m, p),
+        "git.list" => {
+            config::fields(p, &[])?;
+            Ok(json!(crate::git_workspace::list(&s.catalog.projects)))
+        }
+        "terminal.open" => {
+            config::fields(p, &["project_id"])?;
+            let id = config::id(p, "project_id")?;
+            let path = config::project(s, id)?.path.clone();
+            Ok(json!({"id":s.terminals.open(id,&path)?}))
+        }
+        "terminal.read" | "terminal.line" | "terminal.interrupt" | "terminal.clear"
+        | "terminal.close" => {
+            config::fields(
+                p,
+                if method == "terminal.line" {
+                    &["id", "text"]
+                } else {
+                    &["id"]
+                },
+            )?;
+            let id = config::id(p, "id")?;
+            match method {
+                "terminal.read" => Ok(json!(s.terminals.read(id)?)),
+                "terminal.line" => {
+                    s.terminals.line(id, config::text(p, "text")?)?;
+                    Ok(json!({"sent":true}))
+                }
+                "terminal.interrupt" => {
+                    s.terminals.interrupt(id)?;
+                    Ok(json!({"sent":true}))
+                }
+                "terminal.clear" => {
+                    s.terminals.clear(id)?;
+                    Ok(json!({"cleared":true}))
+                }
+                _ => {
+                    s.terminals.close(id)?;
+                    Ok(json!({"closed":true}))
+                }
+            }
+        }
+        "git.commit_files" | "git.commit_diff" => {
+            config::fields(
+                p,
+                if method == "git.commit_files" {
+                    &["project_id", "commit"]
+                } else {
+                    &["project_id", "commit", "file"]
+                },
+            )?;
+            let path = &config::project(s, config::id(p, "project_id")?)?.path;
+            let commit = config::text(p, "commit")?;
+            if method == "git.commit_files" {
+                Ok(json!(crate::git_workspace::commits::files(path, commit)?))
+            } else {
+                Ok(
+                    json!({"output":crate::git_workspace::commits::diff(path,commit,config::text(p,"file")?)?}),
+                )
+            }
+        }
+        "git.remotes" => {
+            config::fields(p, &["project_id"])?;
+            let path = &config::project(s, config::id(p, "project_id")?)?.path;
+            Ok(json!(crate::git_workspace::remotes::list(path)?))
+        }
+        "git.update" | "git.push_target" => {
+            config::fields(p, &["project_id", "remote_key", "branch"])?;
+            let path = config::project(s, config::id(p, "project_id")?)?
+                .path
+                .clone();
+            let key = config::text(p, "remote_key")?.to_owned();
+            let branch = config::text(p, "branch")?.to_owned();
+            let update = method == "git.update";
+            let id = crate::git_jobs::start(move || {
+                if update {
+                    crate::git_workspace::remotes::update(&path, &key, &branch)
+                } else {
+                    crate::git_workspace::remotes::push(&path, &key, &branch)
+                }
+            })?;
+            Ok(json!({"job_id":id,"state":"running"}))
+        }
+        "git.job" => {
+            config::fields(p, &["id"])?;
+            Ok(json!(crate::git_jobs::get(config::id(p, "id")?)?))
+        }
+        "git.changes" | "git.diff" | "git.commit" | "git.push" | "git.pull" | "git.restore"
+        | "git.command" => {
+            use crate::git_workspace::actions;
+            let allowed = match method {
+                "git.diff" | "git.restore" => vec!["project_id", "file"],
+                "git.commit" => vec!["project_id", "message", "files"],
+                "git.command" => vec!["project_id", "command"],
+                _ => vec!["project_id"],
+            };
+            config::fields(p, &allowed)?;
+            let path = config::project(s, config::id(p, "project_id")?)?
+                .path
+                .clone();
+            if method == "git.changes" {
+                return Ok(json!(actions::changes(&path)?));
+            }
+            if method == "git.diff" {
+                return Ok(json!({"output":actions::diff(&path,config::text(p,"file")?)?}));
+            }
+            let file = if matches!(method, "git.restore") {
+                Some(config::text(p, "file")?.to_owned())
+            } else {
+                None
+            };
+            let text = match method {
+                "git.commit" => config::text(p, "message")?,
+                "git.command" => config::text(p, "command")?,
+                _ => "",
+            }
+            .to_owned();
+            let files = if method == "git.commit" {
+                let values = p["files"].as_array().ok_or("files must be an array")?;
+                if values.len() > 1000 {
+                    return Err("Select at most 1000 files".into());
+                }
+                values
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .map(str::to_owned)
+                            .ok_or("files must contain strings".to_owned())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                vec![]
+            };
+            let backup = s.store.root.join("git-backups");
+            let method = method.to_owned();
+            let id = crate::git_jobs::start(move || match method.as_str() {
+                "git.commit" => actions::commit(&path, &text, &files),
+                "git.push" => actions::push(&path),
+                "git.pull" => actions::pull(&path),
+                "git.restore" => actions::restore(&path, file.as_deref().unwrap(), &backup),
+                _ => actions::command(&path, &text),
+            })?;
+            Ok(json!({"job_id":id,"state":"running"}))
+        }
+        "git.branches" | "git.history" | "git.switch" => {
+            let allowed = match method {
+                "git.branches" => vec!["project_id"],
+                "git.history" => vec!["project_id", "offset", "limit"],
+                _ => vec!["project_id", "branch"],
+            };
+            config::fields(p, &allowed)?;
+            let project = config::project(s, config::id(p, "project_id")?)?;
+            match method {
+                "git.branches" => Ok(json!(crate::git_workspace::branches(&project.path)?)),
+                "git.history" => {
+                    let number = |key: &str, default: u64| -> Result<usize, String> {
+                        let n = match p.get(key) {
+                            Some(v) => v
+                                .as_u64()
+                                .ok_or_else(|| format!("{key} must be an unsigned integer"))?,
+                            None => default,
+                        };
+                        usize::try_from(n).map_err(|e| e.to_string())
+                    };
+                    Ok(json!(crate::git_workspace::history(
+                        &project.path,
+                        number("offset", 0)?,
+                        number("limit", 50)?
+                    )?))
+                }
+                _ => {
+                    let path = project.path.clone();
+                    let branch = config::text(p, "branch")?.to_owned();
+                    let id = crate::git_jobs::start(move || {
+                        crate::git_workspace::switch(&path, &branch)
+                            .map(|_| format!("Switched to {branch}"))
+                    })?;
+                    Ok(json!({"job_id":id,"state":"running"}))
+                }
+            }
+        }
         "api.describe" => {
             config::fields(p, &[])?;
             Ok(
