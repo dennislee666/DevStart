@@ -259,7 +259,7 @@ fn terminal_job(
                 italics: segment.style.italic,
                 extra_letter_spacing: if segment.style.bold { 0.35 } else { 0.0 },
                 underline: if segment.style.underline {
-                    egui::Stroke::new(1.0, color)
+                    egui::Stroke::new(1.0_f32, color)
                 } else {
                     egui::Stroke::NONE
                 },

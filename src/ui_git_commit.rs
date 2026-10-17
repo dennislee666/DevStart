@@ -45,7 +45,7 @@ impl DevStart {
                             })
                             .corner_radius(3.0)
                             .stroke(if selected {
-                                egui::Stroke::new(1.0, tone(self.light, ACCENT))
+                                egui::Stroke::new(1.0_f32, tone(self.light, ACCENT))
                             } else {
                                 egui::Stroke::NONE
                             })
@@ -76,7 +76,10 @@ impl DevStart {
                                 center + egui::vec2(1.5, 0.0),
                                 center + egui::vec2(-2.5, 4.0),
                             ],
-                            egui::Stroke::new(1.2, tone(self.light, MUTED).gamma_multiply(0.65)),
+                            egui::Stroke::new(
+                                1.2_f32,
+                                tone(self.light, MUTED).gamma_multiply(0.65),
+                            ),
                         ));
                         let response = frame
                             .response
