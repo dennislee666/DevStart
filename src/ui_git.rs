@@ -31,12 +31,16 @@ pub(super) struct GitPage {
     selected_commit_file: Option<String>,
     confirm: Option<Action>,
     remote_picker: Option<remote_ui::Picker>,
+    preview_error: Option<String>,
+    notices: Vec<(bool, String)>,
 }
 type Details = git::Snapshot;
 enum Reply {
     List(Vec<Repository>),
+    Submitted(u64, Result<Box<Details>, String>, bool, String),
     Selected(u64, Result<Box<Details>, String>, Option<String>),
     Diff(Result<crate::git_diff::Document, String>),
+    WorkingDiff(Result<crate::git_diff::Document, String>),
     Commit(Result<Box<git::commits::Inspection>, String>),
 }
 #[derive(Clone)]
@@ -148,7 +152,49 @@ impl DevStart {
             .join("git-backups");
         let message = self.git_page.message.clone();
         let files: Vec<_> = self.git_page.checked.iter().cloned().collect();
+        let destination = self.git_page.remote_choices.get(&id).cloned().zip(
+            self.git_page
+                .details
+                .as_ref()
+                .map(|d| d.repository.branch.clone()),
+        );
         self.git_page.request(move || {
+            if matches!(action, Action::Commit | Action::Push(_, _)) {
+                let push = matches!(action, Action::Push(_, _));
+                let result = match &action {
+                    Action::Push(key, branch) => {
+                        git::remotes::submit(&project.path, key, branch, &message, &files, true)
+                    }
+                    _ => match destination {
+                        Some((key, branch)) => git::remotes::submit(
+                            &project.path,
+                            &key,
+                            &branch,
+                            &message,
+                            &files,
+                            false,
+                        ),
+                        None => Err("No remote selected; select a remote before submitting".into()),
+                    },
+                };
+                let success = result.is_ok();
+                let operation = if push {
+                    "Update → Commit → Push"
+                } else {
+                    "Update → Commit"
+                };
+                let output = format!(
+                    "{} · {operation}\n{}",
+                    project.name,
+                    result.unwrap_or_else(|error| error)
+                );
+                return Reply::Submitted(id, details(&project, 0), success, output);
+            }
+            let notification = match &action {
+                Action::Update(_, _) => Some("Update Project"),
+                Action::Switch(_) => Some("git switch"),
+                _ => None,
+            };
             let (label, result) = match action {
                 Action::Switch(branch) => (
                     format!("git switch {branch}"),
@@ -171,6 +217,7 @@ impl DevStart {
                     git::remotes::update(&project.path, &key, &branch),
                 ),
             };
+            let success = result.is_ok();
             let output = match result {
                 Ok(out) => format!(
                     "$ {label}
@@ -184,7 +231,16 @@ impl DevStart {
                     )
                 }
             };
-            Reply::Selected(id, details(&project, 0), Some(output))
+            if let Some(operation) = notification {
+                Reply::Submitted(
+                    id,
+                    details(&project, 0),
+                    success,
+                    format!("{} · {operation}\n{output}", project.name),
+                )
+            } else {
+                Reply::Selected(id, details(&project, 0), Some(output))
+            }
         });
     }
     fn git_poll(&mut self) {
@@ -199,7 +255,15 @@ impl DevStart {
         };
         if let Some(reply) = reply {
             self.git_page.pending = None;
+            let reply = match reply {
+                Reply::Submitted(id, snapshot, success, output) => {
+                    self.git_page.notices.push((success, output.clone()));
+                    Reply::Selected(id, snapshot, Some(output))
+                }
+                other => other,
+            };
             match reply {
+                Reply::Submitted(..) => unreachable!("submission normalized above"),
                 Reply::List(rows) => {
                     self.git_page.rows = rows;
                     self.git_page.loaded = true;
@@ -215,6 +279,15 @@ impl DevStart {
                 Reply::Commit(result) => match result {
                     Ok(files) => self.git_page.commit_files = Some(files),
                     Err(error) => self.git_page.error = Some(error),
+                },
+                Reply::WorkingDiff(result) => match result {
+                    Ok(doc) => {
+                        self.git_page.diffs = vec![doc];
+                        self.git_page.diff_active = 0;
+                        self.git_page.diff_open = true;
+                        self.git_page.diff_minimized = false;
+                    }
+                    Err(error) => self.git_page.preview_error = Some(error),
                 },
                 Reply::Diff(result) => match result {
                     Ok(v) => {
@@ -282,7 +355,7 @@ impl DevStart {
     }
     pub(super) fn git_page(&mut self, ui: &mut egui::Ui) {
         self.git_page.repaint = Some(ui.ctx().clone());
-        self.git_poll();
+
         if !self.git_page.loaded && self.git_page.pending.is_none() {
             self.git_refresh();
         }
@@ -529,7 +602,7 @@ impl DevStart {
                                         }
                                     });
                                     ui.separator();
-                                    ui.strong(tr("修改文件"));
+                                    ui.strong(tr("文件变动"));
                                     if d.files.is_empty() {
                                         ui.label(tr("工作区干净"));
                                     }
@@ -537,61 +610,36 @@ impl DevStart {
                                         .id_salt("git-changed-files")
                                         .max_height(200.0)
                                         .show(ui, |ui| {
-                                            for file in &d.files {
-                                                ui.horizontal(|ui| {
-                                                    let mut checked =
-                                                        self.git_page.checked.contains(&file.path);
-                                                    if ui
-                                                        .add_enabled(
-                                                            !busy,
-                                                            egui::Checkbox::without_text(
-                                                                &mut checked,
-                                                            ),
-                                                        )
-                                                        .changed()
-                                                    {
-                                                        if checked {
-                                                            self.git_page
-                                                                .checked
-                                                                .insert(file.path.clone());
-                                                        } else {
-                                                            self.git_page
-                                                                .checked
-                                                                .remove(&file.path);
+                                            for (group, files) in d.change_groups() {
+                                                ui.add_space(4.0);
+                                                ui.label(RichText::new(format!("{} ({})", tr(group), files.len())).small().color(tone(self.light, MUTED)));
+                                                for file in files {
+                                                    ui.horizontal(|ui| {
+                                                        let mut checked = self.git_page.checked.contains(&file.path);
+                                                        if ui.add_enabled(!busy, egui::Checkbox::without_text(&mut checked)).changed() {
+                                                            if checked { self.git_page.checked.insert(file.path.clone()); }
+                                                            else { self.git_page.checked.remove(&file.path); }
                                                         }
-                                                    }
-                                                    ui.monospace(&file.status);
-                                                    ui.add(egui::Label::new(&file.path).truncate())
-                                                        .on_hover_text(&file.path);
-                                                });
-                                                ui.horizontal(|ui| {
-                                                    if ui
-                                                        .add_enabled(
-                                                            !busy,
-                                                            egui::Button::new("Diff"),
-                                                        )
-                                                        .on_hover_cursor(
-                                                            egui::CursorIcon::PointingHand,
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        preview = Some(file.path.clone());
-                                                    }
-                                                    if ui
-                                                        .add_enabled(
-                                                            !busy && file.status != "??",
-                                                            egui::Button::new(tr("回滚文件")),
-                                                        )
-                                                        .on_hover_cursor(
-                                                            egui::CursorIcon::PointingHand,
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        action = Some(Action::Restore(
-                                                            file.path.clone(),
-                                                        ));
-                                                    }
-                                                });
+                                                        ui.label(RichText::new(icon::FILE).color(tone(self.light, MUTED)));
+                                                        let width = (ui.available_width() - 36.0).max(20.0);
+                                                        let file_response = ui.add_sized([width, 24.0], egui::Label::new(&file.path).truncate().sense(egui::Sense::click()))
+                                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                            .on_hover_text(format!("{}\n{} · {}", file.path, tr(file.status_label()), file.status));
+                                                        if !busy && file_response.clicked() { preview = Some(file.path.clone()); }
+                                                        let enabled = !busy && file.status != "??";
+                                                        let tooltip = if file.status == "??" {
+                                                            tr("未跟踪文件没有 HEAD 版本，无法撤销恢复。")
+                                                        } else {
+                                                            tr("撤销此文件的工作区和暂存区修改，恢复到 HEAD 版本；操作前保存备份，点击后需再次确认。")
+                                                        };
+                                                        if ui.add_enabled(enabled, egui::Button::new(button_label(ui, icon::ARROW_U_UP_LEFT, enabled)).frame(false))
+                                                            .on_hover_cursor(if enabled { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Default })
+                                                            .on_disabled_hover_text(tooltip)
+                                                            .on_hover_text(tooltip).clicked() {
+                                                            action = Some(Action::Restore(file.path.clone()));
+                                                        }
+                                                    });
+                                                }
                                             }
                                         });
                                     ui.add_space(8.0);
@@ -701,24 +749,98 @@ impl DevStart {
         if let Some(file) = preview
             && let Some(d) = &self.git_page.details
         {
-            let path = d.repository.path.clone();
-            self.git_page.request(move || {
-                Reply::Diff(actions::diff(&path, &file).map(|text| {
-                    crate::git_diff::Document::new(
-                        format!("{}:working:{file}", path.display()),
-                        path.join(&file).display().to_string(),
-                        text,
-                    )
-                }))
-            });
+            if self.git_page.diff_open && !self.git_page.diffs.is_empty() {
+                self.git_page.preview_error =
+                    Some(tr("请先关闭当前 Diff 窗口，再查看其他文件。").into());
+                self.git_page.diff_minimized = false;
+            } else {
+                let path = d.repository.path.clone();
+                self.git_page.request(move || {
+                    Reply::WorkingDiff(actions::diff(&path, &file).map(|text| {
+                        crate::git_diff::Document::new(
+                            format!("{}:working:{file}", path.display()),
+                            path.join(&file).display().to_string(),
+                            text,
+                        )
+                    }))
+                });
+            }
         }
         if let Some(action) = action {
-            self.git_page.confirm = Some(action);
+            if matches!(
+                action,
+                Action::Commit | Action::Push(_, _) | Action::Update(_, _) | Action::Switch(_)
+            ) {
+                self.git_action(action);
+            } else {
+                self.git_page.confirm = Some(action);
+            }
         }
         self.git_dialogs(ui.ctx());
     }
+    pub(super) fn git_notifications(&mut self, ctx: &egui::Context) {
+        self.git_poll();
+        if self.git_page.notices.is_empty() {
+            return;
+        }
+        let mut closed = None;
+        egui::Area::new(egui::Id::new("git-result-notices"))
+            .anchor(egui::Align2::RIGHT_BOTTOM, [-18.0, -18.0])
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                for (index, (success, message)) in self.git_page.notices.iter().enumerate() {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.set_width(370.0);
+                        ui.horizontal(|ui| {
+                            ui.colored_label(
+                                tone(self.light, if *success { ACCENT } else { RED }),
+                                if *success {
+                                    tr("操作成功")
+                                } else {
+                                    tr("操作失败")
+                                },
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if small(ui, icon::X, tr("关闭窗口")) {
+                                        closed = Some(index);
+                                    }
+                                },
+                            );
+                        });
+                        egui::ScrollArea::vertical()
+                            .id_salt(("git-notice", index))
+                            .max_height(170.0)
+                            .show(ui, |ui| {
+                                ui.label(message);
+                            });
+                    });
+                }
+            });
+        if let Some(index) = closed {
+            self.git_page.notices.remove(index);
+        }
+    }
     fn git_dialogs(&mut self, ctx: &egui::Context) {
         self.git_remote_dialog(ctx);
+        if let Some(error) = self.git_page.preview_error.clone() {
+            let mut close = false;
+            let response = egui::Modal::new(egui::Id::new("git-preview-message"))
+                .frame(dialog_ui::frame(ctx))
+                .show(ctx, |ui| {
+                    dialog_ui::content(ui);
+                    ui.set_width(420.0);
+                    ui.heading(tr("文件预览"));
+                    ui.label(tr(&error));
+                    dialog_ui::actions(ui, |ui| {
+                        close = ui.button(tr("关闭窗口")).clicked();
+                    });
+                });
+            if close || response.should_close() {
+                self.git_page.preview_error = None;
+            }
+        }
         if let Some(action) = self.git_page.confirm.clone() {
             let response=egui::Modal::new(egui::Id::new("git-confirm-action")).frame(dialog_ui::frame(ctx)).show(ctx,|ui|{
                 dialog_ui::content(ui);ui.set_width(420.0);
@@ -726,7 +848,7 @@ impl DevStart {
                 ui.heading(title);
                 if let Some(d)=&self.git_page.details{ui.label(RichText::new(format!("{} · {}",d.repository.name,d.repository.branch)).small().color(tone(self.light,MUTED)));}
                 match &action{
-                    Action::Switch(branch)=>{ui.label(branch);ui.label(tr("切换会更新整个仓库的文件，关联项目也会受到影响。请先停止依赖这些文件的服务；有未提交改动时将拒绝切换。"));},
+                    Action::Switch(branch)=>{ui.label(branch);ui.label(tr("切换会更新实际项目文件，关联项目也会受到影响。无冲突的本地修改会保留；冲突时将取消切换并提示原因。"));},
                     Action::Restore(file)=>{ui.label(file);ui.label(tr("恢复到 HEAD，覆盖此文件的工作区和暂存区改动。DevStart 会先保存备份。"));},
                     Action::Commit=>{ui.label(&self.git_page.message);ui.label(tf("提交 {count} 个选中文件",&[("count",self.git_page.checked.len().to_string())]));},
                     Action::Push(key,branch)|Action::Update(key,branch)=>{

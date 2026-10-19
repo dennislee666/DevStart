@@ -34,6 +34,11 @@ pub struct Commit {
     pub date: String,
     pub subject: String,
 }
+impl Commit {
+    pub fn display_date(&self) -> String {
+        crate::time_display::git_date(&self.date)
+    }
+}
 /// Bound both duration and captured bytes; prompts and optional read locks are disabled.
 fn git(path: &Path, args: &[&str]) -> Result<String, String> {
     Ok(git_output(path, args)?.0)
@@ -206,6 +211,26 @@ pub struct Snapshot {
     pub history: Vec<Commit>,
     pub offset: usize,
 }
+impl Snapshot {
+    /// Group porcelain changes centrally; UI only renders the ordered, non-empty groups.
+    pub fn change_groups(&self) -> Vec<(&'static str, Vec<&actions::Change>)> {
+        let mut groups: [Vec<&actions::Change>; 4] = Default::default();
+        for file in &self.files {
+            let index = match file.status_label() {
+                "未跟踪" => 0,
+                "已新增" => 2,
+                "已删除" => 3,
+                _ => 1,
+            };
+            groups[index].push(file);
+        }
+        ["未跟踪", "有变化", "新文件", "删除"]
+            .into_iter()
+            .zip(groups)
+            .filter(|(_, files)| !files.is_empty())
+            .collect()
+    }
+}
 pub fn snapshot(project: &crate::model::Project, offset: usize) -> Result<Box<Snapshot>, String> {
     let started = Instant::now();
     let result = std::thread::scope(|scope| {
@@ -329,23 +354,21 @@ pub fn history(path: &Path, offset: usize, limit: usize) -> Result<Vec<Commit>, 
         })
         .collect()
 }
-/// Only existing local branches; refuse dirty worktrees, never force, stash, or fetch.
+/// Switch the actual working tree; Git protects local changes. Never force, stash, or fetch.
 pub fn switch(path: &Path, branch: &str) -> Result<(), String> {
     let _guard = mutation_guard(path)?;
     if !branches(path)?.iter().any(|b| b == branch) {
         return Err("Unknown local branch".into());
     }
-    if !git(
-        path,
-        &["status", "--porcelain=v1", "--untracked-files=normal"],
-    )?
-    .is_empty()
-    {
-        return Err(
-            "Working tree has uncommitted changes; commit or stash them before switching".into(),
-        );
+    // Git preserves non-conflicting local changes and reports the exact files that block checkout.
+    git(path, &["switch", "--no-guess", "--", branch])?;
+    let actual = git(path, &["branch", "--show-current"])?;
+    if actual != branch {
+        return Err(format!(
+            "Branch verification failed: expected {branch}, actual {actual}"
+        ));
     }
-    git(path, &["switch", "--no-guess", "--", branch]).map(|_| ())
+    Ok(())
 }
 
 #[cfg(test)]
@@ -443,16 +466,18 @@ mod tests {
         assert!(missing.error.is_some());
     }
     #[test]
-    fn branch_switch_refuses_dirty_state_and_history_paginates() {
+    fn branch_switch_preserves_unrelated_files_and_history_paginates() {
         let repo = Repo::new();
         repo.commit("first commit");
         repo.commit("second commit");
         git(&repo.0, &["branch", "feature/demo"]).unwrap();
         assert_eq!(history(&repo.0, 1, 1).unwrap()[0].subject, "first commit");
         std::fs::write(repo.0.join("untracked.txt"), "keep").unwrap();
-        assert!(switch(&repo.0, "feature/demo").is_err());
-        assert_eq!(git(&repo.0, &["branch", "--show-current"]).unwrap(), "main");
-        std::fs::remove_file(repo.0.join("untracked.txt")).unwrap();
+        switch(&repo.0, "feature/demo").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("untracked.txt")).unwrap(),
+            "keep"
+        );
         switch(&repo.0, "feature/demo").unwrap();
         assert_eq!(
             inspect(1, "Example".into(), repo.0.clone()).branch,
@@ -460,6 +485,170 @@ mod tests {
         );
         assert!(switch(&repo.0, "--discard-changes").is_err());
         assert!(history(&repo.0, 0, 101).is_err());
+    }
+    #[test]
+    fn submit_stops_on_autostash_conflicts_before_commit_or_push() {
+        let remote = Repo::new();
+        remote.commit("base");
+        let local = Repo::new();
+        git(
+            &local.0,
+            &["remote", "add", "origin", remote.0.to_str().unwrap()],
+        )
+        .unwrap();
+        git(&local.0, &["pull", "origin", "main"]).unwrap();
+        remote.commit("remote edit");
+        std::fs::write(local.0.join("file.txt"), "local edit").unwrap();
+        let key = remotes::list(&local.0).unwrap()[0].key.clone();
+        let error = remotes::submit(
+            &local.0,
+            &key,
+            "main",
+            "must not commit",
+            &["file.txt".into()],
+            true,
+        )
+        .unwrap_err();
+        assert!(error.contains("conflicts"));
+        assert!(!error.contains("Commit: OK"));
+        assert!(
+            !git(&local.0, &["diff", "--name-only", "--diff-filter=U"])
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            git(&local.0, &["rev-parse", "HEAD"]).unwrap(),
+            git(&remote.0, &["rev-parse", "HEAD"]).unwrap()
+        );
+    }
+    #[test]
+    fn submit_updates_then_commits_and_pushes_without_losing_unselected_edits() {
+        let remote = Repo::new();
+        remote.commit("base");
+        git(
+            &remote.0,
+            &["config", "receive.denyCurrentBranch", "ignore"],
+        )
+        .unwrap();
+        let local = Repo::new();
+        git(
+            &local.0,
+            &["remote", "add", "origin", remote.0.to_str().unwrap()],
+        )
+        .unwrap();
+        git(&local.0, &["pull", "origin", "main"]).unwrap();
+        git(&local.0, &["config", "user.name", "Test"]).unwrap();
+        git(&local.0, &["config", "user.email", "test@example.invalid"]).unwrap();
+        git(&local.0, &["config", "commit.gpgsign", "false"]).unwrap();
+        std::fs::write(remote.0.join("remote.txt"), "remote update").unwrap();
+        git(&remote.0, &["add", "remote.txt"]).unwrap();
+        git(
+            &remote.0,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "remote update",
+            ],
+        )
+        .unwrap();
+        std::fs::write(local.0.join("file.txt"), "local edit").unwrap();
+        std::fs::write(local.0.join("keep.txt"), "unselected").unwrap();
+        let key = remotes::list(&local.0).unwrap()[0].key.clone();
+        let output = remotes::submit(
+            &local.0,
+            &key,
+            "main",
+            "local message",
+            &["file.txt".into()],
+            true,
+        )
+        .unwrap();
+        assert!(output.contains("Push: OK"));
+        assert_eq!(
+            std::fs::read_to_string(local.0.join("remote.txt")).unwrap(),
+            "remote update"
+        );
+        assert_eq!(
+            git(&remote.0, &["rev-parse", "HEAD"]).unwrap(),
+            git(&local.0, &["rev-parse", "HEAD"]).unwrap()
+        );
+        assert!(
+            actions::changes(&local.0)
+                .unwrap()
+                .iter()
+                .any(|f| f.path == "keep.txt")
+        );
+        std::fs::write(local.0.join("file.txt"), "still here").unwrap();
+        let before = git(&local.0, &["rev-parse", "HEAD"]).unwrap();
+        git(
+            &local.0,
+            &["remote", "set-url", "origin", "/does/not/exist"],
+        )
+        .unwrap();
+        let key = remotes::list(&local.0).unwrap()[0].key.clone();
+        assert!(
+            remotes::submit(
+                &local.0,
+                &key,
+                "main",
+                "must not commit",
+                &["file.txt".into()],
+                true
+            )
+            .is_err()
+        );
+        assert_eq!(git(&local.0, &["rev-parse", "HEAD"]).unwrap(), before);
+        assert_eq!(
+            std::fs::read_to_string(local.0.join("file.txt")).unwrap(),
+            "still here"
+        );
+    }
+    #[test]
+    fn working_diff_previews_text_and_rejects_binary_files() {
+        let repo = Repo::new();
+        repo.commit("base");
+        std::fs::write(repo.0.join("new.txt"), "hello\nworld\n").unwrap();
+        let patch = actions::diff(&repo.0, "new.txt").unwrap();
+        assert!(patch.contains("@@ -0,0 +1,2 @@\n+hello\n+world"));
+        std::fs::write(repo.0.join("image.bin"), b"abc\0def").unwrap();
+        assert!(
+            actions::diff(&repo.0, "image.bin")
+                .unwrap_err()
+                .contains("不支持")
+        );
+        git(&repo.0, &["add", "--", "image.bin"]).unwrap();
+        assert!(
+            actions::diff(&repo.0, "image.bin")
+                .unwrap_err()
+                .contains("不支持")
+        );
+        std::fs::write(repo.0.join("file.txt"), "updated\n").unwrap();
+        assert!(
+            actions::diff(&repo.0, "file.txt")
+                .unwrap()
+                .contains("+updated")
+        );
+    }
+    #[test]
+    fn branch_switch_reports_conflicts_without_discarding_changes() {
+        let repo = Repo::new();
+        repo.commit("base");
+        git(&repo.0, &["branch", "other"]).unwrap();
+        repo.commit("main change");
+        std::fs::write(repo.0.join("file.txt"), "local work").unwrap();
+        let error = switch(&repo.0, "other").unwrap_err();
+        assert!(error.contains("file.txt"));
+        assert_eq!(git(&repo.0, &["branch", "--show-current"]).unwrap(), "main");
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("file.txt")).unwrap(),
+            "local work"
+        );
     }
     #[test]
     fn nested_project_uses_repo_root_and_detached_head_keeps_history() {

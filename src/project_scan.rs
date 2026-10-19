@@ -487,11 +487,57 @@ pub struct Imported {
     pub added: usize,
     pub project_ids: Vec<u64>,
 }
+/// An explicit import destination; omitted targets preserve scan-inferred groups.
+#[derive(Clone, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ImportGroup {
+    Existing { id: u64 },
+    New { name: String },
+}
+/// Resolve grouping on a cloned catalog, so validation failures never persist empty groups.
+fn apply_group(catalog: &mut Catalog, projects: &[u64], target: ImportGroup) -> Result<(), String> {
+    let group = match target {
+        ImportGroup::Existing { id } => {
+            if !catalog.groups.iter().any(|g| g.id == id) {
+                return Err("Unknown destination group".into());
+            }
+            id
+        }
+        ImportGroup::New { name } => {
+            let name = name.trim();
+            if name.is_empty() {
+                return Err("请输入分组名称".into());
+            }
+            if catalog.groups.iter().any(|g| g.name == name) {
+                return Err("分组已存在".into());
+            }
+            let id = catalog.id();
+            catalog.groups.push(crate::model::Group {
+                id,
+                name: name.into(),
+            });
+            id
+        }
+    };
+    for project in catalog
+        .projects
+        .iter_mut()
+        .filter(|p| projects.contains(&p.id))
+    {
+        project.group = group;
+    }
+    Ok(())
+}
 impl crate::service::Service {
-    pub fn import_scan(&mut self, id: u64, launch_ids: &[u64]) -> Result<Imported, String> {
+    pub fn import_scan_grouped(
+        &mut self,
+        id: u64,
+        launch_ids: &[u64],
+        target: Option<ImportGroup>,
+    ) -> Result<Imported, String> {
         let job = self.scans.get(id)?;
-        let (next, added) = apply(&self.catalog, job, launch_ids)?;
-        let project_ids = next
+        let (mut next, added) = apply(&self.catalog, job, launch_ids)?;
+        let project_ids: Vec<u64> = next
             .projects
             .iter()
             .filter(|p| {
@@ -504,6 +550,12 @@ impl crate::service::Service {
             .map(|p| p.id)
             .collect();
         if added > 0 {
+            if let Some(target) = target {
+                // Inferred groups created by apply are not needed for an explicit destination.
+                let original: HashSet<_> = self.catalog.groups.iter().map(|g| g.id).collect();
+                next.groups.retain(|g| original.contains(&g.id));
+                apply_group(&mut next, &project_ids, target)?;
+            }
             self.commit(next)?;
         }
         Ok(Imported { added, project_ids })
@@ -538,6 +590,33 @@ mod tests {
             report: Some(report),
             error: None,
         }
+    }
+    #[test]
+    fn explicit_grouping_validates_and_moves_only_imported_projects() {
+        let mut catalog = Catalog::default();
+        let original = catalog.clone();
+        assert!(apply_group(&mut catalog, &[], ImportGroup::Existing { id: u64::MAX }).is_err());
+        assert!(apply_group(&mut catalog, &[], ImportGroup::New { name: "  ".into() }).is_err());
+        assert_eq!(catalog.groups.len(), original.groups.len());
+        apply_group(
+            &mut catalog,
+            &[],
+            ImportGroup::New {
+                name: " Demo ".into(),
+            },
+        )
+        .unwrap();
+        assert!(catalog.groups.iter().any(|g| g.name == "Demo"));
+        assert!(
+            apply_group(
+                &mut catalog,
+                &[],
+                ImportGroup::New {
+                    name: "Demo".into()
+                }
+            )
+            .is_err()
+        );
     }
     #[test]
     fn workspace_scan_discovers_stacks_ports_groups_and_skips_dependencies() {

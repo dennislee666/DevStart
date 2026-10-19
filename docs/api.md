@@ -547,7 +547,7 @@ Choose `system`, `zh-CN`, or `en` through `settings.update`. GUI text updates im
 - `git.list {}`：返回所有项目及 `project_id/name/path/root/branch/version/dirty/latest/error`。version 是 HEAD 前 10 位哈希，不是 Cargo/npm 包版本。非仓库或不可读取项目在各自 error 中报告，不隐藏该项目。空仓库的 version、latest 为空。
 - `git.branches {"project_id":123}`：已有本地分支列表；不自动拉取远程或建立跟踪分支。
 - `git.history {"project_id":123,"offset":0,"limit":50}`：HEAD 历史，新到旧，返回完整提交 id、author、ISO 日期 date、subject。limit 范围 1–100，offset 范围 0–100000。不足 limit 表示末页；空仓库返回空数组。
-- `git.switch {"project_id":123,"branch":"main"}`：切换已有本地分支，返回后台任务编号（见下文）。UI 二次确认；API 不弹窗，调用方必须获得切换的授权。未提交改动（含未跟踪文件）会拒绝切换；没有强制、自动 stash、reset、fetch 或推送。Git 原始失败原因会返回错误并写入应用调试日志。
+- `git.switch {"project_id":123,"branch":"main"}`：切换已有本地分支，返回后台任务编号（见下文）。UI 直接执行并以常驻通知显示结果；API 不弹窗，调用方必须获得切换的授权。由 Git 执行安全切换，无冲突的未提交及未跟踪文件保留；仅会被覆盖的本地修改、冲突及其他 Git 错误会拒绝切换；没有强制、自动 stash、reset、fetch 或推送。Git 原始失败原因会返回错误并写入应用调试日志。
 
 每条 Git 命令最多等待 120 秒、输出不超过 2 MiB。失败或超时后先重新读取实际状态，不盲目重试写操作。运行中服务可能读取被切换的代码，切换前应先停止相关服务。Git 未安装时返回明确执行错误；本模块不负责安装 Git。
 
@@ -607,3 +607,15 @@ terminal.read 附加返回 segments：每段包含 text、role（output/prompt/i
 - `scan.get {"id":job_id}` → `{id,state,report,error}`；state 为 running/completed/failed/cancelled。report 包含 projects，每项目有 name/path/group/stack/launches；每入口有 id/script/command/port/port_source/existing。port=null 表示无法静态判断；必须检查 warnings 与 truncated，不能声称截断扫描是完整结果。
 - `scan.import {"id":job_id,"launch_ids":[入口ID]}` → `{added,project_ids}`。只允许已完成报告内的唯一入口 ID，校验源文件未改变后一次提交。保留已有项目元数据和旧启动项；重复入口忽略。仅将配置写入 DevStart 应用目录。不会启动服务，后续显式调用 runs.start。
 - `scan.cancel {"id":job_id}` 请求取消。最多一份运行中扫描和四份结果，过期报告需重新扫描。
+
+扫描导入支持可选 `group`：`{"kind":"existing","id":分组ID}` 或 `{"kind":"new","name":"分组名"}`。省略时使用扫描推断分组。指定后将本次新增启动项涉及的项目归入目标分组（包括已有项目）；创建分组和导入配置原子保存，失败不留下空分组。UI 仅在有扫描结果后显示分组选择与确认添加，添加前二次确认；API 不要求二次确认。
+
+工作区文件预览：点击文件变动列表中的文件可打开单文件 Diff，关闭当前窗口后才能查看另一文件。未跟踪文本以新增补丁显示；二进制文件明确返回“不支持查看预览”。Git 原始状态码保留在 API 中，UI 显示通用文件图标和可读状态。
+
+文件变动按未跟踪、有变化、新文件、删除分组；右侧图标撤销恢复仍需二次确认，未跟踪文件禁用恢复并提示无 HEAD 版本。
+
+GUI 提交操作：提交本地执行所选远程当前分支 pull --no-rebase --autostash，再提交所选文件；推送远程在此前提下继续 push。无二次确认；任一步失败立即停止。合并或 autostash 恢复冲突保留现场，禁止继续提交/推送。工作区无变更时推送可跳过提交，有变更但未选文件会报错。右下角结果通知保留，需用户手动关闭。底层 git.commit/git.push API 仍为独立原子动作。
+
+GUI Update Project 点击后直接更新所选远程当前分支，无二次确认；成功或失败复用提交操作的右下角常驻结果通知，只有手动点击关闭图标才移除。
+
+GUI 切换分支点击后直接执行安全切换；成功与失败复用右下角常驻通知，失败不再使用阻断弹窗。仅手动点击关闭图标移除；冲突不强制覆盖，详情保留 Git 原始原因。

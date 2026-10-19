@@ -149,3 +149,37 @@ impl crate::runtime::Run {
         }
     }
 }
+
+/// Git supplies strict ISO-8601 author dates. Preserve its timezone and hide only the current year.
+pub fn git_date(text: &str) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    git_date_for_year(text, &local_timestamp(now)[..4])
+}
+fn git_date_for_year(text: &str, year: &str) -> String {
+    let Some(prefix) = text.get(..16) else {
+        return text.into();
+    };
+    if !prefix.is_ascii() || prefix.as_bytes()[10] != b'T' {
+        return text.into();
+    }
+    let start = if &prefix[..4] == year { 5 } else { 0 };
+    prefix[start..].replace('T', " ")
+}
+#[cfg(test)]
+mod git_date_tests {
+    #[test]
+    fn dates_hide_current_year_and_seconds() {
+        assert_eq!(
+            super::git_date_for_year("2026-10-17T10:50:44+08:00", "2026"),
+            "10-17 10:50"
+        );
+        assert_eq!(
+            super::git_date_for_year("2025-12-31T23:59:44+08:00", "2026"),
+            "2025-12-31 23:59"
+        );
+        assert_eq!(super::git_date_for_year("invalid", "2026"), "invalid");
+    }
+}

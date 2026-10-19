@@ -11,6 +11,22 @@ pub struct Change {
     pub previous: Option<String>,
     pub status: String,
 }
+impl Change {
+    /// Translate porcelain states for display; retain the original code for API consumers.
+    pub fn status_label(&self) -> &'static str {
+        match self.status.as_str() {
+            "??" => "未跟踪",
+            "!!" => "已忽略",
+            "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU" => "冲突",
+            code if code.contains('R') => "已重命名",
+            code if code.contains('C') => "已复制",
+            code if code.contains('D') => "已删除",
+            code if code.contains('A') => "已新增",
+            code if code.contains('M') || code.contains('T') => "已修改",
+            _ => "文件变更",
+        }
+    }
+}
 pub fn changes(path: &Path) -> Result<Vec<Change>, String> {
     let root = root(path)?;
     let out = git(
@@ -84,9 +100,21 @@ pub fn diff(path: &Path, file: &str) -> Result<String, String> {
         if bytes.len() > 262144 {
             return Err("Untracked file exceeds preview limit (256 KiB)".into());
         }
+        if bytes.contains(&0) {
+            return Err("此文件不支持查看预览".into());
+        }
         return String::from_utf8(bytes)
-            .map(|s| format!("--- /dev/null\n+++ {file}\n{s}"))
-            .map_err(|_| "Binary file; text preview unavailable".into());
+            .map(|s| {
+                let lines = s
+                    .lines()
+                    .map(|line| format!("+{line}\n"))
+                    .collect::<String>();
+                format!(
+                    "--- /dev/null\n+++ {file}\n@@ -0,0 +1,{} @@\n{lines}",
+                    s.lines().count()
+                )
+            })
+            .map_err(|_| "此文件不支持查看预览".into());
     }
     let files = selected(&root, &[file.into()])?;
     let mut args = vec![
@@ -101,7 +129,7 @@ pub fn diff(path: &Path, file: &str) -> Result<String, String> {
     // An unborn branch has only an index diff.
     let branch = git(&root, &["branch", "--show-current"])?;
     if !branch.is_empty() && !branches(&root)?.contains(&branch) {
-        return git(
+        return text_patch(git(
             &root,
             &[
                 "diff",
@@ -112,12 +140,28 @@ pub fn diff(path: &Path, file: &str) -> Result<String, String> {
                 "--",
                 file,
             ],
-        );
+        )?);
     }
-    git(&root, &args)
+    text_patch(git(&root, &args)?)
+}
+fn text_patch(patch: String) -> Result<String, String> {
+    if patch
+        .lines()
+        .any(|line| line.starts_with("Binary files ") || line == "GIT binary patch")
+    {
+        return Err("此文件不支持查看预览".into());
+    }
+    Ok(patch)
 }
 pub fn commit(path: &Path, message: &str, files: &[String]) -> Result<String, String> {
     let _guard = mutation_guard(path)?;
+    commit_unlocked(path, message, files)
+}
+pub(super) fn commit_unlocked(
+    path: &Path,
+    message: &str,
+    files: &[String],
+) -> Result<String, String> {
     if message.trim().is_empty() || message.len() > 16384 {
         return Err("Commit message must contain 1..16384 bytes".into());
     }

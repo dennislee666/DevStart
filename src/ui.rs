@@ -2386,6 +2386,7 @@ impl eframe::App for DevStart {
         self.dialogs(ctx);
         self.show_console_windows(ctx);
         self.about_dialog(ctx);
+        self.git_notifications(ctx);
         ctx.request_repaint_after(Duration::from_millis(100));
     }
 }

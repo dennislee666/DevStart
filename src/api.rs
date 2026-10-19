@@ -123,10 +123,19 @@ pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, Strin
             Ok(json!(s.scans.get(id)?))
         }
         "scan.import" => {
-            config::fields(p, &["id", "launch_ids"])?;
+            config::fields(p, &["id", "launch_ids", "group"])?;
             let ids: Vec<u64> =
                 serde_json::from_value(p["launch_ids"].clone()).map_err(|e| e.to_string())?;
-            Ok(json!(s.import_scan(config::id(p, "id")?, &ids)?))
+            let group = p
+                .get("group")
+                .map(|value| serde_json::from_value(value.clone()))
+                .transpose()
+                .map_err(|e| format!("Invalid group: {e}"))?;
+            Ok(json!(s.import_scan_grouped(
+                config::id(p, "id")?,
+                &ids,
+                group
+            )?))
         }
 
         m if m.starts_with("editor.") => s.editor_action(m, p),

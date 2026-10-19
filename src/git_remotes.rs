@@ -107,6 +107,9 @@ pub fn update(path: &Path, key: &str, branch: &str) -> Result<String, String> {
 }
 pub fn push(path: &Path, key: &str, branch: &str) -> Result<String, String> {
     let _guard = mutation_guard(path)?;
+    push_unlocked(path, key, branch)
+}
+fn push_unlocked(path: &Path, key: &str, branch: &str) -> Result<String, String> {
     let root = root(path)?;
     let target = current_target(&root, key, branch)?;
     let result = git_output(
@@ -121,6 +124,75 @@ pub fn push(path: &Path, key: &str, branch: &str) -> Result<String, String> {
     result
         .map(|(out, err)| format!("{out}\n{err}").replace(&target.url, &target.remote.url))
         .map_err(|e| e.replace(&target.url, &target.remote.url))
+}
+
+/// One repository write lease covers update, selected-file commit and optional push.
+/// Git autostash preserves tracked edits during merge; untracked files are never removed.
+pub fn submit(
+    path: &Path,
+    key: &str,
+    branch: &str,
+    message: &str,
+    files: &[String],
+    push_remote: bool,
+) -> Result<String, String> {
+    let _guard = mutation_guard(path)?;
+    let root = root(path)?;
+    if !files.is_empty() && message.trim().is_empty() {
+        return Err("Commit message is required".into());
+    }
+    let target = current_target(&root, key, branch)?;
+    if files.is_empty() && !super::actions::changes(&root)?.is_empty() {
+        return Err("Select the files to commit before submitting".into());
+    }
+    let mut progress = String::new();
+    let execute =
+        |progress: &mut String, step: &str, result: Result<String, String>| -> Result<(), String> {
+            match result {
+                Ok(output) => {
+                    progress.push_str(&format!("{step}: OK\n{output}\n"));
+                    Ok(())
+                }
+                Err(error) => Err(format!("{progress}{step}: FAILED\n{error}")),
+            }
+        };
+    execute(
+        &mut progress,
+        "Update Project",
+        git_output(
+            &root,
+            &[
+                "pull",
+                "--no-rebase",
+                "--no-edit",
+                "--autostash",
+                "--",
+                &target.url,
+                branch,
+            ],
+        )
+        .map(|(out, err)| format!("{out}\n{err}").replace(&target.url, &target.remote.url))
+        .map_err(|e| e.replace(&target.url, &target.remote.url)),
+    )?;
+    let conflicts = git(&root, &["diff", "--name-only", "--diff-filter=U"])?;
+    if !conflicts.is_empty() {
+        return Err(format!(
+            "{progress}Update Project: FAILED\nMerge/autostash conflicts; resolve before submitting:\n{conflicts}"
+        ));
+    }
+    if files.is_empty() {
+        progress.push_str("Commit: SKIPPED (no selected changes)\n");
+    } else {
+        execute(
+            &mut progress,
+            "Commit",
+            super::actions::commit_unlocked(&root, message, files),
+        )?;
+    }
+    if push_remote {
+        execute(&mut progress, "Push", push_unlocked(&root, key, branch))?;
+    }
+    Ok(progress)
 }
 
 #[cfg(test)]

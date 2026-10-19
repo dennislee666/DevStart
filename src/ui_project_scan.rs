@@ -8,6 +8,9 @@ pub(super) struct ScanUi {
     report: Option<crate::project_scan::Report>,
     selected: HashSet<u64>,
     error: Option<String>,
+    group: Option<u64>,
+    new_group: String,
+    confirming: bool,
 }
 impl DevStart {
     pub(super) fn project_scan_dialog(&mut self, ctx: &egui::Context) {
@@ -56,7 +59,81 @@ impl DevStart {
                 ui.spacing_mut().interact_size.y = 24.0;
                 ui.spacing_mut().button_padding = egui::vec2(8.0, 3.0);
                 ui.set_width((ctx.content_rect().width() - 90.0).clamp(300.0, 820.0));
-                ui.heading(tr("自动扫描项目"));
+                ui.horizontal(|ui| {
+                    ui.heading(if draft.confirming {
+                        tr("确认添加")
+                    } else {
+                        tr("自动扫描项目")
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        close |= small(ui, icon::X, tr("关闭窗口"));
+                    });
+                });
+                if draft.confirming {
+                    let group_name = draft
+                        .group
+                        .and_then(|id| {
+                            service
+                                .catalog
+                                .groups
+                                .iter()
+                                .find(|g| g.id == id)
+                                .map(|g| g.name.as_str())
+                        })
+                        .unwrap_or(draft.new_group.trim());
+                    ui.label(tr("确认添加所选项目与启动项到以下分组？"));
+                    ui.label(group_name);
+                    if let Some(report) = &draft.report {
+                        egui::ScrollArea::vertical()
+                            .max_height(260.0)
+                            .show(ui, |ui| {
+                                for project in &report.projects {
+                                    let launches: Vec<_> = project
+                                        .launches
+                                        .iter()
+                                        .filter(|l| draft.selected.contains(&l.id))
+                                        .collect();
+                                    if !launches.is_empty() {
+                                        ui.label(&project.name);
+                                        for launch in launches {
+                                            ui.label(
+                                                RichText::new(&launch.script.name)
+                                                    .small()
+                                                    .color(tone(self.light, MUTED)),
+                                            );
+                                        }
+                                    }
+                                }
+                            });
+                    }
+                    dialog_ui::actions(ui, |ui| {
+                        if ui.button(tr("取消")).clicked() {
+                            draft.confirming = false;
+                        }
+                        if ui.button(tr("确认添加")).clicked()
+                            && let Some(id) = draft.job
+                        {
+                            let ids: Vec<_> = draft.selected.iter().copied().collect();
+                            let target = match draft.group {
+                                Some(id) => crate::project_scan::ImportGroup::Existing { id },
+                                None => crate::project_scan::ImportGroup::New {
+                                    name: draft.new_group.clone(),
+                                },
+                            };
+                            match service.import_scan_grouped(id, &ids, Some(target)) {
+                                Ok(result) => {
+                                    imported = Some(result);
+                                    close = true;
+                                }
+                                Err(error) => {
+                                    draft.error = Some(error);
+                                    draft.confirming = false;
+                                }
+                            }
+                        }
+                    });
+                    return;
+                }
                 ui.horizontal(|ui| {
                     ui.add_enabled(
                         !running,
@@ -89,6 +166,10 @@ impl DevStart {
                             Ok(id) => {
                                 draft.job = Some(id);
                                 draft.report = None;
+                                draft.confirming = false;
+                                if draft.group.is_none() {
+                                    draft.group = service.catalog.groups.first().map(|g| g.id);
+                                }
                                 draft.selected.clear();
                                 draft.error = None;
                             }
@@ -128,7 +209,7 @@ impl DevStart {
                         &[("count", report.projects.len().to_string())],
                     ));
                     egui::ScrollArea::vertical()
-                        .max_height((ctx.content_rect().height() * 0.55).max(120.0))
+                        .max_height((ctx.content_rect().height() * 0.45).max(120.0))
                         .show(ui, |ui| {
                             for project in &report.projects {
                                 egui::Frame::new().inner_margin(6.0).show(ui, |ui| {
@@ -242,28 +323,59 @@ impl DevStart {
                             }
                         });
                 }
-                dialog_ui::actions(ui, |ui| {
-                    if ui.button(tr("取消")).clicked() {
-                        close = true;
-                    }
-                    if ui
-                        .add_enabled(
-                            draft.report.is_some() && !draft.selected.is_empty(),
-                            egui::Button::new(tr("添加所选启动项")),
-                        )
-                        .clicked()
-                        && let Some(id) = draft.job
-                    {
-                        let ids: Vec<_> = draft.selected.iter().copied().collect();
-                        match service.import_scan(id, &ids) {
-                            Ok(result) => {
-                                imported = Some(result);
-                                close = true;
-                            }
-                            Err(error) => draft.error = Some(error),
+                if draft
+                    .report
+                    .as_ref()
+                    .is_some_and(|r| !r.projects.is_empty())
+                {
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.label(tr("添加到分组"));
+                        let name = draft
+                            .group
+                            .and_then(|id| {
+                                service
+                                    .catalog
+                                    .groups
+                                    .iter()
+                                    .find(|g| g.id == id)
+                                    .map(|g| g.name.clone())
+                            })
+                            .unwrap_or_else(|| tr("新建分组").to_string());
+                        egui::ComboBox::from_id_salt("scan-target-group")
+                            .selected_text(name)
+                            .show_ui(ui, |ui| {
+                                for group in &service.catalog.groups {
+                                    ui.selectable_value(
+                                        &mut draft.group,
+                                        Some(group.id),
+                                        &group.name,
+                                    );
+                                }
+                                ui.selectable_value(&mut draft.group, None, tr("新建分组"));
+                            });
+                        if draft.group.is_none() {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.new_group)
+                                    .hint_text(tr("分组名称"))
+                                    .desired_width(200.0),
+                            );
                         }
-                    }
-                });
+                    });
+                    dialog_ui::actions(ui, |ui| {
+                        if ui.button(tr("取消")).clicked() {
+                            close = true;
+                        }
+                        let valid = !draft.selected.is_empty()
+                            && (draft.group.is_some() || !draft.new_group.trim().is_empty());
+                        if ui
+                            .add_enabled(valid, egui::Button::new(tr("确认添加")))
+                            .clicked()
+                        {
+                            draft.confirming = true;
+                        }
+                    });
+                }
             });
         if let Some(result) = imported {
             self.expanded.extend(result.project_ids);
@@ -272,6 +384,7 @@ impl DevStart {
             if running && let Some(id) = draft.job {
                 let _ = service.scans.cancel(id);
             }
+            draft.confirming = false;
             draft.open = false;
         }
     }

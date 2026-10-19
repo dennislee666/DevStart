@@ -52,18 +52,31 @@ impl DevStart {
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.label(RichText::new(&commit.subject).strong());
-                                ui.label(
-                                    RichText::new(&commit.author)
-                                        .small()
-                                        .color(tone(self.light, MUTED)),
-                                );
-                                ui.label(
-                                    RichText::new(&commit.date)
-                                        .small()
-                                        .color(tone(self.light, MUTED)),
-                                );
-                                ui.monospace(&commit.id[..commit.id.len().min(10)])
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 5.0;
+                                    ui.label(
+                                        RichText::new(format!("{} {}", icon::USER, commit.author))
+                                            .small()
+                                            .color(tone(self.light, MUTED)),
+                                    );
+                                    ui.label(
+                                        RichText::new(&commit.id[..commit.id.len().min(10)])
+                                            .monospace()
+                                            .small()
+                                            .color(tone(self.light, MUTED).gamma_multiply(0.7)),
+                                    )
                                     .on_hover_text(&commit.id);
+                                });
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} {}",
+                                        icon::CALENDAR,
+                                        commit.display_date()
+                                    ))
+                                    .small()
+                                    .color(tone(self.light, MUTED)),
+                                )
+                                .on_hover_text(&commit.date);
                             });
                         // A subtle disclosure marker belongs to the clickable row, not a separate button.
                         let center = egui::pos2(
