@@ -129,7 +129,7 @@ bash scripts/package-macos.sh
 open dist/DevStart.app
 ```
 
-Builds a Universal app; set `DEVSTART_MACOS_ARCH=native` to build only the current architecture. Packages use a local ad-hoc signature and are not Apple-notarized. The repository contains no preloaded personal configuration or packaged applications.
+The local command builds a Universal app with an ad-hoc signature; set `DEVSTART_MACOS_ARCH=native` for the current architecture only. Formal Actions releases additionally require Developer ID signing, Apple notarization, stapled tickets and Gatekeeper validation; see [macOS signing](docs/macos-signing.md). The repository contains no preloaded personal configuration or packaged applications.
 
 ## AI / API / MCP
 

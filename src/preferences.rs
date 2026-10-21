@@ -26,10 +26,32 @@ pub enum Density {
     Compact,
     Comfortable,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommitAgent {
+    #[default]
+    Discover,
+    Auto,
+    Codex,
+    Claude,
+    Cursor,
+}
+impl CommitAgent {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Discover => "自动选择并记住",
+            Self::Auto => "自动（每次检测）",
+            Self::Codex => "Codex CLI",
+            Self::Claude => "Claude Code",
+            Self::Cursor => "Cursor Agent",
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Preferences {
     pub language: crate::i18n::Language,
+    pub commit_agent: CommitAgent,
     pub theme: Theme,
     pub ui_font: UiFont,
     pub ui_font_size: f32,
@@ -43,6 +65,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             language: crate::i18n::Language::System,
+            commit_agent: CommitAgent::Discover,
             theme: Theme::Dark,
             ui_font: UiFont::System,
             ui_font_size: 12.0,

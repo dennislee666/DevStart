@@ -643,6 +643,17 @@
                   "zh-CN",
                   "en"
                 ]
+              },
+              "commit_agent": {
+                "type": "string",
+                "enum": [
+                  "discover",
+                  "auto",
+                  "codex",
+                  "claude",
+                  "cursor"
+                ],
+                "description": "discover: first success becomes explicit tool; auto: detect each time; explicit providers never silently fall back"
               }
             },
             "required": [],
@@ -1181,7 +1192,7 @@
               "type": "string"
             },
             "minItems": 1,
-            "maxItems": 1000
+            "maxItems": 10000
           }
         },
         "required": [
@@ -1599,6 +1610,61 @@
         "required": [
           "id",
           "launch_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "git.merge": {
+      "description": "将已有本地 source 分支合并到 target，先安全切换到 target；要求干净工作区，无强制或远程推送。冲突保留现场。返回 job_id，通过 git.job 查询。API 无二次确认，调用方负责授权。",
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project_id",
+          "source",
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "git.restore_version": {
+      "description": "恢复历史文件树并创建新的本地提交；不修改远程、不重写历史。要求干净工作区、当前分支和 expected_head 未变；保留原 HEAD 备份引用。返回 job_id。API 调用方须取得授权。",
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "commit": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "expected_head": {
+            "type": "string",
+            "minLength": 10
+          }
+        },
+        "required": [
+          "project_id",
+          "commit",
+          "branch",
+          "expected_head"
         ],
         "additionalProperties": false
       }

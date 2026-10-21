@@ -2027,6 +2027,38 @@ fn fallback_discovery_reads_only_declared_startup_names_and_never_executes() {
 }
 
 #[test]
+fn commit_agent_learning_persists_and_respects_explicit_user_settings() {
+    use crate::preferences::CommitAgent;
+    let f = Fixture::new();
+    let mut service = api_service(&f);
+    assert!(
+        service
+            .remember_commit_agent(CommitAgent::Discover, CommitAgent::Claude)
+            .unwrap()
+    );
+    assert_eq!(
+        service.store.load().unwrap().preferences.commit_agent,
+        CommitAgent::Claude
+    );
+    assert!(
+        !service
+            .remember_commit_agent(CommitAgent::Discover, CommitAgent::Codex)
+            .unwrap()
+    );
+    service
+        .update_preferences(serde_json::json!({"commit_agent":"auto"}))
+        .unwrap();
+    assert!(
+        !service
+            .remember_commit_agent(CommitAgent::Auto, CommitAgent::Cursor)
+            .unwrap()
+    );
+    assert_eq!(
+        service.store.load().unwrap().preferences.commit_agent,
+        CommitAgent::Auto
+    );
+}
+#[test]
 fn appearance_settings_are_validated_atomic_and_persisted_without_changing_launches() {
     use serde_json::json;
     let f = Fixture::new();
@@ -2039,7 +2071,11 @@ fn appearance_settings_are_validated_atomic_and_persisted_without_changing_launc
     api_call(
         &mut s,
         "settings.update",
-        json!({"patch":{"theme":"light","console_font_size":16,"console_font":"menlo","density":"comfortable","sidebar_collapsed":true}}),
+        json!({"patch":{"commit_agent":"claude","theme":"light","console_font_size":16,"console_font":"menlo","density":"comfortable","sidebar_collapsed":true}}),
+    );
+    assert_eq!(
+        s.store.load().unwrap().preferences.commit_agent,
+        crate::preferences::CommitAgent::Claude
     );
     assert_eq!(s.store.load().unwrap().preferences.console_font_size, 16.0);
     assert_eq!(

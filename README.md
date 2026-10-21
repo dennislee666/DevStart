@@ -129,7 +129,7 @@ bash scripts/package-macos.sh
 open dist/DevStart.app
 ```
 
-生成 universal 应用（可用 `DEVSTART_MACOS_ARCH=native` 仅构建本机架构），使用临时本地签名，未进行 Apple 公证。仓库不包含预置的个人配置或已打包应用。
+本地命令生成 Universal 应用（可用 `DEVSTART_MACOS_ARCH=native` 仅构建本机架构），默认使用临时签名。正式 Actions 发布另需 Developer ID 签名、Apple 公证、票据装订和 Gatekeeper 验证，配置见 [macOS 签名与公证](docs/macos-signing.md)。仓库不包含预置的个人配置或已打包应用。
 
 ## AI / API / MCP
 

@@ -30,6 +30,8 @@ pub const METHODS: &[&str] = &[
     "git.branches",
     "git.history",
     "git.switch",
+    "git.merge",
+    "git.restore_version",
     "editor.list",
     "editor.open",
     "editor.read",
@@ -257,8 +259,8 @@ pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, Strin
             .to_owned();
             let files = if method == "git.commit" {
                 let values = p["files"].as_array().ok_or("files must be an array")?;
-                if values.len() > 1000 {
-                    return Err("Select at most 1000 files".into());
+                if values.len() > 10000 {
+                    return Err("Select at most 10000 files".into());
                 }
                 values
                     .iter()
@@ -279,6 +281,30 @@ pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, Strin
                 "git.pull" => actions::pull(&path),
                 "git.restore" => actions::restore(&path, file.as_deref().unwrap(), &backup),
                 _ => actions::command(&path, &text),
+            })?;
+            Ok(json!({"job_id":id,"state":"running"}))
+        }
+        "git.restore_version" => {
+            config::fields(p, &["project_id", "commit", "branch", "expected_head"])?;
+            let path = config::project(s, config::id(p, "project_id")?)?
+                .path
+                .clone();
+            let commit = config::text(p, "commit")?.to_owned();
+            let branch = config::text(p, "branch")?.to_owned();
+            let head = config::text(p, "expected_head")?.to_owned();
+            let id = crate::git_jobs::start(move || {
+                crate::git_workspace::version_restore::restore(&path, &commit, &branch, &head)
+            })?;
+            Ok(json!({"job_id":id,"state":"running"}))
+        }
+        "git.merge" => {
+            config::fields(p, &["project_id", "source", "target"])?;
+            let project = config::project(s, config::id(p, "project_id")?)?;
+            let path = project.path.clone();
+            let source = config::text(p, "source")?.to_owned();
+            let target = config::text(p, "target")?.to_owned();
+            let id = crate::git_jobs::start(move || {
+                crate::git_workspace::merging::merge(&path, &source, &target)
             })?;
             Ok(json!({"job_id":id,"state":"running"}))
         }

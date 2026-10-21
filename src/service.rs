@@ -151,6 +151,23 @@ impl Service {
         self.commit(next)?;
         Ok(preferences)
     }
+    /// First-discovery learning never overrides a later explicit user preference or Auto mode.
+    pub fn remember_commit_agent(
+        &mut self,
+        requested: crate::preferences::CommitAgent,
+        used: crate::preferences::CommitAgent,
+    ) -> Result<bool, String> {
+        use crate::preferences::CommitAgent;
+        if requested != CommitAgent::Discover || self.catalog.preferences.commit_agent != requested
+        {
+            return Ok(false);
+        }
+        if matches!(used, CommitAgent::Discover | CommitAgent::Auto) {
+            return Err("A concrete successful agent is required".into());
+        }
+        self.update_preferences(serde_json::json!({"commit_agent":used}))?;
+        Ok(true)
+    }
     pub fn import_profile(&mut self, path: &Path) -> Result<(), String> {
         let profile: crate::profile::Profile =
             serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)

@@ -161,6 +161,36 @@ impl DevStart {
                 .on_hover_text(tr("返回工作区"))
                 .clicked();
         });
+        if let (Some(inspection), Some(details)) =
+            (&self.git_page.commit_files, &self.git_page.details)
+        {
+            let enabled = !busy && !details.repository.branch.starts_with("detached ");
+            if ui
+                .add_enabled(
+                    enabled,
+                    egui::Button::new(button_label(
+                        ui,
+                        &format!("{} {}", icon::ARROW_COUNTER_CLOCKWISE, tr("恢复到当前版本")),
+                        enabled,
+                    )),
+                )
+                .on_hover_text(tr(
+                    "将所选历史版本恢复为当前分支的最新本地提交，不修改远程；执行前需确认",
+                ))
+                .on_hover_cursor(if enabled {
+                    egui::CursorIcon::PointingHand
+                } else {
+                    egui::CursorIcon::Default
+                })
+                .clicked()
+            {
+                self.git_page.confirm = Some(Action::RestoreVersion(
+                    inspection.commit.id.clone(),
+                    details.repository.branch.clone(),
+                    details.repository.version.clone(),
+                ));
+            }
+        }
         if let Some(inspection) = &self.git_page.commit_files {
             ui.label(RichText::new(&inspection.commit.subject).strong());
             ui.label(
@@ -223,7 +253,7 @@ impl DevStart {
                                         .min_size(Vec2::new(0.0, 26.0)),
                                 )
                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .on_hover_text(&file.tooltip);
+                                .on_hover_ui(|ui| file_preview_tooltip(ui, &file.full_path));
                             if response.clicked() {
                                 self.git_page.selected_commit_file = Some(file.path.clone());
                             }

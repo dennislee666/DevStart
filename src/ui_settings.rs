@@ -45,6 +45,17 @@ impl DevStart {
                         });
                 });
                 ui.add_space(20.0);
+                section(ui, tr("提交备注"));
+                setting_row(ui, tr("本地 AI 工具"), |ui| {
+                    use crate::preferences::CommitAgent;
+                    egui::ComboBox::from_id_salt("commit-message-agent").selected_text(tr(draft.commit_agent.label())).width(240.0).show_ui(ui, |ui| {
+                        for agent in [CommitAgent::Discover, CommitAgent::Auto, CommitAgent::Codex, CommitAgent::Claude, CommitAgent::Cursor] {
+                            ui.selectable_value(&mut draft.commit_agent, agent, tr(agent.label()));
+                        }
+                    });
+                });
+                ui.label(RichText::new(tr("使用已安装并登录的本地命令行工具；自动选择并记住会保存首次成功的工具，自动模式每次重新检测。")).small().color(tone(self.light, MUTED)));
+                ui.add_space(20.0);
                 section(ui, tr("外观"));
                 setting_row(ui, tr("主题"), |ui| {
                     ui.selectable_value(&mut draft.theme, Theme::Dark, tr("深色"));

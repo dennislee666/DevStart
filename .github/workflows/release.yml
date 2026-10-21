@@ -13,9 +13,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   release:
-    if: github.event.repository.private == false
+    if: github.event.repository.private == false && github.ref == 'refs/heads/open-source'
     runs-on: macos-latest
-    timeout-minutes: 50
+    timeout-minutes: 90
     permissions:
       contents: write
     env:
@@ -24,6 +24,18 @@ jobs:
       CARGO_NET_RETRY: '0'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Check required signing configuration
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: python3 scripts/sign-notarize-macos.py --check-config
       - name: Install Rust and both macOS targets
         shell: bash
         run: |
@@ -46,12 +58,13 @@ jobs:
       - name: Verify public source
         run: |
           python3 scripts/test_publish_release.py
+          python3 scripts/test_sign_notarize.py
           cargo fmt --check
           cargo clippy --locked --all-targets --no-default-features -- -D warnings
           cargo test --locked --no-default-features
       - name: Package Universal app
         run: bash scripts/package-macos.sh --no-default-features
-      - name: Verify bundle and create downloads
+      - name: Verify the universal app before signing
         shell: bash
         run: |
           set -euo pipefail
@@ -63,15 +76,28 @@ jobs:
           codesign --verify --deep --strict "$app"
           xcrun vtool -show-build "$binary"
           python3 scripts/verify-api.py "$binary"
-          mkdir -p release-assets "$RUNNER_TEMP/dmg-root"
-          cp -R "$app" "$RUNNER_TEMP/dmg-root/DevStart.app"
-          ln -s /Applications "$RUNNER_TEMP/dmg-root/Applications"
-          hdiutil create -volname DevStart -srcfolder "$RUNNER_TEMP/dmg-root" -format UDZO -ov release-assets/DevStart-1.0.0-macOS-universal.dmg
-          ditto -c -k --sequesterRsrc --keepParent "$app" release-assets/DevStart-1.0.0-macOS-universal.zip
-          hdiutil verify release-assets/DevStart-1.0.0-macOS-universal.dmg
-          unzip -tq release-assets/DevStart-1.0.0-macOS-universal.zip
-          (cd release-assets && shasum -a 256 *.dmg *.zip > SHA256SUMS.txt)
+      - name: Sign, notarize, staple and verify installable downloads
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          python3 scripts/sign-notarize-macos.py
           python3 scripts/publish-release.py release-assets --check-only
+      - name: Upload notarization diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DevStart-notarization-diagnostics
+          path: ${{ runner.temp }}/devstart-notary-diagnostics/*
+          if-no-files-found: ignore
+          retention-days: 7
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: DevStart-1.0.0-macOS-universal

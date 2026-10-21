@@ -12,6 +12,11 @@ pub struct Change {
     pub status: String,
 }
 impl Change {
+    /// Resolve repository-relative Git paths for presentation without exposing porcelain codes.
+    pub fn preview_path(&self, repository: &Path) -> String {
+        repository.join(&self.path).display().to_string()
+    }
+
     /// Translate porcelain states for display; retain the original code for API consumers.
     pub fn status_label(&self) -> &'static str {
         match self.status.as_str() {
@@ -59,8 +64,8 @@ pub fn changes(path: &Path) -> Result<Vec<Change>, String> {
     Ok(result)
 }
 fn selected(path: &Path, files: &[String]) -> Result<Vec<String>, String> {
-    if files.len() > 1000 {
-        return Err("Select at most 1000 files".into());
+    if files.len() > 10000 {
+        return Err("Select at most 10000 files".into());
     }
     if files.is_empty() {
         return Err("Select at least one changed file".into());
@@ -153,6 +158,35 @@ fn text_patch(patch: String) -> Result<String, String> {
     }
     Ok(patch)
 }
+struct CommitPathspec(PathBuf);
+impl CommitPathspec {
+    fn new(files: &[String]) -> Result<Self, String> {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let path = std::env::temp_dir().join(format!(
+            "devstart-commit-paths-{}",
+            crate::model::unique_id()
+        ));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| e.to_string())?;
+        let guard = Self(path);
+        for path in files {
+            file.write_all(path.as_bytes())
+                .and_then(|_| file.write_all(&[0]))
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(guard)
+    }
+}
+impl Drop for CommitPathspec {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
 pub fn commit(path: &Path, message: &str, files: &[String]) -> Result<String, String> {
     let _guard = mutation_guard(path)?;
     commit_unlocked(path, message, files)
@@ -167,11 +201,18 @@ pub(super) fn commit_unlocked(
     }
     let root = root(path)?;
     let files = selected(&root, files)?;
-    let mut add = vec!["add", "-A", "--"];
-    add.extend(files.iter().map(String::as_str));
-    git(&root, &add)?;
-    let mut args = vec!["commit", "--only", "-m", message, "--"];
-    args.extend(files.iter().map(String::as_str));
+    // NUL-delimited pathspecs avoid argv limits when default-selecting large change lists.
+    let pathspec = CommitPathspec::new(&files)?;
+    let argument = format!("--pathspec-from-file={}", pathspec.0.display());
+    git(&root, &["add", "-A", &argument, "--pathspec-file-nul"])?;
+    let args = [
+        "commit",
+        "--only",
+        "-m",
+        message,
+        &argument,
+        "--pathspec-file-nul",
+    ];
     let (out, err) = git_output(&root, &args).map_err(|e| {
         format!("{e}\nSelected files remain staged; inspect status before retrying.")
     })?;

@@ -3,10 +3,18 @@ use serde::Serialize;
 use std::os::unix::process::CommandExt;
 #[path = "git_actions.rs"]
 pub mod actions;
+#[path = "git_ai_message.rs"]
+pub mod ai_message;
 #[path = "git_commit.rs"]
 pub mod commits;
+#[path = "git_merge.rs"]
+pub mod merging;
 #[path = "git_remotes.rs"]
 pub mod remotes;
+#[path = "git_selection.rs"]
+pub mod selection;
+#[path = "git_restore_version.rs"]
+pub mod version_restore;
 use std::{
     io::Read,
     path::{Path, PathBuf},
@@ -485,6 +493,110 @@ mod tests {
         );
         assert!(switch(&repo.0, "--discard-changes").is_err());
         assert!(history(&repo.0, 0, 101).is_err());
+    }
+    #[test]
+    fn large_selected_file_lists_use_literal_nul_pathspecs() {
+        let repo = Repo::new();
+        repo.commit("base");
+        git(&repo.0, &["config", "user.name", "Test"]).unwrap();
+        git(&repo.0, &["config", "user.email", "test@example.invalid"]).unwrap();
+        git(&repo.0, &["config", "commit.gpgsign", "false"]).unwrap();
+        let mut files = vec![];
+        for index in 0..1100 {
+            let name = format!("{} {index}.txt", "x".repeat(230));
+            std::fs::write(repo.0.join(&name), "new").unwrap();
+            files.push(name);
+        }
+        actions::commit(&repo.0, "many selected files", &files).unwrap();
+        assert!(actions::changes(&repo.0).unwrap().is_empty());
+        assert_eq!(
+            git(&repo.0, &["ls-tree", "--name-only", "HEAD"])
+                .unwrap()
+                .lines()
+                .count(),
+            1101
+        );
+    }
+    #[test]
+    fn historical_restore_creates_pushable_commit_and_preserves_remote_and_local_work() {
+        let repo = Repo::new();
+        git(&repo.0, &["config", "user.name", "Test"]).unwrap();
+        git(&repo.0, &["config", "user.email", "test@example.invalid"]).unwrap();
+        git(&repo.0, &["config", "commit.gpgsign", "false"]).unwrap();
+        repo.commit("old version");
+        let old = git(&repo.0, &["rev-parse", "HEAD"]).unwrap();
+        repo.commit("latest version");
+        std::fs::write(repo.0.join("added.txt"), "later file").unwrap();
+        git(&repo.0, &["add", "added.txt"]).unwrap();
+        git(&repo.0, &["commit", "-m", "add later file"]).unwrap();
+        let before = git(&repo.0, &["rev-parse", "HEAD"]).unwrap();
+        git(
+            &repo.0,
+            &["update-ref", "refs/remotes/origin/main", &before],
+        )
+        .unwrap();
+        std::fs::write(repo.0.join("file.txt"), "unsaved work").unwrap();
+        assert!(version_restore::restore(&repo.0, &old, "main", &before).is_err());
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("file.txt")).unwrap(),
+            "unsaved work"
+        );
+        git(&repo.0, &["restore", "file.txt"]).unwrap();
+        assert!(version_restore::restore(&repo.0, &old, "wrong", &before).is_err());
+        version_restore::restore(&repo.0, &old, "main", &before).unwrap();
+        assert_eq!(
+            git(&repo.0, &["rev-parse", "HEAD^{tree}"]).unwrap(),
+            git(&repo.0, &["rev-parse", &format!("{old}^{{tree}}")]).unwrap()
+        );
+        assert_eq!(git(&repo.0, &["rev-parse", "HEAD^"]).unwrap(), before);
+        assert_eq!(
+            git(&repo.0, &["rev-parse", "refs/remotes/origin/main"]).unwrap(),
+            before
+        );
+        assert!(!repo.0.join("added.txt").exists());
+        assert!(actions::changes(&repo.0).unwrap().is_empty());
+        assert!(
+            !git(&repo.0, &["for-each-ref", "refs/devstart/version-backups"])
+                .unwrap()
+                .is_empty()
+        );
+    }
+    #[test]
+    fn local_merge_switches_destination_and_rejects_dirty_or_invalid_plans() {
+        let repo = Repo::new();
+        repo.commit("base");
+        git(&repo.0, &["config", "user.name", "Test"]).unwrap();
+        git(&repo.0, &["config", "user.email", "test@example.invalid"]).unwrap();
+        git(&repo.0, &["config", "commit.gpgsign", "false"]).unwrap();
+        git(&repo.0, &["branch", "feature"]).unwrap();
+        switch(&repo.0, "feature").unwrap();
+        repo.commit("feature edit");
+        std::fs::write(repo.0.join("untracked.txt"), "keep").unwrap();
+        assert!(merging::merge(&repo.0, "feature", "main").is_err());
+        assert_eq!(
+            git(&repo.0, &["branch", "--show-current"]).unwrap(),
+            "feature"
+        );
+        std::fs::remove_file(repo.0.join("untracked.txt")).unwrap();
+        assert!(merging::merge(&repo.0, "main", "main").is_err());
+        assert!(merging::merge(&repo.0, "missing", "main").is_err());
+        merging::merge(&repo.0, "feature", "main").unwrap();
+        assert_eq!(git(&repo.0, &["branch", "--show-current"]).unwrap(), "main");
+        assert_eq!(
+            git(&repo.0, &["rev-parse", "main"]).unwrap(),
+            git(&repo.0, &["rev-parse", "feature"]).unwrap()
+        );
+        repo.commit("main conflicting edit");
+        switch(&repo.0, "feature").unwrap();
+        repo.commit("feature conflicting edit");
+        let error = merging::merge(&repo.0, "feature", "main").unwrap_err();
+        assert!(error.contains("main"));
+        assert!(
+            !git(&repo.0, &["diff", "--name-only", "--diff-filter=U"])
+                .unwrap()
+                .is_empty()
+        );
+        assert!(repo.0.join(".git/MERGE_HEAD").exists());
     }
     #[test]
     fn submit_stops_on_autostash_conflicts_before_commit_or_push() {
