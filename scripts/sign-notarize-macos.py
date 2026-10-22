@@ -11,6 +11,7 @@ import re
 import secrets
 import subprocess
 import tempfile
+import time
 
 
 def configuration(env):
@@ -57,18 +58,40 @@ def run(arguments, *, allow_failure=False):
 
 def notarize(artifact, authentication, diagnostics):
     print(f'Notarizing {artifact.name}', flush=True)
-    result = run(['xcrun', 'notarytool', 'submit', artifact, *authentication, '--output-format', 'json', '--wait', '--timeout', '20m'], allow_failure=True)
+    result = run(['xcrun', 'notarytool', 'submit', artifact, *authentication, '--output-format', 'json', '--no-wait'], allow_failure=True)
     try:
-        report = json.loads(result.stdout)
+        submission = json.loads(result.stdout)
     except json.JSONDecodeError:
-        raise RuntimeError(f'Notarization did not return JSON: {result.stderr[-3000:]}') from None
+        raise RuntimeError(f'Notarization submission did not return JSON: {(result.stderr or result.stdout)[-3000:]}') from None
+    submission_id = submission.get('id')
+    if result.returncode or not submission_id:
+        raise RuntimeError(f'Notarization submission failed: {submission.get("message", result.stderr[-3000:])}')
     diagnostics.mkdir(parents=True, exist_ok=True)
-    (diagnostics / (artifact.name + '.json')).write_text(json.dumps(report, indent=2))
-    if result.returncode or report.get('status') != 'Accepted':
-        if report.get('id'):
-            run(['xcrun', 'notarytool', 'log', report['id'], *authentication, diagnostics / (artifact.name + '.log.json')], allow_failure=True)
-        raise RuntimeError(f'Notarization not accepted: status={report.get("status")}, id={report.get("id")}; inspect notarization diagnostics')
-    print(f'Notarization accepted: {report["id"]}', flush=True)
+    report_path = diagnostics / (artifact.name + '.json')
+    deadline = time.monotonic() + 35 * 60
+    last_status = None
+    while True:
+        result = run(['xcrun', 'notarytool', 'info', submission_id, *authentication, '--output-format', 'json'], allow_failure=True)
+        try:
+            report = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            raise RuntimeError(f'Notarization status query failed for {submission_id}: {(result.stderr or result.stdout)[-3000:]}') from None
+        report_path.write_text(json.dumps(report, indent=2))
+        if result.returncode:
+            raise RuntimeError(f'Notarization status query failed for {submission_id}: {report.get("message", result.stderr[-3000:])}')
+        status = report.get('status')
+        if status != last_status:
+            print(f'Notarization {artifact.name}: {status or "unknown status"} ({submission_id})', flush=True)
+            last_status = status
+        if status == 'Accepted':
+            print(f'Notarization accepted: {submission_id}', flush=True)
+            return
+        if status != 'In Progress':
+            run(['xcrun', 'notarytool', 'log', submission_id, *authentication, diagnostics / (artifact.name + '.log.json')], allow_failure=True)
+            raise RuntimeError(f'Notarization not accepted: status={status}, id={submission_id}; inspect notarization diagnostics')
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f'Notarization still in progress after 35 minutes: id={submission_id}; inspect {report_path} and resume this submission instead of resubmitting it')
+        time.sleep(30)
 
 
 def build(app, assets):
