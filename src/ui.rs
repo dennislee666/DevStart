@@ -955,6 +955,13 @@ impl DevStart {
                             );
                         });
                     }
+                    if group_projects.iter().any(|project| !project.scripts.is_empty()) {
+                        ui.indent(("group-launch-header", group.id), |ui| {
+                            ui.indent("launch-options", |ui| {
+                                launch_header(ui, launch_columns);
+                            });
+                        });
+                    }
                     for project in &group_projects {
                         ui.indent(("project", project.id), |ui| {
                             ui.push_id(project.id, |ui| {
@@ -1108,11 +1115,11 @@ impl DevStart {
                                         },
                                     );
                                 });
+                                ui.add_space(2.0);
+                                ui.separator();
+                                ui.add_space(2.0);
                                 if self.expanded.contains(&project.id) {
                                     ui.indent("launch-options", |ui| {
-                                        if !project.scripts.is_empty() {
-                                            launch_header(ui, launch_columns);
-                                        }
                                         for script in &project.scripts {
                                             self.launch_row(ui, script, launch_columns);
                                         }
