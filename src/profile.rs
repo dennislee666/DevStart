@@ -113,6 +113,7 @@ pub fn merge(catalog: &Catalog, profile: Profile) -> Result<Catalog, String> {
         }
         let configured = Project {
             description: String::new(),
+            display_name: old.as_ref().and_then(|p| p.display_name.clone()),
             id,
             name: project.name,
             path,

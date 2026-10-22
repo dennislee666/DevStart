@@ -393,6 +393,7 @@ mod tests {
         let repo = Repo::new();
         let project = crate::model::Project {
             id: 1,
+            display_name: None,
             name: "Demo".into(),
             path: repo.0.clone(),
             group: 1,

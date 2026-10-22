@@ -651,6 +651,7 @@ impl ExternalServer {
         let project = crate::model::Project {
             description: String::new(),
             id: 1,
+            display_name: None,
             name: "External fixture".into(),
             path: f.0.canonicalize().unwrap(),
             group: 1,
@@ -788,6 +789,7 @@ fn owned_restart_is_serial_and_replaces_the_run() {
     let project = crate::model::Project {
         description: String::new(),
         id: 1,
+        display_name: None,
         name: "Fixture".into(),
         path: f.0.clone(),
         group: 1,
@@ -1200,6 +1202,7 @@ fn fixture_project(f: &Fixture, script: Script) -> crate::model::Project {
     crate::model::Project {
         description: String::new(),
         id: 1,
+        display_name: None,
         name: "Lifecycle fixture".into(),
         path: f.0.canonicalize().unwrap(),
         group: 1,
@@ -2861,6 +2864,7 @@ fn in_console_restart_forces_term_ignoring_process_then_launches_replacement() {
     let project = crate::model::Project {
         description: String::new(),
         id: 1,
+        display_name: None,
         name: "Fixture".into(),
         path: f.0.clone(),
         group: 1,
@@ -3517,6 +3521,7 @@ fn console_terminal_resolves_project_root_instead_of_launch_working_directory() 
     script.cwd = nested;
     service.catalog.projects.push(crate::model::Project {
         id: 3,
+        display_name: None,
         name: "Renamed example".into(),
         description: String::new(),
         path: f.0.clone(),

@@ -69,6 +69,8 @@ pub struct Script {
 pub struct Project {
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
     pub id: u64,
     pub name: String,
     pub path: PathBuf,
@@ -77,6 +79,24 @@ pub struct Project {
     pub scripts: Vec<Script>,
     #[serde(default)]
     pub explicit_scripts: bool,
+}
+impl Project {
+    pub fn display_label(&self) -> &str {
+        self.display_name.as_deref().unwrap_or(&self.name)
+    }
+
+    pub fn validate_display_name(value: Option<String>) -> Result<Option<String>, String> {
+        use unicode_segmentation::UnicodeSegmentation;
+        let Some(value) = value else { return Ok(None) };
+        let value = value.trim();
+        if value.is_empty()
+            || value.chars().any(char::is_control)
+            || value.graphemes(true).count() > 50
+        {
+            return Err("项目显示名需要 1–50 个字符，且不能包含换行或控制字符".into());
+        }
+        Ok(Some(value.to_owned()))
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Catalog {

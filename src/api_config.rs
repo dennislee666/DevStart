@@ -294,8 +294,12 @@ pub fn handle(s: &mut Service, method: &str, p: &Value) -> Result<Value, String>
             if method == "scripts.update"
                 && p["patch"].as_object().is_some_and(|v| {
                     !v.is_empty()
-                        && v.keys()
-                            .all(|key| matches!(key.as_str(), "display_name" | "description"))
+                        && v.keys().all(|key| {
+                            matches!(
+                                key.as_str(),
+                                "display_name" | "project_display_name" | "description"
+                            )
+                        })
                 })
             {
                 let name = display_name.as_ref().map(|(_, value)| value.clone());
@@ -303,7 +307,15 @@ pub fn handle(s: &mut Service, method: &str, p: &Value) -> Result<Value, String>
                     .get("description")
                     .map(|v| v.as_str().map(str::to_owned).ok_or("description需要字符串"))
                     .transpose()?;
-                if description.is_none() {
+                if p["patch"].get("project_display_name").is_some() {
+                    let project_name: Option<String> =
+                        serde_json::from_value(p["patch"]["project_display_name"].clone())
+                            .map_err(|e| e.to_string())?;
+                    let description = description.unwrap_or_else(|| {
+                        s.script(sid).expect("validated script").description.clone()
+                    });
+                    s.update_launch_info(sid, name, Some(project_name), description)?;
+                } else if description.is_none() {
                     s.set_display_name(sid, name.expect("display-name metadata patch"))?;
                 } else {
                     s.update_script_info(sid, name, description)?;

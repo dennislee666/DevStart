@@ -475,6 +475,7 @@ pub fn apply(catalog: &Catalog, job: Job, ids: &[u64]) -> Result<(Catalog, usize
         let id = next.id();
         next.projects.push(Project {
             id,
+            display_name: None,
             name: project.name,
             path: project.path,
             group,

@@ -270,6 +270,7 @@ impl Service {
             .into_owned();
         next.projects.push(Project {
             description: description.into(),
+            display_name: None,
             id,
             name: label.unwrap_or(&name).into(),
             path,
@@ -405,6 +406,40 @@ impl Service {
             script.description = text.clone();
             script.description_override = Some(text);
         }
+        self.commit(next)?;
+        self.sync_display_names();
+        Ok(())
+    }
+    pub fn update_launch_info(
+        &mut self,
+        id: u64,
+        name: Option<Option<String>>,
+        project_name: Option<Option<String>>,
+        description: String,
+    ) -> Result<(), String> {
+        let name = name.map(Script::validate_display_name).transpose()?;
+        let project_name = project_name
+            .map(Project::validate_display_name)
+            .transpose()?;
+        let mut next = self.catalog.clone();
+        let project = next
+            .projects
+            .iter_mut()
+            .find(|p| p.scripts.iter().any(|s| s.id == id))
+            .ok_or("启动项不存在")?;
+        if let Some(project_name) = project_name {
+            project.display_name = project_name;
+        }
+        let script = project
+            .scripts
+            .iter_mut()
+            .find(|s| s.id == id)
+            .ok_or("启动项不存在")?;
+        if let Some(name) = name {
+            script.display_name = name;
+        }
+        script.description = description.clone();
+        script.description_override = Some(description);
         self.commit(next)?;
         self.sync_display_names();
         Ok(())
@@ -750,11 +785,11 @@ impl Service {
                     .map(|s| (p, s))
             }) {
                 if run.external.is_some() {
-                    run.launch_name = format!("{} · 外部运行", project.name);
-                    run.title = format!("{} / 外部运行（参数未识别）", project.name);
+                    run.launch_name = format!("{} · 外部运行", project.display_label());
+                    run.title = format!("{} / 外部运行（参数未识别）", project.display_label());
                 } else {
                     run.launch_name = script.display_label().to_owned();
-                    run.title = format!("{} / {}", project.name, script.display_label());
+                    run.title = format!("{} / {}", project.display_label(), script.display_label());
                 }
             }
         }
@@ -810,8 +845,10 @@ impl Service {
                 .iter()
                 .find(|p| p.scripts.iter().any(|s| s.id == run.script_id))
             {
-                tab.full_name =
-                    locale.format("{project} · 外部运行", &[("project", project.name.clone())]);
+                tab.full_name = locale.format(
+                    "{project} · 外部运行",
+                    &[("project", project.display_label().to_owned())],
+                );
                 tab.label = crate::presentation::tab_label(&tab.full_name);
                 tab.tooltip = crate::presentation::run_tooltip(
                     &tab.full_name,
@@ -1011,6 +1048,7 @@ impl Service {
             .iter()
             .filter_map(|p| {
                 let project_match = p.name.to_lowercase().contains(&q)
+                    || p.display_label().to_lowercase().contains(&q)
                     || p.path.to_string_lossy().to_lowercase().contains(&q);
                 let mut visible = p.clone();
                 visible.scripts.retain(|s| {
@@ -1064,7 +1102,7 @@ impl Service {
                     rows.push(LaunchTableRow {
                         group,
                         project_id: project.id,
-                        project_name: project.name,
+                        project_name: project.display_label().to_owned(),
                         project_path: project.path,
                         project_favorite: project.favorite,
                         script: None,
@@ -1072,10 +1110,11 @@ impl Service {
                 }
                 continue;
             }
+            let project_name = project.display_label().to_owned();
             rows.extend(project.scripts.into_iter().map(|script| LaunchTableRow {
                 group: group.clone(),
                 project_id: project.id,
-                project_name: project.name.clone(),
+                project_name: project_name.clone(),
                 project_path: project.path.clone(),
                 project_favorite: project.favorite,
                 script: Some(script),

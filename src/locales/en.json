@@ -169,6 +169,7 @@
   "关闭 Console": "Close Console",
   "正在停止并关闭": "Stopping and closing",
   "显示名": "Display name",
+  "启动项名称": "Launch item name",
   "显示名需要 1–50 个字符，且不能包含换行或控制字符": "Display name must contain 1–50 characters without line breaks or control characters",
   "暂无启动记录": "No launch history",
   "暂无启动项": "No launches",

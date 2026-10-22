@@ -40,6 +40,58 @@ pub fn local_timestamp(seconds: u64) -> String {
         local.tm_sec
     )
 }
+/// Runtime headers omit the year for timestamps in the current local calendar year.
+pub fn runtime_timestamp(seconds: u64) -> String {
+    let Ok(seconds) = libc::time_t::try_from(seconds) else {
+        return "时间超出范围".into();
+    };
+    let mut local = std::mem::MaybeUninit::<libc::tm>::uninit();
+    if unsafe { libc::localtime_r(&seconds, local.as_mut_ptr()) }.is_null() {
+        return "时间未知".into();
+    }
+    let local = unsafe { local.assume_init() };
+    let now_seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let current_year = libc::time_t::try_from(now_seconds)
+        .ok()
+        .and_then(|now| {
+            let mut current = std::mem::MaybeUninit::<libc::tm>::uninit();
+            (!unsafe { libc::localtime_r(&now, current.as_mut_ptr()) }.is_null())
+                .then(|| unsafe { current.assume_init() })
+        })
+        .map(|current| current.tm_year);
+    if current_year == Some(local.tm_year) {
+        format!(
+            "{:02}-{:02} {:02}:{:02}:{:02}",
+            local.tm_mon + 1,
+            local.tm_mday,
+            local.tm_hour,
+            local.tm_min,
+            local.tm_sec
+        )
+    } else {
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            local.tm_year + 1900,
+            local.tm_mon + 1,
+            local.tm_mday,
+            local.tm_hour,
+            local.tm_min,
+            local.tm_sec
+        )
+    }
+}
+/// Clock-style duration used in the compact run headers.
+pub fn elapsed_clock(seconds: u64) -> String {
+    format!(
+        "{:02}:{:02}:{:02}",
+        seconds / 3600,
+        seconds / 60 % 60,
+        seconds % 60
+    )
+}
 /// ps lstart is local time; numeric validation and mktime round-trip reject malformed evidence.
 pub fn process_start(text: &str) -> Result<SystemTime, String> {
     let parts: Vec<_> = text.split_whitespace().collect();
@@ -126,19 +178,18 @@ impl crate::runtime::Run {
             .started_at
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok());
         let started_at = epoch.map(|t| local_timestamp(t.as_secs()));
+        let display_timestamp = epoch.map(|t| runtime_timestamp(t.as_secs()));
         let started_at_unix_ms = epoch.and_then(|t| t.as_millis().try_into().ok());
-        let display = if let Some(timestamp) = &started_at {
-            format!("{timestamp} - {elapsed_display}")
+        let elapsed_clock = elapsed_clock(elapsed_seconds);
+        let display = if let Some(timestamp) = &display_timestamp {
+            format!("{timestamp} - {elapsed_clock}")
         } else if self.external.is_some() {
             locale.format(
                 "启动时间未知 - 已监测 {elapsed}",
-                &[("elapsed", elapsed_display.clone())],
+                &[("elapsed", elapsed_clock.clone())],
             )
         } else {
-            locale.format(
-                "未启动 - {elapsed}",
-                &[("elapsed", elapsed_display.clone())],
-            )
+            locale.format("未启动 - {elapsed}", &[("elapsed", elapsed_clock.clone())])
         };
         RunTiming {
             started_at_unix_ms,

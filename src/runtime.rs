@@ -158,7 +158,7 @@ impl Runtime {
             &path,
             format!(
                 "[dev start] {} / {}\n[command] {}\n[cwd] {}\n",
-                project.name,
+                project.display_label(),
                 script.name,
                 script.invocation(),
                 script.cwd.display()
@@ -175,7 +175,7 @@ impl Runtime {
             close_requested: false,
             id,
             script_id: script.id,
-            title: format!("{} / {}", project.name, script.display_label()),
+            title: format!("{} / {}", project.display_label(), script.display_label()),
             command: script.invocation(),
             display_command: script.tab_command(),
             launch_name: script.display_label().to_owned(),
@@ -208,7 +208,7 @@ impl Runtime {
             })();
             let _ = tx.send(Event::Prepared(Box::new(Prepared {
                 id,
-                project: project.name,
+                project: project.display_label().to_owned(),
                 script,
                 logs,
                 result,

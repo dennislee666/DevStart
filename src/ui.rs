@@ -1,6 +1,7 @@
 use crate::appearance::{
-    ACCENT, BG, BORDER, GREEN, MUTED, RED, RUNNING_BADGE_BG, RUNNING_GREEN, RUNNING_ROW_DARK,
-    RUNNING_ROW_LIGHT, SIDE, STARTING_BLUE, SURFACE,
+    ACCENT, BG, BORDER, GREEN, MUTED, RED, RUNNING_BADGE_BG, RUNNING_BADGE_BORDER,
+    RUNNING_BADGE_FG, RUNNING_BADGE_LIGHT_BG, RUNNING_BADGE_LIGHT_BORDER, RUNNING_BADGE_LIGHT_FG,
+    RUNNING_GREEN, RUNNING_ROW_DARK, RUNNING_ROW_LIGHT, SIDE, STARTING_BLUE, SURFACE,
 };
 use crate::i18n::{tf, tf_count, tr};
 use crate::preferences::Preferences;
@@ -40,9 +41,12 @@ mod terminal_ui;
 struct ScriptInfoDraft {
     id: u64,
     name: String,
+    project_name: String,
     description: String,
     default_name: String,
     reset_name: bool,
+    default_project_name: String,
+    reset_project_name: bool,
 }
 #[derive(Clone, Copy)]
 enum CloseRunTarget {
@@ -1025,7 +1029,7 @@ impl DevStart {
                                     let name_clicked = ui
                                         .add(
                                             egui::Button::new(
-                                                RichText::new(&project.name).strong(),
+                                                RichText::new(project.display_label()).strong(),
                                             )
                                             .frame(false),
                                         )
@@ -1188,7 +1192,7 @@ impl DevStart {
             .show(ui, |ui| {
                 let spacing = ui.spacing().item_spacing.x;
                 let widths = launch_table_column_widths(ui.available_width(), spacing);
-                let table_width = widths.iter().sum::<f32>() + spacing * 7.0;
+                let table_width = widths.iter().sum::<f32>() + spacing * 6.0;
                 ui.set_min_width(table_width);
                 ui.set_max_width(table_width);
                 if self.filter == Filter::All {
@@ -1200,7 +1204,7 @@ impl DevStart {
                     for (label, width, column) in [
                         (tr("启动项名"), widths[0], None),
                         (
-                            tr("项目名"),
+                            tr("项目"),
                             widths[1],
                             Some(service::LaunchSortColumn::Project),
                         ),
@@ -1209,15 +1213,14 @@ impl DevStart {
                             widths[2],
                             Some(service::LaunchSortColumn::Group),
                         ),
-                        (tr("路径"), widths[3], None),
-                        (tr("启动命令"), widths[4], None),
+                        (tr("启动命令"), widths[3], None),
                         (
                             tr("状态"),
-                            widths[5],
+                            widths[4],
                             Some(service::LaunchSortColumn::Status),
                         ),
-                        (tr("端口"), widths[6], Some(service::LaunchSortColumn::Port)),
-                        (tr("操作"), widths[7], None),
+                        (tr("端口"), widths[5], Some(service::LaunchSortColumn::Port)),
+                        (tr("操作"), widths[6], None),
                     ] {
                         ui.allocate_ui_with_layout(
                             Vec2::new(width, row_height),
@@ -1357,11 +1360,11 @@ impl DevStart {
         &mut self,
         ui: &mut egui::Ui,
         row: &service::LaunchTableRow,
-        widths: [f32; 8],
+        widths: [f32; 7],
     ) {
         let script_id = row.script.as_ref().map(|script| script.id).unwrap_or(0);
         ui.push_id((row.project_id, script_id), |ui| {
-            let row_height = self.preferences().row_height();
+            let row_height = self.preferences().row_height().max(40.0);
             let active = row
                 .script
                 .as_ref()
@@ -1406,11 +1409,11 @@ impl DevStart {
                 .as_ref()
                 .map(crate::model::Script::tab_command)
                 .unwrap_or_else(|| "—".into());
+            let project_path = service::path_label(&row.project_path);
             let text = [
                 launch_name,
                 row.project_name.clone(),
                 crate::i18n::group_name(&row.group).to_owned(),
-                service::path_label(&row.project_path),
                 command,
                 tr(status).to_owned(),
                 port.label.clone(),
@@ -1433,36 +1436,77 @@ impl DevStart {
                     }
                     ui.horizontal(|ui| {
                         for (index, value) in text.iter().enumerate() {
+                            let layout = if index == 1 {
+                                egui::Layout::top_down(egui::Align::Min)
+                                    .with_main_align(egui::Align::Center)
+                            } else {
+                                egui::Layout::left_to_right(egui::Align::Center)
+                            };
                             ui.allocate_ui_with_layout(
                                 Vec2::new(widths[index], row_height),
-                                egui::Layout::left_to_right(egui::Align::Center),
+                                layout,
                                 |ui| {
                                     ui.set_min_width(widths[index]);
-                                    if index == 5 && is_running {
+                                    if index == 1 {
+                                        let name =
+                                            ui.add(
+                                                egui::Label::new(RichText::new(value).color(tone(
+                                                    self.light,
+                                                    crate::appearance::TEXT,
+                                                )))
+                                                .halign(egui::Align::Min)
+                                                .truncate(),
+                                            );
+                                        name.on_hover_text(&row.project_name);
+                                        let path = ui.add(
+                                            egui::Label::new(
+                                                RichText::new(&project_path)
+                                                    .size(10.0)
+                                                    .color(tone(self.light, MUTED)),
+                                            )
+                                            .halign(egui::Align::Min)
+                                            .truncate(),
+                                        );
+                                        path.on_hover_text(row.project_path.display().to_string());
+                                        return;
+                                    }
+                                    if index == 4 && is_running {
+                                        let (badge_bg, badge_fg, badge_border) = if self.light {
+                                            (
+                                                RUNNING_BADGE_LIGHT_BG,
+                                                RUNNING_BADGE_LIGHT_FG,
+                                                RUNNING_BADGE_LIGHT_BORDER,
+                                            )
+                                        } else {
+                                            (
+                                                RUNNING_BADGE_BG,
+                                                RUNNING_BADGE_FG,
+                                                RUNNING_BADGE_BORDER,
+                                            )
+                                        };
                                         egui::Frame::new()
-                                            .fill(RUNNING_BADGE_BG)
-                                            .corner_radius(35.0)
-                                            .inner_margin(egui::Margin::symmetric(6, 2))
+                                            .fill(badge_bg)
+                                            .stroke(egui::Stroke::new(1.0, badge_border))
+                                            .corner_radius(6.0)
+                                            .inner_margin(egui::Margin::symmetric(7, 2))
                                             .show(ui, |ui| {
                                                 ui.label(
-                                                    RichText::new(value)
-                                                        .color(Color32::WHITE)
-                                                        .small(),
+                                                    RichText::new(value).color(badge_fg).small(),
                                                 );
                                             });
                                         return;
                                     }
                                     let label = if index == 0 && failed {
                                         RichText::new(value).color(tone(self.light, RED))
-                                    } else if index == 4 {
+                                    } else if index == 3 {
                                         RichText::new(value)
                                             .monospace()
-                                            .size(11.5)
+                                            .size(10.5)
                                             .color(tone(self.light, MUTED))
                                     } else {
                                         RichText::new(value).color(tone(
                                             self.light,
-                                            if index == 6 {
+                                            if index == 5 {
                                                 MUTED
                                             } else {
                                                 crate::appearance::TEXT
@@ -1482,24 +1526,16 @@ impl DevStart {
                                                 response.on_hover_text(tr("项目暂无启动项"));
                                             }
                                         }
-                                        1 => {
-                                            response.on_hover_text(&row.project_name);
-                                        }
                                         2 => {
                                             response
                                                 .on_hover_text(crate::i18n::group_name(&row.group));
                                         }
                                         3 => {
-                                            response.on_hover_text(
-                                                row.project_path.display().to_string(),
-                                            );
-                                        }
-                                        4 => {
                                             if let Some(script) = &row.script {
                                                 response.on_hover_text(script.tab_command());
                                             }
                                         }
-                                        6 => {
+                                        5 => {
                                             response.on_hover_text(&port.tooltip);
                                         }
                                         _ => {}
@@ -1508,10 +1544,10 @@ impl DevStart {
                             );
                         }
                         ui.allocate_ui_with_layout(
-                            Vec2::new(widths[7], row_height),
+                            Vec2::new(widths[6], row_height),
                             egui::Layout::left_to_right(egui::Align::Center),
                             |ui| {
-                                ui.set_min_width(widths[7]);
+                                ui.set_min_width(widths[6]);
                                 ui.horizontal(|ui| {
                                     self.launch_table_actions(ui, row, active, row_height);
                                 });
@@ -1866,9 +1902,38 @@ impl DevStart {
                     self.script_info = Some(ScriptInfoDraft {
                         id: script.id,
                         name: script.display_label().to_owned(),
+                        project_name: self
+                            .service
+                            .as_ref()
+                            .unwrap()
+                            .catalog
+                            .projects
+                            .iter()
+                            .find(|p| p.scripts.iter().any(|s| s.id == script.id))
+                            .map(|p| p.display_label().to_owned())
+                            .unwrap_or_default(),
                         description: script.description.clone(),
                         default_name: script.name.clone(),
                         reset_name: script.display_name.is_none(),
+                        default_project_name: self
+                            .service
+                            .as_ref()
+                            .unwrap()
+                            .catalog
+                            .projects
+                            .iter()
+                            .find(|p| p.scripts.iter().any(|s| s.id == script.id))
+                            .map(|p| p.name.clone())
+                            .unwrap_or_default(),
+                        reset_project_name: self
+                            .service
+                            .as_ref()
+                            .unwrap()
+                            .catalog
+                            .projects
+                            .iter()
+                            .find(|p| p.scripts.iter().any(|s| s.id == script.id))
+                            .is_some_and(|p| p.display_name.is_none()),
                     });
                     ui.close();
                 }
@@ -2824,10 +2889,16 @@ impl DevStart {
             dialog_ui::window(ctx, tr("修改信息")).open(&mut open).collapsible(false).resizable(false).default_width(440.0).show(ctx,|ui|{
                 dialog_ui::content(ui);
                 ui.horizontal(|ui|{
-                    ui.label(tr("显示名"));
+                    ui.label(tr("启动项名称"));
                     let response=ui.add(egui::TextEdit::singleline(&mut draft.name).desired_width(270.0)).on_hover_text(tr("最多50个字符"));
                     if response.changed(){draft.reset_name=false;}
                     if ui.button(tr("恢复默认")).on_hover_cursor(egui::CursorIcon::PointingHand).clicked(){draft.name=draft.default_name.clone();draft.reset_name=true;}
+                });
+                ui.horizontal(|ui| {
+                    ui.label(tr("项目名"));
+                    let response=ui.add(egui::TextEdit::singleline(&mut draft.project_name).desired_width(270.0));
+                    if response.changed(){draft.reset_project_name=false;}
+                    if ui.button(tr("恢复默认")).on_hover_cursor(egui::CursorIcon::PointingHand).clicked(){draft.project_name=draft.default_project_name.clone();draft.reset_project_name=true;}
                 });
                 ui.label(tr("简介"));
                 ui.add(egui::TextEdit::multiline(&mut draft.description).desired_width(f32::INFINITY).desired_rows(4));
@@ -2835,7 +2906,8 @@ impl DevStart {
                 dialog_ui::actions(ui,|ui|{
                     if ui.button(tr("保存")).on_hover_cursor(egui::CursorIcon::PointingHand).clicked(){
                         let name=if draft.reset_name {None}else{Some(draft.name.clone())};
-                        let result=crate::api::dispatch(self.service.as_mut().unwrap(),"scripts.update",&serde_json::json!({"id":draft.id,"patch":{"display_name":name,"description":draft.description}})).map(|_|());
+                        let project_name=if draft.reset_project_name {None}else{Some(draft.project_name.clone())};
+                        let result=crate::api::dispatch(self.service.as_mut().unwrap(),"scripts.update",&serde_json::json!({"id":draft.id,"patch":{"display_name":name,"project_display_name":project_name,"description":draft.description}})).map(|_|());
                         if result.is_ok(){self.script_info=None;}
                         self.report(result);
                     }
@@ -3368,19 +3440,18 @@ fn launch_widths(width: f32, item_spacing: f32) -> (f32, f32, f32, f32) {
         port,
     )
 }
-fn launch_table_column_widths(width: f32, item_spacing: f32) -> [f32; 8] {
+fn launch_table_column_widths(width: f32, item_spacing: f32) -> [f32; 7] {
     let operation_slots = LAUNCH_ACTION_SLOT_COUNT + 1;
     let operation_width = LAUNCH_ACTION_SLOT_WIDTH * operation_slots as f32
         + item_spacing * (operation_slots - 1) as f32;
-    let data_width = (width - operation_width - item_spacing * 7.0).max(675.0);
+    let data_width = (width - operation_width - item_spacing * 6.0).max(650.0);
     [
-        data_width * 0.15,
         data_width * 0.14,
+        data_width * 0.27,
         data_width * 0.12,
-        data_width * 0.18,
         data_width * 0.24,
-        data_width * 0.08,
-        data_width * 0.09,
+        data_width * 0.10,
+        data_width * 0.13,
         operation_width,
     ]
 }

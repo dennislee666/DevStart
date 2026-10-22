@@ -242,7 +242,7 @@ scripts.update的patch可包含spec的全部字段，额外支持favorite布尔�
 
 启动项增删改只写 DevStart 用户数据目录中的 `projects/<project_id>/.dev-start.json` 和 `catalog.json`，不在业务项目目录创建、更新或删除文件，也不修改 Git、`.gitignore` 或 IDE 配置。路径中的 ID 在项目改名后保持不变。首次添加项目只读取项目已有 package.json、Shell/Python 启动入口。通过 scripts.create/update/delete 明确维护过启动定义后，刷新只重新解析软件自己的清单；删除最后一项保留空清单，避免刷新重新发现被删项。删除项目登记不会删除业务文件；软件内原清单作为未登记配置保留，不再参与运行。
 
-运行中的目标启动项禁止修改执行配置或删除，运行中的项目禁止移除登记；先 runs.stop 并轮询 active:false。纯 display_name/description 更新是例外：可在运行中原子修改，不改变启动命令、参数或 PID；混入任何其它字段时仍需停止。新增其它启动项、修改项目元数据、移动分组不需要停止。应用刷新后保留API编辑与id；重新命名仍保留id。配置先完整校验再提交；清单与目录索引使用同一个持久化事务，失败回滚，进程中断后在加载前恢复事务。托管清单缺失或格式损坏时明确报错，不回退读取项目目录中的同名文件。请优先通过 API 修改配置，避免直接编辑托管文件与正在运行的服务竞争。
+运行中的目标启动项禁止修改执行配置或删除，运行中的项目禁止移除登记；先 runs.stop 并轮询 active:false。纯 display_name/description/project_display_name 更新是例外：可在运行中原子修改，不改变启动命令、参数或 PID；project_display_name 是项目级显示覆盖值，传 null 恢复项目默认名，并同步该项目所有启动项的列表与运行标题；混入任何其它字段时仍需停止。新增其它启动项、修改项目元数据、移动分组不需要停止。应用刷新后保留API编辑与id；重新命名仍保留id。配置先完整校验再提交；清单与目录索引使用同一个持久化事务，失败回滚，进程中断后在加载前恢复事务。托管清单缺失或格式损坏时明确报错，不回退读取项目目录中的同名文件。请优先通过 API 修改配置，避免直接编辑托管文件与正在运行的服务竞争。
 
 旧版 version=1 的目录索引只在首次升级时转换一次：先在 `migration-backups/managed-config-<id>/` 备份原 catalog 和旧项目清单，再生成托管文件、发布 version=2 索引，最后删除与备份字节一致的旧项目清单。中断后按持久化迁移计划继续清理；失败保留备份并报告原因。启动项 ID、显示名、收藏、参数及编辑历史关联保持不变。迁移不是运行时兼容模式。
 
@@ -486,7 +486,7 @@ GUI 的重命名入口复用 `projects.update {"id":项目ID,"patch":{"name":"ex
 
 ### 启动时间和运行时长
 
-`runs.list` / `runs.get` 增加 `started_at`（本地 `YYYY-MM-DD HH:mm:ss`，未真正启动或无法确定则 null）、`started_at_unix_ms`（Unix 毫秒或 null）、`elapsed_display`、`timing_display`。保留 `elapsed_seconds` 数值字段。正常显示如 `2026-10-15 08:30:00 - 1天2小时3分钟4秒`；零天/小时/分钟省略，秒始终出现，例如 1279 秒显示 `21分钟19秒`，3600 秒显示 `1小时0秒`。结束后时长固定。
+`runs.list` / `runs.get` 增加 `started_at`（本地 `YYYY-MM-DD HH:mm:ss`，未真正启动或无法确定则 null）、`started_at_unix_ms`（Unix 毫秒或 null）、`elapsed_display`、`timing_display`。保留 `elapsed_seconds` 数值字段。`started_at` 与 `elapsed_display` 保持完整时间和本地化单位；供平铺卡片和标签标题使用的 `timing_display` 当年省略年份、时长使用补零的 `HH:MM:SS`，例如 `10-23 08:30:00 - 00:05:09`，超过 24 小时按累计小时显示。结束后时长固定。
 
 本工具启动的进程以成功创建进程时为准，预检查时间不计入运行时长。外部进程从系统 `ps lstart` 获取实际启动时间，初始化其已运行时长，再用单调计时递增；无法确定时明确显示“启动时间未知 - 已监测 …”，不会把发现时间当作启动时间。编辑器版本日期与运行时间使用相同本地时间格式。
 
