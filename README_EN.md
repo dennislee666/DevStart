@@ -1,10 +1,13 @@
 <p align="center"><img src="assets/devstart-window-icon.png" width="88" alt="DevStart"></p>
 
 <h1 align="center">DevStart</h1>
+<p align="center"><strong>Too many projects to keep track of? DevStart starts them in one click, shows the logs, handles Git — and AI can use it too.</strong></p>
 <p align="center">A multi-project launch workbench for the AI Coding era.</p>
 <p align="center">More projects. Less friction.</p>
 
 <p align="center"><a href="README.md">简体中文</a> · English</p>
+
+<p align="center"><img src="docs/screenshots/devstart-demo.gif" width="900" alt="DevStart demo: empty workspace → scan & import → multi-project launches → Console / tiled logs → Git workspace"></p>
 
 AI Coding makes it common for one person to work across several projects. Starting and stopping them, checking logs, and switching between them still takes attention. DevStart brings these frequent tasks into one native Rust desktop window: find a project, click to start it, check its status and logs, then get back to your work.
 
@@ -13,6 +16,25 @@ AI Coding makes it common for one person to work across several projects. Starti
 - **Simple controls for frequent project switching**: find projects through groups, search, favorites, and the running filter, with fewer trips through directories and terminals.
 - **Launch controls and logs in one place**: keep multiple launch entries per project, start, stop, or restart them individually, and switch or tile Consoles to inspect output from several projects.
 - **Straightforward even when projects depend on each other**: when your frontend needs a local API, find the API project, click to start it, then return to the frontend Console. You select related projects and start each as needed.
+
+## Built for AI coding agents
+
+DevStart exposes a local JSON-RPC API, a CLI, and an MCP server (stdio, `dev-start --mcp`). AI coding agents such as Cursor, Claude Code, and Codex can list projects, start/stop/restart launches, and read or search logs directly—without leaving the chat to dig through terminals.
+
+Start the GUI, or run `cargo run --locked -- --serve` for the same workspace without a GUI. Then add an MCP client entry (replace the path with your local binary):
+
+```json
+{
+  "mcpServers": {
+    "dev-start": {
+      "command": "/absolute/path/to/dev-start",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
+Or call the CLI: `cargo run --locked -- --api projects.list`. Full methods and conventions are in [AI / API / MCP](#ai--api--mcp) below and the [API docs](docs/api.md).
 
 ## Use cases
 

@@ -1,10 +1,13 @@
 <p align="center"><img src="assets/devstart-window-icon.png" width="88" alt="DevStart"></p>
 
 <h1 align="center">DevStart</h1>
+<p align="center"><strong>项目多到管不过来？DevStart 一键启动、看日志、做 Git，AI 也能用。</strong></p>
 <p align="center">适合 AI Coding 时代的多项目启动工作台。<br>A multi-project launch workbench for the AI Coding era.</p>
 <p align="center">项目多也不乱。<br>More projects. Less friction.</p>
 
 <p align="center">简体中文 · <a href="README_EN.md">English</a></p>
+
+<p align="center"><img src="docs/screenshots/devstart-demo.gif" width="900" alt="DevStart 演示：空工作区 → 扫描导入 → 多项目启动 → Console / 平铺日志 → Git 工作台"></p>
 
 AI Coding 让一个人同时推进多个项目变得常见，启动、停止、看日志和来回切换却仍然占用注意力。DevStart 把这些高频操作集中到一个 Rust 原生桌面窗口：快速找到项目，点击启动，随时查看状态和日志，再切回手头的工作。
 
@@ -13,6 +16,25 @@ AI Coding 让一个人同时推进多个项目变得常见，启动、停止、�
 - **多项目高频切换，操作尽量简单**：通过分组、搜索、收藏和运行中筛选找到项目，少翻目录、少找终端。
 - **启停和日志集中可见**：为同一项目保留多个启动项，独立启动、停止和重启；通过标签或平铺 Console 查看多个项目的输出。
 - **有依赖，也保持直接**：当前端需要本地 API 时，找到 API 项目、点击启动，再切回前端 Console。相关项目由你选择，按需要分别启动。
+
+## 给 AI Coding Agent 用
+
+DevStart 暴露本地 JSON-RPC API、CLI 以及 MCP 服务（stdio，`dev-start --mcp`）。Cursor、Claude Code、Codex 等 AI coding agent 可以直接列出项目、启停/重启启动项，并读取或搜索日志——不必离开对话窗口去翻终端。
+
+先启动 GUI，或以 `cargo run --locked -- --serve` 启动同一工作空间的无界面服务，再在 MCP 客户端中配置（路径换成本机二进制）：
+
+```json
+{
+  "mcpServers": {
+    "dev-start": {
+      "command": "/absolute/path/to/dev-start",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
+也可直接调用 CLI：`cargo run --locked -- --api projects.list`。完整方法与约定见下方 [AI / API / MCP](#ai--api--mcp) 与 [API 文档](docs/api.md)。
 
 ## 适用场景
 
