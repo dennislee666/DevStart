@@ -12,6 +12,8 @@ mod configured_ports;
 mod console_buffer;
 mod console_search;
 mod console_text;
+#[cfg(not(feature = "personal"))]
+mod demo_workspace;
 mod discovery;
 mod editor;
 mod editor_layout;

@@ -62,7 +62,7 @@ DevStart 聚焦日常启动与切换，不自动解析跨项目依赖，也不�
 
 ![选择目录，扫描后勾选项目与启动项](docs/screenshots/demo-scan.png)
 
-<details><summary>首次打开：从空项目页开始</summary>
+<details><summary>空工作区状态</summary>
 
 ![空项目页：自动扫描识别项目与启动项](docs/screenshots/demo-empty.png)
 
@@ -80,7 +80,7 @@ DevStart 聚焦日常启动与切换，不自动解析跨项目依赖，也不�
 
 ![平铺查看三个本机模拟服务的日志](docs/screenshots/demo-tiles.png)
 
-**演示说明：** 所有项目、Git 提交、远程地址与日志均为虚拟示例，不连接真实生产/测试数据库，不执行部署。演示分组不预装到应用中，首次启动仍为空数据。详见[截图与演示说明](docs/showcase.md)。
+**演示说明：** 开源版首次启动会在本地工作区生成虚拟 `demo project` 分组，包含 Java API、Admin、Website、Mobile H5 四个项目及演示/测试入口。入口仅在用户点击启动后运行回环模拟服务，不访问生产/测试数据库、外网或部署环境。已有工作区不会被覆盖；删除演示分组后也不会自动重建。详见[截图与演示说明](docs/showcase.md)。
 
 ## 功能
 

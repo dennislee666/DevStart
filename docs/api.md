@@ -557,7 +557,7 @@ Choose `system`, `zh-CN`, or `en` through `settings.update`. GUI text updates im
 
 以下写操作立即返回 `{"job_id":123,"state":"running"}`：git.switch、git.commit、git.push、git.pull、git.restore、git.command。随后调用 `git.job {"id":123}`，直到 state 为 succeeded 或 failed；成功读取 output，失败读取 error。任务不持久化，最近保留 16 个，最多同时运行 4 个，同一真实仓库只允许一个写操作。超时或断线后先查任务及实际仓库状态，不盲目重试。
 
-- `git.changes {"project_id":123}`：修改文件数组，path 是仓库根目录相对路径，status 为 Git XY 状态，previous 为重命名前路径（否则 null）。
+- `git.changes {"project_id":123}`：修改项数组，path 是仓库根目录相对路径，status 为 Git XY 状态，previous 为重命名前路径（否则 null），directory 表示未跟踪目录。选择目录提交会包含其中所有文件；目录没有单文件 diff 或回滚版本。
 - `git.diff {"project_id":123,"file":"src/main.rs"}`：返回 output，包含 HEAD 到工作区的 diff；未跟踪文件显示文本预览（256 KiB 上限）。不执行外部 diff/textconv。
 - `git.commit {"project_id":123,"message":"说明","files":["src/main.rs"]}`：暂存并仅提交所选文件（最多 1000 个）；失败可能留下暂存状态，先检查 changes。使用用户 Git 身份与 hooks，不自动修改身份。不会把别的已暂存文件提交。
 - `git.push {"project_id":123}`：将已有本地提交推送到配置的 upstream，不强制推送，不自动创建上游。需要发布授权。
@@ -611,7 +611,7 @@ terminal.read 附加返回 segments：每段包含 text、role（output/prompt/i
 
 扫描导入支持可选 `group`：`{"kind":"existing","id":分组ID}` 或 `{"kind":"new","name":"分组名"}`。省略时使用扫描推断分组。指定后将本次新增启动项涉及的项目归入目标分组（包括已有项目）；创建分组和导入配置原子保存，失败不留下空分组。UI 仅在有扫描结果后显示分组选择与确认添加，添加前二次确认；API 不要求二次确认。
 
-工作区文件预览：双击文件变动列表中的文件可打开单文件 Diff，关闭当前窗口后才能查看另一文件。未跟踪文本以新增补丁显示；二进制文件明确返回“不支持查看预览”。Git 原始状态码保留在 API 中，UI 显示通用文件图标和可读状态。
+工作区文件预览：双击文件变动列表中的文件可打开单文件 Diff，关闭当前窗口后才能查看另一文件。未跟踪文本以新增补丁显示；二进制文件明确返回“不支持查看预览”。未跟踪目录显示文件夹图标，选中提交时包含其中全部文件，不能单独预览或回滚。Git 原始状态码保留在 API 中，UI 显示可读状态。
 
 文件变动按未跟踪、有变化、新文件、删除分组；右侧图标撤销恢复仍需二次确认，未跟踪文件禁用恢复并提示无 HEAD 版本。
 

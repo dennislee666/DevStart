@@ -1,0 +1,125 @@
+{
+  "group": "demo project",
+  "projects": [
+    {
+      "name": "Java API",
+      "path": "java-api",
+      "scripts": [
+        {
+          "enabled": true,
+          "display_command": "python3 server.py --port 41801 --label Java API demo",
+          "name": "本地演示",
+          "file": "server.py",
+          "entry": { "File": { "interpreter": "python3" } },
+          "description": "本地回环模拟入口，仅返回虚拟健康检查；不连接真实数据库或外部服务。",
+          "cwd": ".",
+          "environment": {},
+          "expected_port": 41801,
+          "args": ["--port", "41801", "--label", "Java API demo"]
+        },
+        {
+          "enabled": true,
+          "display_command": "python3 server.py --port 41802 --label Java API test",
+          "name": "测试演示",
+          "file": "server.py",
+          "entry": { "File": { "interpreter": "python3" } },
+          "description": "本地回环模拟入口，仅返回虚拟测试健康检查；不连接测试数据库或外部服务。",
+          "cwd": ".",
+          "environment": {},
+          "expected_port": 41802,
+          "args": ["--port", "41802", "--label", "Java API test"]
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "path": "admin",
+      "scripts": [
+        {
+          "enabled": true,
+          "display_command": "python3 server.py --port 41803 --label Admin demo",
+          "name": "本地演示",
+          "file": "server.py",
+          "entry": { "File": { "interpreter": "python3" } },
+          "description": "本地回环模拟入口，仅返回虚拟健康检查；不连接真实数据库或外部服务。",
+          "cwd": ".",
+          "environment": {},
+          "expected_port": 41803,
+          "args": ["--port", "41803", "--label", "Admin demo"]
+        },
+        {
+          "enabled": true,
+          "display_command": "python3 server.py --port 41804 --label Admin test",
+          "name": "测试演示",
+          "file": "server.py",
+          "entry": { "File": { "interpreter": "python3" } },
+          "description": "本地回环模拟入口，仅返回虚拟测试健康检查；不连接测试数据库或外部服务。",
+          "cwd": ".",
+          "environment": {},
+          "expected_port": 41804,
+          "args": ["--port", "41804", "--label", "Admin test"]
+        }
+      ]
+    },
+    {
+      "name": "Website",
+      "path": "website",
+      "scripts": [
+        {
+          "enabled": true,
+          "display_command": "python3 server.py --port 41805 --label Website demo",
+          "name": "本地演示",
+          "file": "server.py",
+          "entry": { "File": { "interpreter": "python3" } },
+          "description": "本地回环模拟入口，仅返回虚拟健康检查；不连接真实数据库或外部服务。",
+          "cwd": ".",
+          "environment": {},
+          "expected_port": 41805,
+          "args": ["--port", "41805", "--label", "Website demo"]
+        },
+        {
+          "enabled": true,
+          "display_command": "python3 server.py --port 41806 --label Website test",
+          "name": "测试演示",
+          "file": "server.py",
+          "entry": { "File": { "interpreter": "python3" } },
+          "description": "本地回环模拟入口，仅返回虚拟测试健康检查；不连接测试数据库或外部服务。",
+          "cwd": ".",
+          "environment": {},
+          "expected_port": 41806,
+          "args": ["--port", "41806", "--label", "Website test"]
+        }
+      ]
+    },
+    {
+      "name": "Mobile H5",
+      "path": "mobile-h5",
+      "scripts": [
+        {
+          "enabled": true,
+          "display_command": "python3 server.py --port 41807 --label Mobile H5 demo",
+          "name": "本地演示",
+          "file": "server.py",
+          "entry": { "File": { "interpreter": "python3" } },
+          "description": "本地回环模拟入口，仅返回虚拟健康检查；不连接真实数据库或外部服务。",
+          "cwd": ".",
+          "environment": {},
+          "expected_port": 41807,
+          "args": ["--port", "41807", "--label", "Mobile H5 demo"]
+        },
+        {
+          "enabled": true,
+          "display_command": "python3 server.py --port 41808 --label Mobile H5 test",
+          "name": "测试演示",
+          "file": "server.py",
+          "entry": { "File": { "interpreter": "python3" } },
+          "description": "本地回环模拟入口，仅返回虚拟测试健康检查；不连接测试数据库或外部服务。",
+          "cwd": ".",
+          "environment": {},
+          "expected_port": 41808,
+          "args": ["--port", "41808", "--label", "Mobile H5 test"]
+        }
+      ]
+    }
+  ]
+}

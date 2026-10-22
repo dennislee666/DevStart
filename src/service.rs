@@ -5,6 +5,46 @@ use crate::{
     store::Store,
 };
 use std::{path::Path, process::Command};
+
+#[derive(Clone)]
+pub struct LaunchTableRow {
+    pub group: Group,
+    pub project_id: u64,
+    pub project_name: String,
+    pub project_path: std::path::PathBuf,
+    pub project_favorite: bool,
+    pub script: Option<Script>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum LaunchSortColumn {
+    Group,
+    Project,
+    Status,
+    Port,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SortDirection {
+    Ascending,
+    Descending,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct LaunchSort {
+    pub column: LaunchSortColumn,
+    pub direction: SortDirection,
+}
+
+impl Default for LaunchSort {
+    fn default() -> Self {
+        Self {
+            column: LaunchSortColumn::Group,
+            direction: SortDirection::Ascending,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum Filter {
     All,
@@ -26,7 +66,10 @@ pub struct Service {
 impl Service {
     pub fn load() -> Result<Self, String> {
         let store = Store::new().map_err(|e| e.to_string())?;
+        #[cfg(feature = "personal")]
         let catalog = store.load()?;
+        #[cfg(not(feature = "personal"))]
+        let catalog = crate::demo_workspace::load(&store)?;
         let editor = crate::editor::Workspace::load(&store.root)?;
         let port_hints = crate::configured_ports::collect(&catalog.projects);
         Ok(Self {
@@ -991,6 +1034,143 @@ impl Service {
                 keep.then_some(visible)
             })
             .collect()
+    }
+    /// Return table rows in the requested view and sort order.
+    pub fn launch_table_rows(
+        &self,
+        filter: Filter,
+        query: &str,
+        sort: LaunchSort,
+        group_filter: Option<u64>,
+    ) -> Result<Vec<LaunchTableRow>, String> {
+        if !matches!(filter, Filter::All | Filter::Favorites) {
+            return Err("启动项表格只支持项目和收藏视图".into());
+        }
+        let mut rows = Vec::new();
+        for project in self
+            .visible_projects(filter, query)
+            .into_iter()
+            .filter(|project| group_filter.is_none_or(|group_id| project.group == group_id))
+        {
+            let group = self
+                .catalog
+                .groups
+                .iter()
+                .find(|group| group.id == project.group)
+                .cloned()
+                .ok_or_else(|| format!("项目 {} 所属分组不存在", project.name))?;
+            if project.scripts.is_empty() {
+                if filter == Filter::All {
+                    rows.push(LaunchTableRow {
+                        group,
+                        project_id: project.id,
+                        project_name: project.name,
+                        project_path: project.path,
+                        project_favorite: project.favorite,
+                        script: None,
+                    });
+                }
+                continue;
+            }
+            rows.extend(project.scripts.into_iter().map(|script| LaunchTableRow {
+                group: group.clone(),
+                project_id: project.id,
+                project_name: project.name.clone(),
+                project_path: project.path.clone(),
+                project_favorite: project.favorite,
+                script: Some(script),
+            }));
+        }
+        rows.sort_by(|left, right| {
+            let cmp_text = |a: &str, b: &str| a.to_lowercase().cmp(&b.to_lowercase());
+            let left_status = left
+                .script
+                .as_ref()
+                .map(|script| self.script_status_label(script.id))
+                .unwrap_or("--");
+            let right_status = right
+                .script
+                .as_ref()
+                .map(|script| self.script_status_label(script.id))
+                .unwrap_or("--");
+            let port_key = |row: &LaunchTableRow| {
+                row.script.as_ref().and_then(|script| {
+                    self.running_ports(script.id)
+                        .into_iter()
+                        .next()
+                        .or_else(|| {
+                            self.configured_port_hint(script.id)
+                                .ok()
+                                .flatten()
+                                .map(|hint| hint.port)
+                        })
+                })
+            };
+            let ports = (port_key(left), port_key(right));
+            let primary = match sort.column {
+                LaunchSortColumn::Group => cmp_text(
+                    crate::i18n::group_name(&left.group),
+                    crate::i18n::group_name(&right.group),
+                ),
+                LaunchSortColumn::Project => cmp_text(&left.project_name, &right.project_name),
+                LaunchSortColumn::Status => cmp_text(left_status, right_status),
+                LaunchSortColumn::Port => match ports {
+                    (Some(a), Some(b)) if sort.direction == SortDirection::Descending => b.cmp(&a),
+                    (Some(a), Some(b)) => a.cmp(&b),
+                    (Some(_), None) => match sort.direction {
+                        SortDirection::Ascending => std::cmp::Ordering::Less,
+                        SortDirection::Descending => std::cmp::Ordering::Greater,
+                    },
+                    (None, Some(_)) => match sort.direction {
+                        SortDirection::Ascending => std::cmp::Ordering::Greater,
+                        SortDirection::Descending => std::cmp::Ordering::Less,
+                    },
+                    (None, None) => std::cmp::Ordering::Equal,
+                },
+            };
+            let primary = if sort.direction == SortDirection::Descending
+                && sort.column != LaunchSortColumn::Port
+            {
+                primary.reverse()
+            } else {
+                primary
+            };
+            primary
+                .then_with(|| {
+                    cmp_text(
+                        crate::i18n::group_name(&left.group),
+                        crate::i18n::group_name(&right.group),
+                    )
+                })
+                .then_with(|| cmp_text(&left.project_name, &right.project_name))
+                .then_with(|| {
+                    cmp_text(
+                        left.script
+                            .as_ref()
+                            .map(Script::display_label)
+                            .unwrap_or(""),
+                        right
+                            .script
+                            .as_ref()
+                            .map(Script::display_label)
+                            .unwrap_or(""),
+                    )
+                })
+                .then_with(|| left.project_id.cmp(&right.project_id))
+                .then_with(|| {
+                    left.script
+                        .as_ref()
+                        .map(|script| script.id)
+                        .cmp(&right.script.as_ref().map(|script| script.id))
+                })
+        });
+        Ok(rows)
+    }
+    /// Return groups ordered by the names shown in the launch table filter bar.
+    pub fn groups_for_launch_filter(&self) -> Vec<Group> {
+        let mut groups = self.catalog.groups.clone();
+        groups.sort_by_cached_key(|group| crate::i18n::group_name(group).to_lowercase());
+        groups
     }
     pub fn active_count(&self) -> usize {
         self.runtime

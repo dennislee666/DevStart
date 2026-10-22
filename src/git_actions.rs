@@ -10,6 +10,8 @@ pub struct Change {
     pub path: String,
     pub previous: Option<String>,
     pub status: String,
+    /// True when Git reported a collapsed untracked directory entry.
+    pub directory: bool,
 }
 impl Change {
     /// Resolve repository-relative Git paths for presentation without exposing porcelain codes.
@@ -34,9 +36,10 @@ impl Change {
 }
 pub fn changes(path: &Path) -> Result<Vec<Change>, String> {
     let root = root(path)?;
+    // Match Git's normal directory collapsing instead of enumerating every untracked descendant.
     let out = git(
         &root,
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        &["status", "--porcelain=v1", "-z", "--untracked-files=normal"],
     )?;
     let mut parts = out.split('\0').filter(|v| !v.is_empty());
     let mut result = vec![];
@@ -55,8 +58,10 @@ pub fn changes(path: &Path) -> Result<Vec<Change>, String> {
         } else {
             None
         };
+        let path = record[3..].to_owned();
         result.push(Change {
-            path: record[3..].into(),
+            directory: status == "??" && path.ends_with('/'),
+            path,
             previous,
             status,
         });
@@ -96,6 +101,9 @@ pub fn diff(path: &Path, file: &str) -> Result<String, String> {
         .find(|c| c.path == file)
         .ok_or("File is no longer changed")?;
     if item.status == "??" {
+        if item.directory {
+            return Err("未跟踪目录包含多个文件，无法作为单文件预览".into());
+        }
         let mut bytes = Vec::new();
         std::fs::File::open(root.join(file))
             .map_err(|e| e.to_string())?

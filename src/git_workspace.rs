@@ -117,7 +117,13 @@ fn git_output(path: &Path, args: &[&str]) -> Result<(String, String), String> {
             .map_err(|e| format!("Git output: {e}"))?;
         let bytes = bytes.map_err(|e| e.to_string())?;
         if bytes.len() > 2_097_152 {
-            return Err("Git output exceeds 2 MiB".into());
+            let stream = if index == 0 { "stdout" } else { "stderr" };
+            let command = args.first().copied().unwrap_or("unknown");
+            eprintln!(
+                "[dev start git] output limit exceeded command={command} stream={stream} observed_bytes_at_least={} limit_bytes=2097152",
+                bytes.len()
+            );
+            return Err(format!("Git {command} {stream} output exceeds 2 MiB"));
         }
         output[index] = String::from_utf8(bytes).map_err(|_| {
             "Git returned non-UTF-8 output; no lossy file paths are accepted".to_owned()

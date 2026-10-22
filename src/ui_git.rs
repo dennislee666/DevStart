@@ -746,17 +746,29 @@ impl DevStart {
                                                 for file in files {
                                                     ui.horizontal(|ui| {
                                                         let mut checked = self.git_page.selection.selected.contains(&file.path);
-                                                        if ui.add_enabled(!busy, egui::Checkbox::without_text(&mut checked)).on_hover_text(tr("勾选的文件将包含在本次提交中")).changed() {
+                                                        let selection_hint = if file.directory {
+                                                            tr("勾选目录会将其中所有未跟踪文件纳入本次提交")
+                                                        } else {
+                                                            tr("勾选的文件将包含在本次提交中")
+                                                        };
+                                                        if ui.add_enabled(!busy, egui::Checkbox::without_text(&mut checked)).on_hover_text(selection_hint).changed() {
                                                             self.git_page.selection.set(&file.path, checked);
                                                         }
-                                                        ui.label(RichText::new(icon::FILE).color(tone(self.light, MUTED)));
+                                                        ui.label(RichText::new(if file.directory { icon::FOLDER } else { icon::FILE }).color(tone(self.light, MUTED)));
                                                         let width = (ui.available_width() - 44.0).max(20.0);
-                                                        let file_response = file_name_response(ui, &file.path, width)
-                                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                            .on_hover_ui(|ui| file_preview_tooltip(ui, &file.preview_path(r.root.as_deref().unwrap_or(&r.path))));
-                                                        if !busy && file_response.double_clicked() { preview = Some(file.path.clone()); }
+                                                        let file_response = file_name_response(ui, &file.path, width, !file.directory);
+                                                        let file_response = if file.directory {
+                                                            file_response.on_hover_text(tr("未跟踪目录不能作为单个文件预览；选择后提交会包含其中全部文件"))
+                                                        } else {
+                                                            file_response
+                                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                                .on_hover_ui(|ui| file_preview_tooltip(ui, &file.preview_path(r.root.as_deref().unwrap_or(&r.path))))
+                                                        };
+                                                        if !busy && !file.directory && file_response.double_clicked() { preview = Some(file.path.clone()); }
                                                         let enabled = !busy && file.status != "??";
-                                                        let tooltip = if file.status == "??" {
+                                                        let tooltip = if file.directory {
+                                                            tr("未跟踪目录没有 HEAD 版本，无法回滚。")
+                                                        } else if file.status == "??" {
                                                             tr("未跟踪文件没有 HEAD 版本，无法撤销恢复。")
                                                         } else {
                                                             tr("撤销此文件的工作区和暂存区修改，恢复到 HEAD 版本；操作前保存备份，点击后需再次确认。")
@@ -1037,17 +1049,22 @@ fn file_preview_tooltip(ui: &mut egui::Ui, path: &str) {
 }
 
 /// Reserve the row's filename column without add_sized's centered-and-justified child layout.
-fn file_name_response(ui: &mut egui::Ui, path: &str, width: f32) -> egui::Response {
+fn file_name_response(
+    ui: &mut egui::Ui,
+    path: &str,
+    width: f32,
+    selectable: bool,
+) -> egui::Response {
     ui.allocate_ui_with_layout(
         egui::vec2(width, 24.0),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.set_min_width(width);
-            ui.add(
-                egui::Label::new(path)
-                    .truncate()
-                    .sense(egui::Sense::click()),
-            )
+            ui.add(egui::Label::new(path).truncate().sense(if selectable {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            }))
         },
     )
     .inner
@@ -1092,7 +1109,7 @@ mod file_row_tests {
                 for name in ["a.txt", "directory/longer-filename.txt"] {
                     ui.horizontal(|ui| {
                         let icon = ui.label("file");
-                        let label = super::file_name_response(ui, name, 400.0);
+                        let label = super::file_name_response(ui, name, 400.0, true);
                         assert!(
                             (label.rect.left() - icon.rect.right() - ui.spacing().item_spacing.x)
                                 .abs()

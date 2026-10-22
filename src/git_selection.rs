@@ -60,6 +60,7 @@ mod tests {
             path: path.into(),
             previous: None,
             status: "??".into(),
+            directory: false,
         }
     }
     #[test]

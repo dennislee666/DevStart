@@ -1,5 +1,6 @@
 use crate::appearance::{
-    ACCENT, BG, BORDER, GREEN, MUTED, RED, RUNNING_GREEN, SIDE, STARTING_BLUE, SURFACE,
+    ACCENT, BG, BORDER, GREEN, MUTED, RED, RUNNING_BADGE_BG, RUNNING_GREEN, RUNNING_ROW_DARK,
+    RUNNING_ROW_LIGHT, SIDE, STARTING_BLUE, SURFACE,
 };
 use crate::i18n::{tf, tf_count, tr};
 use crate::preferences::Preferences;
@@ -43,6 +44,16 @@ struct ScriptInfoDraft {
     default_name: String,
     reset_name: bool,
 }
+#[derive(Clone, Copy)]
+enum CloseRunTarget {
+    Window,
+    Tab,
+}
+#[derive(Clone, Copy)]
+struct CloseRunRequest {
+    id: u64,
+    target: CloseRunTarget,
+}
 pub struct DevStart {
     scan_ui: scan_ui::ScanUi,
     groups_ui: groups_ui::GroupsUi,
@@ -64,10 +75,12 @@ pub struct DevStart {
     error: Option<String>,
     filter: Filter,
     query: String,
+    launch_sort: service::LaunchSort,
+    project_group_filter: Option<u64>,
     expanded: HashSet<u64>,
     selected_run: Option<u64>,
     open_console_as_tab: Option<u64>,
-    close_run: Option<u64>,
+    close_run: Option<CloseRunRequest>,
     delete_script: Option<u64>,
     bulk_confirm: Option<crate::bulk::Plan>,
     collapsed_groups: HashSet<u64>,
@@ -146,6 +159,8 @@ impl DevStart {
             error,
             filter: Filter::All,
             query: String::new(),
+            launch_sort: service::LaunchSort::default(),
+            project_group_filter: None,
             expanded,
             selected_run: None,
             open_console_as_tab: None,
@@ -724,7 +739,10 @@ impl DevStart {
                                     .clicked()
                                 {
                                     if tab.state.active() {
-                                        self.close_run = Some(tab.id);
+                                        self.close_run = Some(CloseRunRequest {
+                                            id: tab.id,
+                                            target: CloseRunTarget::Tab,
+                                        });
                                     } else if let Some(s) = &mut self.service {
                                         let result = s.runtime.close_tab(tab.id, false);
                                         self.report(result);
@@ -834,11 +852,12 @@ impl DevStart {
             });
     }
     fn projects(&mut self, ui: &mut egui::Ui) {
-        let Some(service) = &self.service else {
-            ui.label(tr("工作空间不可用"));
-            return;
-        };
-        if service.catalog.projects.is_empty() {
+        if self.filter == Filter::All
+            && self
+                .service
+                .as_ref()
+                .is_some_and(|service| service.catalog.projects.is_empty())
+        {
             let height = ui.available_height();
             ui.vertical_centered(|ui| {
                 ui.add_space(((height - 76.0) * 0.5).max(0.0));
@@ -856,6 +875,26 @@ impl DevStart {
             });
             return;
         }
+        if matches!(self.filter, Filter::All | Filter::Favorites) {
+            let group_filter = (self.filter == Filter::All)
+                .then_some(self.project_group_filter)
+                .flatten();
+            let rows = self.service.as_ref().map(|service| {
+                service.launch_table_rows(self.filter, &self.query, self.launch_sort, group_filter)
+            });
+            match rows {
+                Some(Ok(rows)) => self.launch_table(ui, rows),
+                Some(Err(error)) => self.report(Err(error)),
+                None => {
+                    ui.label(tr("工作空间不可用"));
+                }
+            };
+            return;
+        }
+        let Some(service) = &self.service else {
+            ui.label(tr("工作空间不可用"));
+            return;
+        };
         let grouped = service.grouped_projects(self.filter, &self.query);
         egui::ScrollArea::vertical()
             .id_salt("grouped-projects")
@@ -1142,12 +1181,485 @@ impl DevStart {
                 }
             });
     }
+    fn launch_table(&mut self, ui: &mut egui::Ui, rows: Vec<service::LaunchTableRow>) {
+        egui::ScrollArea::both()
+            .id_salt("launch-table")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let spacing = ui.spacing().item_spacing.x;
+                let widths = launch_table_column_widths(ui.available_width(), spacing);
+                let table_width = widths.iter().sum::<f32>() + spacing * 7.0;
+                ui.set_min_width(table_width);
+                ui.set_max_width(table_width);
+                if self.filter == Filter::All {
+                    self.project_group_filter_bar(ui);
+                    ui.add_space(4.0);
+                }
+                let row_height = self.preferences().row_height();
+                ui.horizontal(|ui| {
+                    for (label, width, column) in [
+                        (tr("启动项名"), widths[0], None),
+                        (
+                            tr("项目名"),
+                            widths[1],
+                            Some(service::LaunchSortColumn::Project),
+                        ),
+                        (
+                            tr("组名"),
+                            widths[2],
+                            Some(service::LaunchSortColumn::Group),
+                        ),
+                        (tr("路径"), widths[3], None),
+                        (tr("启动命令"), widths[4], None),
+                        (
+                            tr("状态"),
+                            widths[5],
+                            Some(service::LaunchSortColumn::Status),
+                        ),
+                        (tr("端口"), widths[6], Some(service::LaunchSortColumn::Port)),
+                        (tr("操作"), widths[7], None),
+                    ] {
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(width, row_height),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.set_min_width(width);
+                                if let Some(column) = column {
+                                    let selected = self.launch_sort.column == column;
+                                    let direction = self.launch_sort.direction;
+                                    let indicator = if selected {
+                                        match direction {
+                                            service::SortDirection::Ascending => "↑",
+                                            service::SortDirection::Descending => "↓",
+                                        }
+                                    } else {
+                                        "↕"
+                                    };
+                                    let response = ui
+                                        .add(
+                                            egui::Button::new(
+                                                RichText::new(format!("{label} {indicator}"))
+                                                    .small()
+                                                    .color(tone(
+                                                        self.light,
+                                                        if selected { ACCENT } else { MUTED },
+                                                    )),
+                                            )
+                                            .frame(false)
+                                            .min_size(Vec2::new(width, row_height)),
+                                        )
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .on_hover_text(tr("点击列名切换排序方向"));
+                                    if response.clicked() {
+                                        self.launch_sort = if selected {
+                                            service::LaunchSort {
+                                                column,
+                                                direction: match direction {
+                                                    service::SortDirection::Ascending => {
+                                                        service::SortDirection::Descending
+                                                    }
+                                                    service::SortDirection::Descending => {
+                                                        service::SortDirection::Ascending
+                                                    }
+                                                },
+                                            }
+                                        } else {
+                                            service::LaunchSort {
+                                                column,
+                                                direction: service::SortDirection::Ascending,
+                                            }
+                                        };
+                                    }
+                                } else {
+                                    ui.add(
+                                        egui::Label::new(RichText::new(label).small().weak())
+                                            .truncate(),
+                                    );
+                                }
+                            },
+                        );
+                    }
+                });
+                ui.separator();
+                if rows.is_empty() {
+                    ui.add_space(8.0);
+                    let empty = if self.filter == Filter::Favorites {
+                        tr("暂无收藏的启动项")
+                    } else {
+                        tr("没有匹配的项目启动项")
+                    };
+                    ui.label(RichText::new(empty).small().color(tone(self.light, MUTED)));
+                    return;
+                }
+                for row in &rows {
+                    self.launch_table_row(ui, row, widths);
+                    ui.separator();
+                }
+            });
+    }
+    fn project_group_filter_bar(&mut self, ui: &mut egui::Ui) {
+        let groups = self
+            .service
+            .as_ref()
+            .map(Service::groups_for_launch_filter)
+            .unwrap_or_default();
+        if self
+            .project_group_filter
+            .is_some_and(|selected| !groups.iter().any(|group| group.id == selected))
+        {
+            self.project_group_filter = None;
+        }
+
+        egui::ScrollArea::horizontal()
+            .id_salt("project-group-filter")
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    let mut options = Vec::with_capacity(groups.len() + 1);
+                    options.push((None, tr("全部").to_string()));
+                    options.extend(
+                        groups.iter().map(|group| {
+                            (Some(group.id), crate::i18n::group_name(group).to_string())
+                        }),
+                    );
+                    for (group_id, label) in options {
+                        let selected = self.project_group_filter == group_id;
+                        let color = tone(self.light, if selected { ACCENT } else { MUTED });
+                        let response = ui
+                            .add(
+                                egui::Button::new(RichText::new(label).small().color(color))
+                                    .fill(if selected {
+                                        tone(self.light, SURFACE)
+                                    } else {
+                                        Color32::TRANSPARENT
+                                    })
+                                    .stroke(egui::Stroke::new(
+                                        if selected { 1.0 } else { 0.0 },
+                                        if selected {
+                                            tone(self.light, ACCENT)
+                                        } else {
+                                            Color32::TRANSPARENT
+                                        },
+                                    ))
+                                    .corner_radius(6.0)
+                                    .min_size(Vec2::new(42.0, 28.0)),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if response.clicked() {
+                            self.project_group_filter = group_id;
+                        }
+                    }
+                });
+            });
+    }
+    fn launch_table_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        row: &service::LaunchTableRow,
+        widths: [f32; 8],
+    ) {
+        let script_id = row.script.as_ref().map(|script| script.id).unwrap_or(0);
+        ui.push_id((row.project_id, script_id), |ui| {
+            let row_height = self.preferences().row_height();
+            let active = row
+                .script
+                .as_ref()
+                .and_then(|script| self.service.as_ref()?.active_run(script.id));
+            let failed = row.script.as_ref().is_some_and(|script| {
+                self.service
+                    .as_ref()
+                    .and_then(|service| service.latest_state(script.id))
+                    == Some(State::Failed)
+            });
+            let port = row
+                .script
+                .as_ref()
+                .and_then(|script| {
+                    self.service.as_ref().map(|service| {
+                        service.running_port_cell_for_locale(script.id, crate::i18n::current())
+                    })
+                })
+                .unwrap_or(crate::presentation::PortCell {
+                    label: "--".into(),
+                    tooltip: tr("无法确定启动项端口").into(),
+                });
+            let status = row.script.as_ref().map_or("--", |script| {
+                self.service
+                    .as_ref()
+                    .map_or("--", |service| service.script_status_label(script.id))
+            });
+            let is_running = status == "运行中";
+            let launch_name = row.script.as_ref().map_or_else(
+                || "—".to_owned(),
+                |script| {
+                    let name = crate::presentation::launch_label(script.display_label());
+                    if failed {
+                        tf("{0} · 失败", &[("0", name)])
+                    } else {
+                        name
+                    }
+                },
+            );
+            let command = row
+                .script
+                .as_ref()
+                .map(crate::model::Script::tab_command)
+                .unwrap_or_else(|| "—".into());
+            let text = [
+                launch_name,
+                row.project_name.clone(),
+                crate::i18n::group_name(&row.group).to_owned(),
+                service::path_label(&row.project_path),
+                command,
+                tr(status).to_owned(),
+                port.label.clone(),
+            ];
+            egui::Frame::new()
+                .fill(if is_running {
+                    if self.light {
+                        RUNNING_ROW_LIGHT
+                    } else {
+                        RUNNING_ROW_DARK
+                    }
+                } else {
+                    Color32::TRANSPARENT
+                })
+                .corner_radius(4.0)
+                .inner_margin(egui::Margin::symmetric(0, if is_running { 2 } else { 0 }))
+                .show(ui, |ui| {
+                    if is_running {
+                        ui.set_min_width(ui.available_width());
+                    }
+                    ui.horizontal(|ui| {
+                        for (index, value) in text.iter().enumerate() {
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(widths[index], row_height),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.set_min_width(widths[index]);
+                                    if index == 5 && is_running {
+                                        egui::Frame::new()
+                                            .fill(RUNNING_BADGE_BG)
+                                            .corner_radius(35.0)
+                                            .inner_margin(egui::Margin::symmetric(6, 2))
+                                            .show(ui, |ui| {
+                                                ui.label(
+                                                    RichText::new(value)
+                                                        .color(Color32::WHITE)
+                                                        .small(),
+                                                );
+                                            });
+                                        return;
+                                    }
+                                    let label = if index == 0 && failed {
+                                        RichText::new(value).color(tone(self.light, RED))
+                                    } else if index == 4 {
+                                        RichText::new(value)
+                                            .monospace()
+                                            .size(11.5)
+                                            .color(tone(self.light, MUTED))
+                                    } else {
+                                        RichText::new(value).color(tone(
+                                            self.light,
+                                            if index == 6 {
+                                                MUTED
+                                            } else {
+                                                crate::appearance::TEXT
+                                            },
+                                        ))
+                                    };
+                                    let response = ui.add(egui::Label::new(label).truncate());
+                                    match index {
+                                        0 => {
+                                            if let Some(script) = &row.script {
+                                                response.on_hover_text(format!(
+                                                    "{}\n{}",
+                                                    script.display_label(),
+                                                    script.description
+                                                ));
+                                            } else {
+                                                response.on_hover_text(tr("项目暂无启动项"));
+                                            }
+                                        }
+                                        1 => {
+                                            response.on_hover_text(&row.project_name);
+                                        }
+                                        2 => {
+                                            response
+                                                .on_hover_text(crate::i18n::group_name(&row.group));
+                                        }
+                                        3 => {
+                                            response.on_hover_text(
+                                                row.project_path.display().to_string(),
+                                            );
+                                        }
+                                        4 => {
+                                            if let Some(script) = &row.script {
+                                                response.on_hover_text(script.tab_command());
+                                            }
+                                        }
+                                        6 => {
+                                            response.on_hover_text(&port.tooltip);
+                                        }
+                                        _ => {}
+                                    }
+                                },
+                            );
+                        }
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(widths[7], row_height),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.set_min_width(widths[7]);
+                                ui.horizontal(|ui| {
+                                    self.launch_table_actions(ui, row, active, row_height);
+                                });
+                            },
+                        );
+                    });
+                });
+        });
+    }
+    fn launch_table_actions(
+        &mut self,
+        ui: &mut egui::Ui,
+        row: &service::LaunchTableRow,
+        active: Option<u64>,
+        row_height: f32,
+    ) {
+        if let Some(script) = &row.script {
+            let favorite_project = (self.filter == Filter::Favorites && row.project_favorite)
+                .then_some(row.project_id);
+            self.launch_actions(ui, script, active, row_height, favorite_project);
+        } else {
+            for _ in 0..6 {
+                launch_action_slot(ui, row_height, |ui| ui.add_space(0.0));
+            }
+        }
+        self.project_action_menu(ui, row, row_height);
+    }
+    fn project_action_menu(
+        &mut self,
+        ui: &mut egui::Ui,
+        row: &service::LaunchTableRow,
+        row_height: f32,
+    ) {
+        let groups = self
+            .service
+            .as_ref()
+            .map(|service| service.catalog.groups.clone())
+            .unwrap_or_default();
+        launch_action_slot(ui, row_height, |ui| {
+            icon_menu(ui, icon::FOLDER, |ui| {
+                if ui.button(tr("重命名项目")).clicked() {
+                    self.rename_entity = Some((false, row.project_id, row.project_name.clone()));
+                    ui.close();
+                }
+                if ui.button(tr("重新读取启动脚本")).clicked() {
+                    let result = self.service.as_mut().unwrap().rescan(row.project_id);
+                    self.report(result);
+                    ui.close();
+                }
+                if ui.button(tr("添加启动脚本")).clicked() {
+                    self.add_script = Some((row.project_id, String::new(), "/bin/bash".into()));
+                    ui.close();
+                }
+                if ui.button(tr("打开项目目录")).clicked() {
+                    self.report(service::open_file(&row.project_path));
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        self.groups_ui.pending_is_idle(),
+                        egui::Button::new(tr("删除项目")),
+                    )
+                    .clicked()
+                {
+                    self.groups_ui.delete = Some((
+                        crate::group_service::DeletionTarget::Project(row.project_id),
+                        row.project_name.clone(),
+                    ));
+                    ui.close();
+                }
+                if ui
+                    .button(if row.project_favorite {
+                        tr("取消收藏项目")
+                    } else {
+                        tr("收藏项目")
+                    })
+                    .clicked()
+                {
+                    let result = self
+                        .service
+                        .as_mut()
+                        .unwrap()
+                        .project_favorite(row.project_id);
+                    self.report(result);
+                    ui.close();
+                }
+                ui.separator();
+                ui.add(egui::Label::new(
+                    RichText::new(tr("移动到分组"))
+                        .size(11.0)
+                        .color(tone(self.light, MUTED)),
+                ));
+                for group in groups {
+                    if ui
+                        .button(crate::i18n::group_name(&group))
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        let result = self
+                            .service
+                            .as_mut()
+                            .unwrap()
+                            .move_project(row.project_id, group.id);
+                        self.report(result);
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                if ui.button(tr("重命名分组")).clicked() {
+                    self.rename_entity = Some((true, row.group.id, row.group.name.clone()));
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        self.groups_ui.pending_is_idle(),
+                        egui::Button::new(tr("重新扫描更新项目启动脚本")),
+                    )
+                    .clicked()
+                {
+                    self.refresh_group(row.group.id, ui.ctx());
+                    ui.close();
+                }
+                if row.group.id != 1
+                    && ui
+                        .add_enabled(
+                            self.groups_ui.pending_is_idle(),
+                            egui::Button::new(tr("删除分组")),
+                        )
+                        .clicked()
+                {
+                    self.groups_ui.delete = Some((
+                        crate::group_service::DeletionTarget::Group(row.group.id),
+                        row.group.name.clone(),
+                    ));
+                    ui.close();
+                }
+            })
+            .response
+            .on_hover_text(tr("项目及分组操作"));
+        });
+    }
     fn launch_row(
         &mut self,
         ui: &mut egui::Ui,
         script: &crate::model::Script,
         (name_width, command_width, status_width, port_width): (f32, f32, f32, f32),
     ) {
+        let row_height = self.preferences().row_height();
         ui.push_id(script.id, |ui| {
             let port = self
                 .service
@@ -1241,138 +1753,160 @@ impl DevStart {
                         .on_hover_text(&port.tooltip);
                     },
                 );
-                let launch_hint = if let Some(reason) = script.launch_block_reason() {
-                    tf("未启用：{reason}", &[("reason", (tr(reason)).to_string())])
-                } else if active.is_some() {
-                    tr("已运行，可停止或重启").into()
+                self.launch_actions(ui, script, active, row_height, None);
+            });
+        });
+    }
+    fn launch_actions(
+        &mut self,
+        ui: &mut egui::Ui,
+        script: &crate::model::Script,
+        active: Option<u64>,
+        row_height: f32,
+        favorite_project: Option<u64>,
+    ) {
+        let launch_hint = if let Some(reason) = script.launch_block_reason() {
+            tf("未启用：{reason}", &[("reason", (tr(reason)).to_string())])
+        } else if active.is_some() {
+            tr("已运行，可停止或重启").into()
+        } else {
+            tr("启动").into()
+        };
+        let launch_clicked = launch_action_slot(ui, row_height, |ui| {
+            action_button(
+                ui,
+                active.is_none() && script.launch_block_reason().is_none(),
+                icon::PLAY,
+                &launch_hint,
+                Some(tone(self.light, GREEN)),
+            )
+            .clicked()
+        });
+        if launch_clicked {
+            self.launch(script.id);
+        }
+        let stop_clicked = launch_action_slot(ui, row_height, |ui| {
+            action_button(ui, active.is_some(), icon::STOP, tr("停止"), None).clicked()
+        });
+        if stop_clicked && let Some(run) = active {
+            self.service.as_mut().unwrap().runtime.stop(run);
+        }
+        let restart_clicked = launch_action_slot(ui, row_height, |ui| {
+            action_button(
+                ui,
+                self.service
+                    .as_ref()
+                    .is_some_and(|service| service.can_restart_script(script.id)),
+                icon::ARROW_CLOCKWISE,
+                tr("重启"),
+                None,
+            )
+            .clicked()
+        });
+        if restart_clicked {
+            match self.service.as_mut().unwrap().restart(script.id) {
+                Ok(run) => {
+                    self.selected_run = Some(run);
+                    self.filter = Filter::Running;
+                }
+                Err(error) => self.report(Err(error)),
+            }
+        }
+        let is_favorite = favorite_project.is_some() || script.favorite;
+        let favorite_clicked = launch_action_slot(ui, row_height, |ui| {
+            favorite_button(
+                ui,
+                is_favorite,
+                if favorite_project.is_some() {
+                    tr("取消收藏项目")
+                } else if script.favorite {
+                    tr("取消收藏启动项")
                 } else {
-                    tr("启动").into()
-                };
-                let row_height = self.preferences().row_height();
-                let launch_clicked = launch_action_slot(ui, row_height, |ui| {
-                    action_button(
-                        ui,
-                        active.is_none() && script.launch_block_reason().is_none(),
-                        icon::PLAY,
-                        &launch_hint,
-                        Some(tone(self.light, GREEN)),
-                    )
-                    .clicked()
-                });
-                if launch_clicked {
-                    self.launch(script.id);
+                    tr("收藏启动项")
+                },
+                self.light,
+            )
+        });
+        if favorite_clicked {
+            let result = if let Some(project_id) = favorite_project {
+                self.service.as_mut().unwrap().project_favorite(project_id)
+            } else {
+                self.service.as_mut().unwrap().script_favorite(script.id)
+            };
+            self.report(result);
+        }
+        let edit_clicked = launch_action_slot(ui, row_height, |ui| {
+            small(ui, icon::PENCIL_SIMPLE, tr("编辑原脚本文件"))
+        });
+        if edit_clicked {
+            self.open_editor(script.id);
+        }
+        launch_action_slot(ui, row_height, |ui| {
+            icon_menu(ui, icon::DOTS_THREE, |ui| {
+                if let Some(run) = active
+                    && ui.button(tr("查看 Console")).clicked()
+                {
+                    self.selected_run = Some(run);
+                    self.filter = Filter::Running;
+                    ui.close();
                 }
-                let stop_clicked = launch_action_slot(ui, row_height, |ui| {
-                    action_button(ui, active.is_some(), icon::STOP, tr("停止"), None).clicked()
-                });
-                if stop_clicked && let Some(run) = active {
-                    self.service.as_mut().unwrap().runtime.stop(run);
+                if ui.button(tr("另存参数预设")).clicked() {
+                    self.preset = Some((
+                        script.id,
+                        tf("{0} · 新参数", &[("0", (script.name).to_string())]),
+                        script.args.join("\n"),
+                        script
+                            .expected_port
+                            .map(|port| port.to_string())
+                            .unwrap_or_default(),
+                    ));
+                    ui.close();
                 }
-                let restart_clicked = launch_action_slot(ui, row_height, |ui| {
-                    action_button(
-                        ui,
-                        self.service
-                            .as_ref()
-                            .is_some_and(|s| s.can_restart_script(script.id)),
-                        icon::ARROW_CLOCKWISE,
-                        tr("重启"),
-                        None,
-                    )
-                    .clicked()
-                });
-                if restart_clicked {
-                    match self.service.as_mut().unwrap().restart(script.id) {
-                        Ok(run) => {
-                            self.selected_run = Some(run);
-                            self.filter = Filter::Running;
-                        }
-                        Err(e) => self.report(Err(e)),
-                    }
-                }
-                let favorite_clicked = launch_action_slot(ui, row_height, |ui| {
-                    favorite_button(
-                        ui,
-                        script.favorite,
-                        if script.favorite {
-                            tr("取消收藏启动项")
-                        } else {
-                            tr("收藏启动项")
-                        },
-                        self.light,
-                    )
-                });
-                if favorite_clicked {
-                    let result = self.service.as_mut().unwrap().script_favorite(script.id);
-                    self.report(result);
-                }
-                let edit_clicked = launch_action_slot(ui, row_height, |ui| {
-                    small(ui, icon::PENCIL_SIMPLE, tr("编辑原脚本文件"))
-                });
-                if edit_clicked {
-                    self.open_editor(script.id);
-                }
-                launch_action_slot(ui, row_height, |ui| {
-                    icon_menu(ui, icon::DOTS_THREE, |ui| {
-                        if let Some(run) = active
-                            && ui.button(tr("查看 Console")).clicked()
-                        {
-                            self.selected_run = Some(run);
-                            self.filter = Filter::Running;
-                            ui.close();
-                        }
-                        if ui.button(tr("另存参数预设")).clicked() {
-                            self.preset = Some((
-                                script.id,
-                                tf("{0} · 新参数", &[("0", (script.name).to_string())]),
-                                script.args.join("\n"),
-                                script
-                                    .expected_port
-                                    .map(|p| p.to_string())
-                                    .unwrap_or_default(),
-                            ));
-                            ui.close();
-                        }
-                        if ui.button(tr("修改信息")).clicked() {
-                            self.script_info = Some(ScriptInfoDraft {
-                                id: script.id,
-                                name: script.display_label().to_owned(),
-                                description: script.description.clone(),
-                                default_name: script.name.clone(),
-                                reset_name: script.display_name.is_none(),
-                            });
-                            ui.close();
-                        }
-                        if ui.button(tr("根据执行情况生成简介")).clicked() {
-                            let result = self
-                                .service
-                                .as_mut()
-                                .unwrap()
-                                .generate_description(script.id);
-                            self.report(result);
-                            ui.close();
-                        }
-                        if ui
-                            .button(if script.favorite {
-                                tr("取消收藏")
-                            } else {
-                                tr("收藏启动项")
-                            })
-                            .clicked()
-                        {
-                            let result = self.service.as_mut().unwrap().script_favorite(script.id);
-                            self.report(result);
-                            ui.close();
-                        }
-                        if ui
-                            .button(tr("删除启动项"))
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
-                        {
-                            self.delete_script = Some(script.id);
-                            ui.close();
-                        }
+                if ui.button(tr("修改信息")).clicked() {
+                    self.script_info = Some(ScriptInfoDraft {
+                        id: script.id,
+                        name: script.display_label().to_owned(),
+                        description: script.description.clone(),
+                        default_name: script.name.clone(),
+                        reset_name: script.display_name.is_none(),
                     });
-                });
+                    ui.close();
+                }
+                if ui.button(tr("根据执行情况生成简介")).clicked() {
+                    let result = self
+                        .service
+                        .as_mut()
+                        .unwrap()
+                        .generate_description(script.id);
+                    self.report(result);
+                    ui.close();
+                }
+                if ui
+                    .button(if favorite_project.is_some() {
+                        tr("取消收藏项目")
+                    } else if script.favorite {
+                        tr("取消收藏")
+                    } else {
+                        tr("收藏启动项")
+                    })
+                    .clicked()
+                {
+                    let result = if let Some(project_id) = favorite_project {
+                        self.service.as_mut().unwrap().project_favorite(project_id)
+                    } else {
+                        self.service.as_mut().unwrap().script_favorite(script.id)
+                    };
+                    self.report(result);
+                    ui.close();
+                }
+                if ui
+                    .button(tr("删除启动项"))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    self.delete_script = Some(script.id);
+                    ui.close();
+                }
             });
         });
     }
@@ -1401,6 +1935,7 @@ impl DevStart {
         let Some(index) = s.runtime.runs.iter().position(|r| r.id == id) else {
             return;
         };
+        let mut close_console = None;
         let mut stop = false;
         let mut restart = None;
         let mut clear = false;
@@ -1430,9 +1965,9 @@ impl DevStart {
                 ui.spacing_mut().button_padding = Vec2::new(7.0, 3.0);
                 ui.horizontal(|ui| {
                     let reserved_actions = if tiled_root {
-                        300.0
+                        334.0
                     } else if tab_root {
-                        160.0
+                        194.0
                     } else {
                         76.0
                     };
@@ -1473,6 +2008,30 @@ impl DevStart {
                         },
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if tiled_root || tab_root {
+                            let target = if tiled_root {
+                                CloseRunTarget::Window
+                            } else {
+                                CloseRunTarget::Tab
+                            };
+                            let hint = if run.close_requested {
+                                tr("正在停止并关闭")
+                            } else if run.state.active() {
+                                tr("停止并关闭")
+                            } else {
+                                tr("关闭 Console")
+                            };
+                            let color = if run.state.active() {
+                                tone(self.light, RED)
+                            } else {
+                                tone(self.light, MUTED)
+                            };
+                            if action_button(ui, !run.close_requested, icon::X, hint, Some(color))
+                                .clicked()
+                            {
+                                close_console = Some(target);
+                            }
+                        }
                         if action_button(
                             ui,
                             matches!(run.state, State::Starting | State::Running),
@@ -1667,6 +2226,9 @@ impl DevStart {
                     });
                 }
             });
+        if let Some(target) = close_console {
+            self.close_run = Some(CloseRunRequest { id, target });
+        }
         if terminal_active {
             match s.run_project_context(id) {
                 Err(error) => {
@@ -2031,25 +2593,43 @@ impl DevStart {
                 });
         }
 
-        if let Some(id) = self.close_run {
+        if let Some(request) = self.close_run {
+            let active = self
+                .service
+                .as_ref()
+                .and_then(|s| s.runtime.runs.iter().find(|r| r.id == request.id))
+                .is_some_and(|run| run.state.active());
+            let title = match (request.target, active) {
+                (CloseRunTarget::Window, true) => tr("确认停止服务并关闭窗口吗？"),
+                (CloseRunTarget::Window, false) => tr("确认关闭窗口吗？"),
+                (CloseRunTarget::Tab, true) => tr("确认停止服务并关闭此标签吗？"),
+                (CloseRunTarget::Tab, false) => tr("确认关闭此标签吗？"),
+            };
             egui::Modal::new(egui::Id::new("close-running-tab"))
                 .frame(dialog_ui::frame(ctx))
                 .show(ctx, |ui| {
                     dialog_ui::content(ui);
-                    ui.heading(tr("是否停止并关闭？"));
+                    ui.heading(title);
                     if let Some(run) = self
                         .service
                         .as_ref()
-                        .and_then(|s| s.runtime.runs.iter().find(|r| r.id == id))
+                        .and_then(|s| s.runtime.runs.iter().find(|r| r.id == request.id))
                     {
                         ui.label(crate::i18n::run_title(run).as_ref());
                     }
                     dialog_ui::actions(ui, |ui| {
-                        if ui.button(tr("是，停止并关闭")).clicked() {
-                            if let Some(s) = &mut self.service {
-                                let result = s.runtime.close_tab(id, true);
-                                self.report(result);
-                            }
+                        let confirm = if active {
+                            tr("停止并关闭")
+                        } else {
+                            tr("关闭 Console")
+                        };
+                        if ui.button(confirm).clicked() {
+                            let result = self
+                                .service
+                                .as_mut()
+                                .ok_or(tr("工作空间不可用").to_string())
+                                .and_then(|s| s.runtime.close_tab(request.id, active));
+                            self.report(result);
                             self.close_run = None;
                         }
                         if ui.button(tr("取消")).clicked() {
@@ -2787,6 +3367,22 @@ fn launch_widths(width: f32, item_spacing: f32) -> (f32, f32, f32, f32) {
         status,
         port,
     )
+}
+fn launch_table_column_widths(width: f32, item_spacing: f32) -> [f32; 8] {
+    let operation_slots = LAUNCH_ACTION_SLOT_COUNT + 1;
+    let operation_width = LAUNCH_ACTION_SLOT_WIDTH * operation_slots as f32
+        + item_spacing * (operation_slots - 1) as f32;
+    let data_width = (width - operation_width - item_spacing * 7.0).max(675.0);
+    [
+        data_width * 0.15,
+        data_width * 0.14,
+        data_width * 0.12,
+        data_width * 0.18,
+        data_width * 0.24,
+        data_width * 0.08,
+        data_width * 0.09,
+        operation_width,
+    ]
 }
 const LAUNCH_ACTION_SLOT_WIDTH: f32 = 28.0;
 const LAUNCH_ACTION_SLOT_COUNT: usize = 6;

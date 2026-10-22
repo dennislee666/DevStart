@@ -11,7 +11,7 @@
 ## 后端边界
 
 - git_workspace：共享的 Git 进程运行、仓库快照、分支及历史查询。同一真实仓库串行写操作，GUI 与 API 共用锁。
-- git_actions：修改文件解析、diff、提交、推送、拉取、备份回滚与 Git 参数命令。所有操作基于参数数组，不拼接 shell；文件使用 literal pathspec。状态由 porcelain -z 解析，保留重命名及空格文件名。
+- git_actions：修改文件解析、diff、提交、推送、拉取、备份回滚与 Git 参数命令。所有操作基于参数数组，不拼接 shell；文件使用 literal pathspec。状态由 porcelain -z 解析，保留重命名及空格文件名；未跟踪目录按 Git normal 模式合并为目录项，避免为每个子文件重复输出路径。选中目录提交时会包含目录内全部文件。
 - git_jobs：API 写操作立即返回任务编号，再查询 git.job；最多四个运行任务，保留最近十六个结果，不持久化。
 - ui_git：只负责三栏布局、交互状态与后台请求展示，不推断仓库数据。
 

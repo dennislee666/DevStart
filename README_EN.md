@@ -44,7 +44,7 @@ Or call the CLI: `cargo run --locked -- --api projects.list`. Full methods and c
 
 DevStart focuses on everyday launching and switching. It does not automatically resolve cross-project dependencies, schedule dependency startup order, check service readiness, or orchestrate complex workflows.
 
-**Scripts stay with their projects.** DevStart references each project's own files, commands, and arguments. It does not manage project dependencies or execute scripts during import. The open-source edition starts with an empty default group and no projects, launch entries, or personal groups.
+**Scripts stay with their projects.** DevStart references each project's own files, commands, and arguments. It does not manage project dependencies or execute scripts during import. On first run, the open-source edition creates a local fictional demo group with four projects and demo/test launch entries. Existing workspaces are never overwritten.
 
 ## Download 1.0
 
@@ -62,7 +62,7 @@ Choose a directory, review detected projects, launch entries and known ports, th
 
 ![Review and select detected launch entries](docs/screenshots/demo-scan.png)
 
-<details><summary>First launch: start from an empty workspace</summary>
+<details><summary>Empty workspace state</summary>
 
 ![Empty workspace with a centered Start button](docs/screenshots/demo-empty.png)
 
@@ -80,7 +80,7 @@ View branches, choose existing remotes, update/merge, inspect changed files, com
 
 ![Three local mock services in tiled Consoles](docs/screenshots/demo-tiles.png)
 
-All projects, commit history, remote URLs and logs shown here are fictional. The demo does not access production/test databases or deploy code, and is not preloaded into the app. See [showcase notes](docs/showcase.md).
+All projects, commit history, remote URLs and logs shown here are fictional. The first-run launch entries start loopback-only mock servers only after an explicit click; they do not access production/test databases, external networks, or deployment systems. Existing workspaces are never overwritten. See [showcase notes](docs/showcase.md).
 
 ## Features
 

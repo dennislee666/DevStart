@@ -50,7 +50,7 @@ Built for individual developers switching frequently between AI Coding projects,
 - **Basic Git workspace**: switch between registered projects, select existing local branches and remote addresses, inspect changes, commit, push, and fetch updates with a merge; browse commit history, per-file additions/deletions, and multi-tab diffs. See the [Git workspace guide](git-workspace.md).
 - **Interactive project terminals**: persistent shell sessions in project directories, with command history, live colored output, and Ctrl+C. Git and run views share the project terminal; the run view lets you switch between launch logs and the terminal.
 
-The currently validated release platform is macOS 12 or later, with Intel / Apple Silicon Universal packages. DevStart itself needs no Node.js or WebView; each project still requires its own runtime and dependencies. The open-source edition starts with an empty workspace and a default group. Configuration, logs, and edit history remain on the local computer and are not distributed with the repository.
+The currently validated release platform is macOS 12 or later, with Intel / Apple Silicon Universal packages. DevStart itself needs no Node.js or WebView; each project still requires its own runtime and dependencies. On first run, the open-source edition creates a local demo group with four fictional projects; loopback-only mock launch entries require an explicit click. Existing catalogs are preserved. Configuration, logs, and edit history remain on the local computer and are not distributed with the repository.
 
 See the [English README](../README_EN.md) for downloads, installation, launching, and technical details.
 
