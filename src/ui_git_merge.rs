@@ -5,6 +5,7 @@ pub(super) struct Picker {
     source: String,
     target: String,
     confirming: bool,
+    error: Option<String>,
 }
 impl Picker {
     pub(super) fn new(project: u64, current: &str, branches: &[String]) -> Self {
@@ -17,6 +18,7 @@ impl Picker {
                 .unwrap_or_default(),
             target: current.into(),
             confirming: false,
+            error: None,
         }
     }
 }
@@ -102,17 +104,21 @@ impl DevStart {
                         });
                 }
                 ui.add_space(8.0);
-                ui.label(
-                    RichText::new(tr(
-                        "操作会切换到目标分支并合并，不会推送远程。冲突将保留供处理。",
-                    ))
-                    .small()
-                    .color(tone(self.light, MUTED)),
-                );
+                if git::merging::validate_pair(&picker.source, &picker.target).is_ok() {
+                for text in [
+                    tf("来源分支 {source} 不会被修改。", &[("source", picker.source.clone())]),
+                    tf("目标分支 {target} 将接收 {source} 的提交并更新本地文件，必要时生成合并提交。", &[("source", picker.source.clone()), ("target", picker.target.clone())]),
+                    tf("操作后停留在 {target} 分支；同一仓库的其他项目也会看到文件变化。", &[("target", picker.target.clone())]),
+                    tr("不推送远程，远程分支保持不变。若有冲突，将保留现场供手动处理。").into(),
+                ] {
+                    ui.label(RichText::new(text).small().color(tone(self.light, MUTED)));
+                }
+                }
+                if picker.error.is_some() && git::merging::validate_pair(&picker.source, &picker.target).is_ok() { picker.error = None; }
+                if let Some(error) = &picker.error { ui.colored_label(tone(self.light, RED), tr(error)); }
                 ui.add_space(14.0);
                 let valid = !picker.source.is_empty()
                     && !picker.target.is_empty()
-                    && picker.source != picker.target
                     && self.git_page.pending.is_none();
                 ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                     ui.horizontal(|ui| {
@@ -121,7 +127,10 @@ impl DevStart {
                             .add_enabled(valid, egui::Button::new(tr("确认")))
                             .clicked()
                         {
-                            if picker.confirming {
+                            if let Err(error) = git::merging::validate_pair(&picker.source, &picker.target) {
+                                picker.error = Some(error);
+                                picker.confirming = false;
+                            } else if picker.confirming {
                                 execute = Some(Action::Merge(
                                     picker.source.clone(),
                                     picker.target.clone(),

@@ -4,7 +4,7 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
-pub(super) fn read(path: &Path) -> Result<String, String> {
+pub(crate) fn read(path: &Path) -> Result<String, String> {
     let meta = std::fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
     if !meta.is_file() || meta.len() > 2_000_000 {
         return Err(format!(
@@ -70,6 +70,21 @@ pub(super) fn project(root: &Path) -> Result<(String, String, Vec<Script>), Stri
         .into_owned();
     let mut stacks = vec![];
     let mut scripts = crate::discovery::discover(root)?;
+    if crate::flutter_launch::is_app(root) {
+        let flutter = crate::flutter_launch::detect(root)?;
+        if !flutter.is_empty() {
+            stacks.push("Flutter");
+            let text = read(&root.join("pubspec.yaml"))?;
+            if let Some(n) = text
+                .lines()
+                .find_map(|line| line.strip_prefix("name:"))
+                .map(str::trim)
+            {
+                name = n.trim_matches(['\'', '"']).into();
+            }
+            scripts.extend(flutter);
+        }
+    }
     if root.join("package.json").is_file() {
         let data = json(root, "package.json")?;
         if let Some(n) = data["name"].as_str() {
@@ -80,8 +95,33 @@ pub(super) fn project(root: &Path) -> Result<(String, String, Vec<Script>), Stri
             "UniApp"
         } else if deps.contains("\"next\"") {
             "Next.js"
+        } else if deps.contains("\"nuxt\"") {
+            "Nuxt"
+        } else if deps.contains("\"@sveltejs/kit\"") {
+            "SvelteKit"
+        } else if deps.contains("\"astro\"") {
+            "Astro"
+        } else if deps.contains("\"@angular/core\"") {
+            "Angular"
+        } else if deps.contains("\"expo\"") {
+            "Expo"
+        } else if deps.contains("\"react-native\"") {
+            "React Native"
+        } else if deps.contains("\"react\"") {
+            "React"
         } else if deps.contains("\"vue\"") {
-            "Vue"
+            let version = data["dependencies"]["vue"]
+                .as_str()
+                .or(data["devDependencies"]["vue"].as_str())
+                .unwrap_or("");
+            if version
+                .trim_start_matches(['^', '~', '>', '=', ' '])
+                .starts_with('3')
+            {
+                "Vue 3"
+            } else {
+                "Vue"
+            }
         } else {
             "Node.js"
         });
@@ -275,8 +315,10 @@ pub(super) fn project(root: &Path) -> Result<(String, String, Vec<Script>), Stri
         if !root.join(file).is_file() {
             continue;
         }
-        stacks.push("Java / Gradle");
         let text = read(&root.join(file))?;
+        let android =
+            text.contains("com.android.application") || text.contains("com.android.library");
+        stacks.push(if android { "Android" } else { "Java / Gradle" });
         let program: String = if root.join("gradlew").is_file() {
             "./gradlew".into()
         } else {
@@ -284,7 +326,7 @@ pub(super) fn project(root: &Path) -> Result<(String, String, Vec<Script>), Stri
         };
         if text.contains("org.springframework.boot") {
             scripts.push(command(root, file, "Spring Boot", &program, &["bootRun"]));
-        } else if text.contains("application") {
+        } else if !android && gradle_application_plugin(&text) {
             scripts.push(command(root, file, "Java application", &program, &["run"]));
         }
     }
@@ -317,6 +359,25 @@ pub(super) fn project(root: &Path) -> Result<(String, String, Vec<Script>), Stri
         stacks.join(" / ")
     };
     Ok((name, stack, scripts))
+}
+/// Match the Gradle application plugin, never the Android plugin's similarly named ID.
+fn gradle_application_plugin(source: &str) -> bool {
+    let compact: String = source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .flat_map(|line| line.chars().filter(|c| !c.is_whitespace()))
+        .collect();
+    [
+        "id(\"application\")",
+        "id('application')",
+        "id'application'",
+        "id\"application\"",
+        "plugins{application}",
+        "applyplugin:'application'",
+        "applyplugin:\"application\"",
+    ]
+    .iter()
+    .any(|pattern| compact.contains(pattern))
 }
 fn spring_port(root: &Path) -> Result<Option<u16>, String> {
     let mut ports = std::collections::HashSet::new();
@@ -358,7 +419,7 @@ fn spring_port(root: &Path) -> Result<Option<u16>, String> {
 }
 
 /// JSONC comments/trailing commas are removed only outside strings; configuration is never evaluated.
-fn jsonc(source: &str) -> Result<serde_json::Value, String> {
+pub(crate) fn jsonc(source: &str) -> Result<serde_json::Value, String> {
     let mut out = String::new();
     let mut chars = source.chars().peekable();
     let (mut quoted, mut escaped) = (false, false);

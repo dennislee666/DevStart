@@ -17,9 +17,11 @@ mod editor;
 mod editor_layout;
 mod editor_service;
 mod external;
+mod flutter_launch;
 mod git_diff;
 mod git_jobs;
 mod git_workspace;
+mod group_service;
 mod i18n;
 mod java_edit;
 mod launch;
@@ -53,6 +55,17 @@ fn main() -> eframe::Result {
             println!("{}", app_identity::edition());
             return Ok(());
         }
+        Some("--flutter-emulator-service") => Some(
+            args.get(2)
+                .ok_or_else(|| "缺少模拟器配置".to_string())
+                .and_then(|config| flutter_launch::emulator_service(config)),
+        ),
+        Some("--flutter-launch") => Some((|| {
+            let config = args.get(2).ok_or("缺少 Flutter 启动配置")?;
+            let launch =
+                serde_json::from_str(config).map_err(|e| format!("Flutter 启动配置无效: {e}"))?;
+            flutter_launch::run(launch, &args[3..])
+        })()),
         Some("--api") => Some(api_client::cli(&args)),
         Some("--mcp") => Some(api_client::mcp()),
         Some("--logs") => Some(api_client::follow(&args)),

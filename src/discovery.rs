@@ -30,7 +30,8 @@ fn scan(
             continue;
         }
         if ty.is_dir() {
-            if depth < 3
+            if !crate::flutter_launch::is_platform_directory(root, &name)
+                && depth < 3
                 && !name.starts_with('.')
                 && ![
                     "node_modules",
@@ -126,7 +127,7 @@ fn package(root: &Path, path: &Path, result: &mut Vec<Script>) -> Result<(), Str
     if let Some(scripts) = json.get("scripts").and_then(|v| v.as_object()) {
         for (name, value) in scripts {
             if let Some(command) = value.as_str()
-                && is_launch_name(name)
+                && (is_launch_name(name) || is_frontend_launch(command))
             {
                 result.push(Script {
                     display_name: None,
@@ -171,4 +172,42 @@ fn is_launch_name(name: &str) -> bool {
             ]
             .contains(p)
         })
+}
+
+/// Recognize explicit development CLI protocols even when package script names are custom.
+fn is_frontend_launch(source: &str) -> bool {
+    let Some(words) = crate::configured_ports::words(source) else {
+        return false;
+    };
+    if words.iter().any(|s| {
+        [
+            "build", "deploy", "publish", "upload", "release", "test", "lint",
+        ]
+        .contains(&s.as_str())
+    }) {
+        return false;
+    }
+    let mut tokens = words.iter().map(String::as_str).peekable();
+    while let Some(token) = tokens.peek() {
+        if ["npx", "cross-env", "cross-env-shell", "env"].contains(token) || token.contains('=') {
+            tokens.next();
+        } else {
+            break;
+        }
+    }
+    match tokens.next() {
+        Some("vite") => {
+            matches!(tokens.peek(), None | Some(&"dev" | &"serve" | &"preview"))
+                || tokens.peek().is_some_and(|t| t.starts_with('-'))
+        }
+        Some("next" | "nuxt" | "nuxi" | "astro") => {
+            matches!(tokens.next(), Some("dev" | "start" | "preview"))
+        }
+        Some("vue-cli-service") => tokens.next() == Some("serve"),
+        Some("ng") => tokens.next() == Some("serve"),
+        Some("uni") => !words.iter().any(|t| t == "build"),
+        Some("expo") => matches!(tokens.next(), Some("start" | "run:android" | "run:ios")),
+        Some("react-native") => matches!(tokens.next(), Some("start" | "run-android" | "run-ios")),
+        _ => false,
+    }
 }

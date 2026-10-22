@@ -163,6 +163,7 @@ pub fn validate(script: &Script) -> Result<(), String> {
         }
     }
     match &script.entry {
+        Entry::Flutter { launch } => launch.validate()?,
         Entry::Java {
             main_class,
             program,

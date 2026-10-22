@@ -25,6 +25,7 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
       - run: cargo build --release --locked
+      - run: python3 scripts/test-flutter-launch.py
       - name: Verify Intel Monterey build
         run: |
           rustup target add x86_64-apple-darwin

@@ -15,6 +15,9 @@ pub(super) struct Outcome {
     pub(super) cleared: bool,
 }
 impl TerminalView {
+    pub(super) fn request_focus(&mut self) {
+        self.focus = true;
+    }
     pub(super) fn attach(&mut self, id: u64) {
         if self.session != Some(id) {
             *self = Self {

@@ -1727,7 +1727,8 @@ fn api_group_project_crud_has_default_group_and_atomic_metadata_validation() {
         json!({"id":group,"name":"开发环境"}),
     );
     api_call(&mut s, "groups.delete", json!({"id":group}));
-    assert_eq!(s.catalog.projects[0].group, 1);
+    assert!(s.catalog.projects.is_empty());
+    let pid = s.import(&f.0, 1).unwrap();
     assert!(crate::api::dispatch(&mut s, "groups.delete", &json!({"id":1})).is_err());
     api_call(
         &mut s,
@@ -1819,8 +1820,19 @@ fn api_runtime_logs_have_exact_byte_cursors_and_active_delete_guard() {
             .iter()
             .any(|r| r.id == rid && r.state == State::Running && r.lines.len() > 0)
     });
-    assert!(crate::api::dispatch(&mut s, "projects.delete", &json!({"id":pid})).is_err());
     assert!(crate::api::dispatch(&mut s, "scripts.delete", &json!({"id":sid})).is_err());
+    // Project removal now owns verified shutdown; individual script removal still guards active runs.
+    api_call(&mut s, "projects.delete", json!({"id":pid}));
+    assert!(s.catalog.projects.is_empty());
+    assert!(
+        !s.runtime
+            .runs
+            .iter()
+            .find(|r| r.id == rid)
+            .unwrap()
+            .state
+            .active()
+    );
     let mut offset = 0;
     let mut bytes = vec![];
     loop {
@@ -3606,4 +3618,151 @@ fn project_scan_api_adds_only_selected_launches_to_app_storage() {
         s.catalog.projects[0].scripts[0].environment["MODE"],
         "production"
     );
+}
+
+#[test]
+fn group_refresh_reconciles_sources_atomically_and_deletion_preserves_files() {
+    let f = Fixture::new();
+    fs::write(
+        f.0.join("package.json"),
+        r#"{"name":"before","scripts":{"dev":"vite","old":"vite"}}"#,
+    )
+    .unwrap();
+    let mut s = api_service(&f);
+    s.add_group("scan").unwrap();
+    let gid = s.catalog.groups.last().unwrap().id;
+    let pid = s.import(&f.0, gid).unwrap();
+    let sid = s.catalog.projects[0]
+        .scripts
+        .iter()
+        .find(|v| matches!(&v.entry, Entry::Package {name,..} if name == "dev"))
+        .unwrap()
+        .id;
+    s.script_favorite(sid).unwrap();
+    fs::write(
+        f.0.join("package.json"),
+        r#"{"name":"after","scripts":{"dev":"vite --port 4567","new":"vite"}}"#,
+    )
+    .unwrap();
+    let plan = crate::group_service::prepare(&s.catalog, gid).unwrap();
+    s.apply_group_refresh(plan).unwrap();
+    let project = &s.catalog.projects[0];
+    assert_eq!(project.id, pid);
+    assert_eq!(project.name, "after");
+    assert!(
+        project
+            .scripts
+            .iter()
+            .any(|v| v.id == sid && v.favorite && v.expected_port == Some(4567))
+    );
+    assert!(
+        !project
+            .scripts
+            .iter()
+            .any(|v| matches!(&v.entry, Entry::Package {name,..} if name == "old"))
+    );
+    let stale = crate::group_service::prepare(&s.catalog, gid).unwrap();
+    s.add_group("concurrent").unwrap();
+    assert!(
+        s.apply_group_refresh(stale)
+            .unwrap_err()
+            .contains("配置已变化")
+    );
+    assert!(s.delete_group(1).is_err());
+    assert_eq!(s.delete_group(gid).unwrap(), 1);
+    assert!(s.catalog.projects.is_empty());
+    assert!(f.0.join("package.json").exists());
+    assert!(!s.catalog.groups.iter().any(|g| g.id == gid));
+}
+
+#[test]
+fn group_refresh_failure_keeps_all_registered_projects() {
+    let f = Fixture::new();
+    f.script("echo unchanged");
+    let mut s = api_service(&f);
+    s.add_group("refresh failure").unwrap();
+    let gid = s.catalog.groups.last().unwrap().id;
+    s.import(&f.0, gid).unwrap();
+    let before = serde_json::to_value(&s.catalog).unwrap();
+    fs::write(f.0.join("package.json"), "invalid json").unwrap();
+    assert!(crate::group_service::prepare(&s.catalog, gid).is_err());
+    assert_eq!(before, serde_json::to_value(&s.catalog).unwrap());
+    assert!(f.0.join("dev.sh").exists());
+}
+
+#[test]
+fn group_deletion_escalates_only_its_own_instances() {
+    let f = Fixture::new();
+    let other = Fixture::new();
+    f.script("trap '' TERM; echo DELETE_READY; while true; do sleep 0.1; done");
+    other.script("trap 'exit 0' TERM; echo KEEP_READY; while true; do sleep 0.1; done");
+    let mut s = api_service(&f);
+    s.add_group("delete running").unwrap();
+    let gid = s.catalog.groups.last().unwrap().id;
+    s.import(&f.0, gid).unwrap();
+    s.import(&other.0, 1).unwrap();
+    let deleted = s.catalog.projects[0].scripts[0].id;
+    let retained = s.catalog.projects[1].scripts[0].id;
+    let run = s.launch(deleted).unwrap();
+    let keep = s.launch(retained).unwrap();
+    wait(&mut s.runtime, |r| {
+        run_text(r, run).contains("DELETE_READY") && run_text(r, keep).contains("KEEP_READY")
+    });
+    assert_eq!(s.delete_group(gid).unwrap(), 1);
+    assert!(
+        s.runtime
+            .runs
+            .iter()
+            .find(|r| r.id == keep)
+            .unwrap()
+            .state
+            .active()
+    );
+    assert!(
+        !s.runtime
+            .runs
+            .iter()
+            .find(|r| r.id == run)
+            .unwrap()
+            .state
+            .active()
+    );
+    assert!(run_text(&s.runtime, run).contains("强制关闭"));
+    assert!(f.0.join("dev.sh").exists());
+    s.runtime.stop(keep);
+    wait(&mut s.runtime, |r| !r.runs.iter().any(|r| r.state.active()));
+}
+
+#[test]
+fn project_deletion_preserves_sibling_in_same_group_and_source_files() {
+    let f = Fixture::new();
+    let other = Fixture::new();
+    f.script("trap '' TERM; echo DELETE_PROJECT_READY; while true; do sleep 0.1; done");
+    other.script("trap 'exit 0' TERM; echo KEEP_PROJECT_READY; while true; do sleep 0.1; done");
+    let mut s = api_service(&f);
+    let pid = s.import(&f.0, 1).unwrap();
+    let sibling = s.import(&other.0, 1).unwrap();
+    let run = s.launch(s.catalog.projects[0].scripts[0].id).unwrap();
+    let keep = s.launch(s.catalog.projects[1].scripts[0].id).unwrap();
+    wait(&mut s.runtime, |r| {
+        run_text(r, run).contains("DELETE_PROJECT_READY")
+            && run_text(r, keep).contains("KEEP_PROJECT_READY")
+    });
+    assert_eq!(s.delete_project(pid).unwrap(), 1);
+    assert!(s.catalog.groups.iter().any(|g| g.id == 1));
+    assert_eq!(s.catalog.projects.len(), 1);
+    assert_eq!(s.catalog.projects[0].id, sibling);
+    assert!(
+        s.runtime
+            .runs
+            .iter()
+            .find(|r| r.id == keep)
+            .unwrap()
+            .state
+            .active()
+    );
+    assert!(run_text(&s.runtime, run).contains("强制关闭"));
+    assert!(f.0.join("dev.sh").exists());
+    s.runtime.stop(keep);
+    wait(&mut s.runtime, |r| !r.runs.iter().any(|r| r.state.active()));
 }

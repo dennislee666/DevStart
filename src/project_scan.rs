@@ -2,6 +2,7 @@
 #[path = "project_scan_detect.rs"]
 mod detect;
 use crate::model::{Catalog, Project, Script};
+pub(crate) use detect::{jsonc as parse_jsonc, read as read_source};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -171,6 +172,7 @@ fn ignored(name: &str) -> bool {
 }
 fn marker(path: &Path) -> bool {
     [
+        "pubspec.yaml",
         "package.json",
         "composer.json",
         "pyproject.toml",
@@ -230,7 +232,10 @@ fn scan(root: &Path, catalog: &Catalog, cancel: &AtomicBool) -> Result<Report, S
             if ty.is_symlink() {
                 continue;
             }
-            if ty.is_dir() && !ignored(&name) {
+            if ty.is_dir()
+                && !ignored(&name)
+                && !crate::flutter_launch::is_platform_directory(&dir, &name)
+            {
                 if depth < 8 {
                     queue.push((entry.path(), depth + 1));
                 } else {
@@ -562,6 +567,12 @@ impl crate::service::Service {
     }
 }
 
+/// Shared authoritative discovery used by group refresh and workspace scanning.
+pub(crate) fn rediscover(root: &Path) -> Result<(String, Vec<Script>), String> {
+    let (name, _, scripts) = detect::project(root)?;
+    Ok((name, scripts))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -582,6 +593,102 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+    #[test]
+    fn flutter_platforms_scan_as_one_app_and_roundtrip_import() {
+        let f = Fixture::new();
+        f.write(
+            "app/pubspec.yaml",
+            "name: mobile_demo\ndependencies:\n  flutter:\n    sdk: flutter\n",
+        );
+        f.write("app/lib/main.dart", "void main() {}\n");
+        for platform in ["ios", "android", "ohos", "web"] {
+            f.write(&format!("app/{platform}/marker"), "");
+        }
+        f.write(
+            "app/android/app/build.gradle",
+            "plugins { id 'com.android.application' }\n",
+        );
+        let report = scan(&f.0, &Catalog::default(), &AtomicBool::new(false)).unwrap();
+        assert_eq!(report.projects.len(), 1);
+        let app = &report.projects[0];
+        assert_eq!(app.name, "mobile_demo");
+        assert!(app.stack.contains("Flutter"));
+        assert_eq!(app.launches.len(), 7);
+        assert!(
+            app.launches
+                .iter()
+                .any(|l| l.script.name.contains("鸿蒙") && l.script.name.contains("真机"))
+        );
+        assert!(
+            app.launches
+                .iter()
+                .any(|l| l.script.name.contains("iOS") && l.script.name.contains("模拟器"))
+        );
+        let ids: Vec<_> = app.launches.iter().map(|l| l.id).collect();
+        let (catalog, count) = apply(&Catalog::default(), completed(report), &ids).unwrap();
+        assert_eq!(count, 7);
+        let encoded = serde_json::to_vec(&catalog).unwrap();
+        let decoded: Catalog = serde_json::from_slice(&encoded).unwrap();
+        assert!(
+            decoded.projects[0]
+                .scripts
+                .iter()
+                .all(|s| matches!(s.entry, crate::model::Entry::Flutter { .. }))
+        );
+        assert!(!f.0.join("app/pubspec.lock").exists());
+        assert!(!f.0.join("app/.dart_tool").exists());
+    }
+    #[test]
+    fn android_gradle_is_not_a_java_application_launcher() {
+        let f = Fixture::new();
+        f.write(
+            "native/build.gradle",
+            "plugins { id 'com.android.application' }\n",
+        );
+        f.write("java/build.gradle", "plugins { id 'application' }\n");
+        let report = scan(&f.0, &Catalog::default(), &AtomicBool::new(false)).unwrap();
+        assert!(
+            report
+                .projects
+                .iter()
+                .find(|p| p.path.ends_with("native"))
+                .unwrap()
+                .launches
+                .is_empty()
+        );
+        assert_eq!(
+            report
+                .projects
+                .iter()
+                .find(|p| p.path.ends_with("java"))
+                .unwrap()
+                .launches
+                .len(),
+            1
+        );
+    }
+    #[test]
+    fn custom_frontend_script_names_keep_declared_commands() {
+        let f = Fixture::new();
+        f.write("vue/package.json", r#"{"name":"web-demo","dependencies":{"vue":"^3.5.0"},"scripts":{"local":"vite --port 4567","bundle":"vite build","preview":"vite preview"}}"#);
+        f.write("uni/package.json", r#"{"name":"uni-demo","dependencies":{"@dcloudio/uni-app":"1"},"scripts":{"h5":"uni -p h5","dev:mp-weixin":"uni -p mp-weixin","build:h5":"uni build -p h5"}}"#);
+        let report = scan(&f.0, &Catalog::default(), &AtomicBool::new(false)).unwrap();
+        let vue = report
+            .projects
+            .iter()
+            .find(|p| p.name == "web-demo")
+            .unwrap();
+        assert_eq!(vue.stack, "Vue 3");
+        assert_eq!(vue.launches.len(), 2);
+        assert!(vue.launches.iter().any(|l| l.port == Some(4567)));
+        let uni = report
+            .projects
+            .iter()
+            .find(|p| p.name == "uni-demo")
+            .unwrap();
+        assert_eq!(uni.stack, "UniApp");
+        assert_eq!(uni.launches.len(), 2);
     }
     fn completed(report: Report) -> Job {
         Job {

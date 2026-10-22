@@ -51,6 +51,7 @@ pub const METHODS: &[&str] = &[
     "groups.create",
     "groups.update",
     "groups.delete",
+    "groups.refresh",
     "projects.list",
     "projects.get",
     "projects.create",

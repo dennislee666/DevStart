@@ -175,6 +175,7 @@ fn evidence(process: &Process, project: &Project) -> bool {
         Entry::File { .. } => process
             .command
             .contains(&s.file.to_string_lossy().to_string()),
+        Entry::Flutter { .. } => false,
         Entry::Command { program } => {
             process
                 .command
@@ -520,6 +521,7 @@ fn command_matches(args: &[String], script: &crate::model::Script) -> bool {
                     }
                 })
         }
+        Entry::Flutter { .. } => false,
         Entry::Command { program } => {
             args.first().is_some_and(|arg| {
                 std::path::Path::new(arg).file_name() == std::path::Path::new(program).file_name()
@@ -631,6 +633,7 @@ pub fn find_existing(
                     .file_name()
                     .and_then(|s| s.to_str())
                     .unwrap_or(""),
+                Entry::Flutter { .. } => "",
                 Entry::Command { program } => std::path::Path::new(program)
                     .file_name()
                     .and_then(|s| s.to_str())

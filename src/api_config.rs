@@ -149,21 +149,14 @@ pub fn handle(s: &mut Service, method: &str, p: &Value) -> Result<Value, String>
         "groups.delete" => {
             fields(p, &["id"])?;
             let gid = id(p, "id")?;
-            if gid == 1 {
-                return Err("默认分组不可删除".into());
-            }
-            let mut next = s.catalog.clone();
-            if !next.groups.iter().any(|g| g.id == gid) {
-                return Err("分组不存在".into());
-            }
-            next.groups.retain(|g| g.id != gid);
-            for project in &mut next.projects {
-                if project.group == gid {
-                    project.group = 1;
-                }
-            }
-            s.commit(next)?;
-            Ok(json!({"deleted":gid,"projects_moved_to":1}))
+            let count = s.delete_group(gid)?;
+            Ok(json!({"deleted":gid,"projects_removed":count,"source_files_deleted":false}))
+        }
+        "groups.refresh" => {
+            fields(p, &["id"])?;
+            let plan = crate::group_service::prepare(&s.catalog, id(p, "id")?)?;
+            let count = s.apply_group_refresh(plan)?;
+            Ok(json!({"projects_updated":count,"source_files_modified":false}))
         }
         "projects.list" => {
             fields(p, &[])?;
@@ -236,17 +229,7 @@ pub fn handle(s: &mut Service, method: &str, p: &Value) -> Result<Value, String>
         "projects.delete" => {
             fields(p, &["id"])?;
             let pid = id(p, "id")?;
-            idle(
-                s,
-                &project(s, pid)?
-                    .scripts
-                    .iter()
-                    .map(|v| v.id)
-                    .collect::<Vec<_>>(),
-            )?;
-            let mut next = s.catalog.clone();
-            next.projects.retain(|p| p.id != pid);
-            s.commit(next)?;
+            s.delete_project(pid)?;
             Ok(json!({"deleted":pid,"source_files_deleted":false}))
         }
         "projects.refresh" => {

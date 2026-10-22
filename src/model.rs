@@ -8,6 +8,9 @@ pub struct Group {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub enum Entry {
+    Flutter {
+        launch: crate::flutter_launch::Launch,
+    },
     File {
         interpreter: String,
     },
@@ -137,6 +140,11 @@ impl Script {
     }
     pub fn source_identity(&self) -> String {
         match &self.entry {
+            Entry::Flutter { launch } => format!(
+                "{}:flutter:{}",
+                self.file.display(),
+                serde_json::to_string(launch).expect("Flutter protocol")
+            ),
             Entry::File { .. } => self.file.display().to_string(),
             Entry::Package { name, .. } => format!("{}:{name}", self.file.display()),
             Entry::Command { program } => format!("{}:{program}", self.file.display()),
@@ -163,6 +171,15 @@ impl Script {
             }
             Entry::Package { manager, name } => format!("{} run {}", quote(manager), quote(name)),
             Entry::Command { program } => quote(program),
+            Entry::Flutter { launch } => format!(
+                "{} run --debug{}",
+                quote(&launch.program),
+                launch
+                    .device
+                    .as_ref()
+                    .map(|id| format!(" -d {}", quote(id)))
+                    .unwrap_or_else(|| format!(" · {}", launch.label()))
+            ),
             Entry::Java {
                 program,
                 main_class,

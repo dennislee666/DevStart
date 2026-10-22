@@ -76,6 +76,7 @@ jobs:
           codesign --verify --deep --strict "$app"
           xcrun vtool -show-build "$binary"
           python3 scripts/verify-api.py "$binary"
+          DEVSTART_TEST_BINARY="$binary" python3 scripts/test-flutter-launch.py
       - name: Sign, notarize, staple and verify installable downloads
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}

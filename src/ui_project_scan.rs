@@ -271,13 +271,20 @@ impl DevStart {
                                                     Some(egui::TextWrapMode::Truncate);
                                                 if ui
                                                     .add_enabled_ui(!launch.existing, |ui| {
-                                                        ui.add_sized(
-                                                            [name_width, 24.0],
-                                                            egui::Checkbox::new(
-                                                                &mut selected,
-                                                                &launch.script.name,
+                                                        ui.allocate_ui_with_layout(
+                                                            egui::vec2(name_width, 24.0),
+                                                            egui::Layout::left_to_right(
+                                                                egui::Align::Center,
                                                             ),
+                                                            |ui| {
+                                                                ui.set_min_width(name_width);
+                                                                ui.add(egui::Checkbox::new(
+                                                                    &mut selected,
+                                                                    &launch.script.name,
+                                                                ))
+                                                            },
                                                         )
+                                                        .inner
                                                     })
                                                     .inner
                                                     .changed()
@@ -295,17 +302,27 @@ impl DevStart {
                                                             .color(tone(self.light, MUTED)),
                                                     );
                                                 }
-                                                ui.add_sized(
-                                                    [(ui.available_width() - 80.0).max(20.0), 24.0],
-                                                    egui::Label::new(
-                                                        RichText::new(&launch.command)
-                                                            .monospace()
-                                                            .small()
-                                                            .color(tone(self.light, MUTED)),
-                                                    )
-                                                    .truncate(),
-                                                )
-                                                .on_hover_text(&launch.command);
+                                                let command_width =
+                                                    (ui.available_width() - 80.0).max(20.0);
+                                                ui.allocate_ui_with_layout(
+                                                    egui::vec2(command_width, 24.0),
+                                                    egui::Layout::left_to_right(
+                                                        egui::Align::Center,
+                                                    ),
+                                                    |ui| {
+                                                        ui.set_min_width(command_width);
+                                                        ui.add(
+                                                            egui::Label::new(
+                                                                RichText::new(&launch.command)
+                                                                    .monospace()
+                                                                    .small()
+                                                                    .color(tone(self.light, MUTED)),
+                                                            )
+                                                            .truncate(),
+                                                        )
+                                                        .on_hover_text(&launch.command)
+                                                    },
+                                                );
                                                 ui.label(
                                                     launch
                                                         .port
@@ -379,6 +396,9 @@ impl DevStart {
             });
         if let Some(result) = imported {
             self.expanded.extend(result.project_ids);
+            // A consumed report must never reopen as an unsubmitted draft.
+            // Cancellation and backend errors deliberately retain the current report.
+            *draft = ScanUi::default();
         }
         if close || response.should_close() {
             if running && let Some(id) = draft.job {

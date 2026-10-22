@@ -2,13 +2,18 @@
 use super::{branches, git, mutation_guard, root};
 use std::path::Path;
 
+/// Shared deterministic validation for UI confirmation and API execution.
+pub fn validate_pair(source: &str, target: &str) -> Result<(), String> {
+    if source == target {
+        return Err("合并分支不能两个相同的分支合并".into());
+    }
+    Ok(())
+}
 /// Reject dirty or in-progress work before checkout. Conflicts remain available for resolution.
 pub fn merge(path: &Path, source: &str, target: &str) -> Result<String, String> {
+    validate_pair(source, target)?;
     let _guard = mutation_guard(path)?;
     let path = root(path)?;
-    if source == target {
-        return Err("Source and destination branches must differ".into());
-    }
     let local = branches(&path)?;
     if !local.iter().any(|b| b == source) || !local.iter().any(|b| b == target) {
         return Err(
@@ -55,5 +60,20 @@ pub fn merge(path: &Path, source: &str, target: &str) -> Result<String, String> 
         Err(error) => Err(format!(
             "{source} → {target}\nCurrent branch: {target}\n{error}"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn same_branch_rejected_before_any_repository_operation() {
+        let error = super::merge(
+            std::path::Path::new("/nonexistent-devstart-test-repo"),
+            "main",
+            "main",
+        )
+        .unwrap_err();
+        assert_eq!(error, "合并分支不能两个相同的分支合并");
+        assert!(super::validate_pair("main", "feature").is_ok());
     }
 }

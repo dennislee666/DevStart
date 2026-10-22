@@ -93,6 +93,11 @@ impl GitPage {
         }
     }
 }
+impl GitPage {
+    pub(super) fn push_notice(&mut self, success: bool, message: String) {
+        self.notices.push((success, message));
+    }
+}
 impl DevStart {
     pub(super) fn git_request_pending(&self) -> bool {
         self.git_page.pending.is_some()
@@ -339,14 +344,6 @@ impl DevStart {
                                 && self.git_page.message == previous
                             {
                                 self.git_page.message = generated.message;
-                                self.git_page.notices.push((
-                                    true,
-                                    format!(
-                                        "{} · {}",
-                                        tr("提交备注已生成"),
-                                        generated.agent.label()
-                                    ),
-                                ));
                             } else {
                                 self.git_page.notices.push((
                                     false,
@@ -776,17 +773,25 @@ impl DevStart {
                                     });
                                     ui.add_space(8.0);
                                     ui.horizontal(|ui| {
-                                        let width = (ui.available_width() - 42.0).max(80.0);
+                                        let button_width = [tr("生成"), tr("生成中…")].iter().map(|text| ui.painter().layout_no_wrap((*text).to_owned(), egui::TextStyle::Body.resolve(ui.style()), ui.visuals().text_color()).size().x).fold(0.0_f32, f32::max) + 48.0;
+                                        let button_width = button_width.max(88.0);
+                                        let width = (ui.available_width() - button_width - ui.spacing().item_spacing.x).max(80.0);
                                         ui.add(egui::TextEdit::multiline(&mut self.git_page.message).hint_text(tr("提交备注")).desired_rows(2).desired_width(width));
-                                        if self.git_page.generating_message { ui.spinner().on_hover_text(tr("正在使用本地 AI 工具生成提交备注…")); }
-                                        else {
-                                            let enabled = !busy && !self.git_page.selection.selected.is_empty();
-                                            let response = ui.add_enabled(enabled, egui::Button::new(button_label(ui, icon::MAGIC_WAND, enabled)).min_size(egui::vec2(28.0, 28.0)).frame(false));
-                                            response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tr("生成提交备注")));
-                                            generate_message = response.on_hover_text(tr("使用本地 AI 工具根据勾选文件生成提交备注，不会提交代码"))
-                                                .on_disabled_hover_text(tr("请先勾选需要提交的文件，并等待当前任务完成"))
-                                                .on_hover_cursor(if enabled { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Default }).clicked();
-                                        }
+                                        ui.allocate_ui_with_layout(egui::vec2(button_width, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                            ui.set_min_width(button_width);
+                                            if self.git_page.generating_message {
+                                                ui.spinner().on_hover_text(tr("正在使用本地 AI 工具生成提交备注…"));
+                                                ui.label(tr("生成中…"));
+                                            } else {
+                                                let enabled = !busy && !self.git_page.selection.selected.is_empty();
+                                                let label = format!("{} {}", icon::MAGIC_WAND, tr("生成"));
+                                                let response = ui.add_enabled(enabled, egui::Button::new(button_label(ui, &label, enabled)).min_size(egui::vec2(button_width, 32.0)));
+                                                response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tr("生成提交备注")));
+                                                generate_message = response.on_hover_text(tr("使用本地 AI 工具根据勾选文件生成提交备注，不会提交代码"))
+                                                    .on_disabled_hover_text(tr("请先勾选需要提交的文件，并等待当前任务完成"))
+                                                    .on_hover_cursor(if enabled { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Default }).clicked();
+                                            }
+                                        });
                                     });
                                     ui.horizontal_wrapped(|ui| {
                                         if ui
@@ -931,7 +936,17 @@ impl DevStart {
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 for (index, (success, message)) in self.git_page.notices.iter().enumerate() {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    let mut frame = egui::Frame::popup(ui.style());
+                    if !success {
+                        frame = frame
+                            .fill(if self.light {
+                                Color32::from_rgb(255, 237, 238)
+                            } else {
+                                Color32::from_rgb(64, 24, 29)
+                            })
+                            .stroke(egui::Stroke::new(1.0, tone(self.light, RED)));
+                    }
+                    frame.show(ui, |ui| {
                         ui.set_width(370.0);
                         ui.horizontal(|ui| {
                             ui.colored_label(

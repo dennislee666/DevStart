@@ -132,12 +132,13 @@ DEV_START_DATA_DIR=/tmp/dev-start-agent "$DEV_START" --serve
 | `groups.list` | `{}` | 分组数组 |
 | `groups.create` | `{"name":"组名"}` | 新分组对象 |
 | `groups.update` | `{"id":2,"name":"新组名"}` | 分组id |
-| `groups.delete` | `{"id":2}` | 删除分组，其项目移入默认组1 |
+| `groups.refresh` | `{"id":2}` | 重新发现分组下项目名称、启动项和端口，完整成功后统一更新；源目录丢失或配置并发变动则失败 |
+| `groups.delete` | `{"id":2}` | 移除分组及其中项目和启动项登记，保留项目源文件；默认组不可删除 |
 | `projects.list` | `{}` | 项目数组，包含各项目scripts |
 | `projects.get` | `{"id":10}` | 项目对象 |
 | `projects.create` | `{"path":"/absolute/project","group":2,"name":"项目名","description":"说明","favorite":false}` | 导入并发现项目自己的启动项（无清单时仅按启动命名协议）；仅path必填 |
 | `projects.update` | `{"id":10,"patch":{"name":"新名","description":"新描述","group":1,"favorite":true}}` | 修改后的项目对象；patch中字段均可选 |
-| `projects.delete` | `{"id":10}` | 移除登记；保留项目目录和原启动清单 |
+| `projects.delete` | `{"id":10}` | 停止该项目关联实例（优雅停止超时后强制），确认退出后移除项目及启动项登记；保留分组、项目目录和源脚本 |
 | `projects.refresh` | `{"id":10}` | 重新读取项目清单，返回项目对象 |
 | `scripts.list` | `{"project_id":10}` 或 `{}` | 指定项目或全部启动项数组 |
 | `scripts.ports` | `{"id":12}` | 启动前配置/推导端口、实际端口、显示值与来源 |
@@ -625,3 +626,5 @@ GUI 切换分支点击后直接执行安全切换；成功与失败复用右下�
 - `git.restore_version {"project_id":123,"commit":"完整历史提交哈希","branch":"main","expected_head":"确认时的HEAD完整或至少10位哈希"}`：将选中历史文件树恢复为当前分支的一个新提交。要求干净工作区、无进行中的 Git 操作；核实分支/HEAD 后保存 refs/devstart/version-backups 下的原 HEAD 引用。不会重写历史或修改远程；之后正常推送即可同步，若远程有新改动仍遵循正常合并规则。忽略文件碰撞会拒绝，不静默删除。提交失败时恢复内容可能已暂存，错误说明现场和备份引用。GUI 二次确认，API 调用方负责授权；返回 job_id，通过 git.job 查询。
 
 设置字段 `commit_agent` 可选 `discover`（初始自动检测并记住首次成功工具）、`auto`（每次重新检测）、`codex`、`claude`、`cursor`。通过 settings.get/settings.update 读取和修改。GUI 默认选中全部文件变动，保留刷新期间用户手动排除项；单次 git.commit 最多支持 10000 个所选文件。AI 生成仅填写备注，不自动提交。
+
+Flutter 启动入口使用 `{"Flutter":{"launch":{...}}}`，平台、设备、模拟器及 SDK 字段详见 [Flutter 启动协议](flutter-launch.md)。扫描不运行 SDK，设备准备仅在点击启动时发生。

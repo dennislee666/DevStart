@@ -104,7 +104,7 @@
         ],
         "additionalProperties": false
       },
-      "description": "删除分组并把所属项目移入默认组 1；默认组不可删除，不删除原项目文件。"
+      "description": "删除分组及其项目、启动项登记；默认组不可删除。只关闭该分组关联的实例：优雅停止超时后强制关闭，确认退出才删除登记。失败保留登记，不删除项目源文件。"
     },
     "projects.get": {
       "params": {
@@ -136,7 +136,7 @@
         ],
         "additionalProperties": false
       },
-      "description": "移除项目登记；活动实例须先停止并确认退出，不删除项目目录或原启动清单。"
+      "description": "移除指定项目及其启动项登记；保留分组、项目目录及源脚本。自动优雅关闭该项目关联实例，超时后强制关闭；确认退出后才移除登记，失败保留登记。API 无文字确认。"
     },
     "projects.refresh": {
       "params": {
@@ -321,7 +321,7 @@
               },
               "entry": {
                 "type": "object",
-                "description": "Externally tagged File/Package/Command/Java variant; see api.md"
+                "description": "Externally tagged File/Package/Command/Java/Flutter variant; see api.md"
               },
               "description": {
                 "type": "string"
@@ -404,7 +404,7 @@
               },
               "entry": {
                 "type": "object",
-                "description": "Externally tagged File/Package/Command/Java variant; see api.md"
+                "description": "Externally tagged File/Package/Command/Java/Flutter variant; see api.md"
               },
               "description": {
                 "type": "string"
@@ -1668,6 +1668,22 @@
         ],
         "additionalProperties": false
       }
+    },
+    "groups.refresh": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "description": "重新发现分组中已登记项目的当前名称、启动项与端口，完整扫描成功后原子更新。保留匹配启动源的 ID、收藏与显示备注；源目录无法读取或配置并发修改时整批失败。不会修改项目源文件。"
     }
   }
 }

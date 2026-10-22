@@ -24,6 +24,8 @@ mod dialog_ui;
 mod editor_ui;
 #[path = "ui_git.rs"]
 mod git_ui;
+#[path = "ui_groups.rs"]
+mod groups_ui;
 #[path = "ui_project_scan.rs"]
 mod scan_ui;
 #[path = "ui_console_search.rs"]
@@ -43,6 +45,7 @@ struct ScriptInfoDraft {
 }
 pub struct DevStart {
     scan_ui: scan_ui::ScanUi,
+    groups_ui: groups_ui::GroupsUi,
     git_page: git_ui::GitPage,
     console_terminal_tabs: HashSet<u64>,
     console_terminals: HashMap<u64, terminal_ui::TerminalView>,
@@ -124,6 +127,7 @@ impl DevStart {
             .unwrap_or_default();
         let mut app = Self {
             scan_ui: Default::default(),
+            groups_ui: Default::default(),
             git_page: git_ui::GitPage::default(),
             console_terminal_tabs: Default::default(),
             console_terminals: Default::default(),
@@ -785,14 +789,14 @@ impl DevStart {
             .id_salt("tiled-console-grid")
             .show(ui, |ui| {
                 for row in tabs.chunks(columns) {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_top(|ui| {
                         for tab in row {
                             ui.allocate_ui_with_layout(
                                 Vec2::new(width, height),
                                 egui::Layout::top_down(egui::Align::Min),
                                 |ui| {
                                     ui.set_max_height(height);
-                                    egui::Frame::new()
+                                    let frame = egui::Frame::new()
                                         .fill(if self.light {
                                             Color32::from_gray(247)
                                         } else {
@@ -804,6 +808,20 @@ impl DevStart {
                                                 self.console(ui, tab.id)
                                             });
                                         });
+                                    // Observe pointer presses without placing an input-capturing overlay.
+                                    if ui.input(|i| i.pointer.any_pressed())
+                                        && ui.rect_contains_pointer(frame.response.rect)
+                                    {
+                                        self.selected_run = Some(tab.id);
+                                    }
+                                    if self.selected_run == Some(tab.id) {
+                                        ui.painter().rect_stroke(
+                                            frame.response.rect,
+                                            4.0,
+                                            egui::Stroke::new(1.5, tone(self.light, STARTING_BLUE)),
+                                            egui::StrokeKind::Inside,
+                                        );
+                                    }
                                 },
                             );
                         }
@@ -895,6 +913,28 @@ impl DevStart {
                                     if ui.button(tr("重命名分组")).clicked() {
                                         self.rename_entity =
                                             Some((true, group.id, group.name.clone()));
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .add_enabled(
+                                            self.groups_ui.pending_is_idle(),
+                                            egui::Button::new(tr("重新扫描更新项目启动脚本")),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.refresh_group(group.id, ui.ctx());
+                                        ui.close();
+                                    }
+                                    if group.id != 1
+                                        && ui
+                                            .add_enabled(
+                                                self.groups_ui.pending_is_idle(),
+                                                egui::Button::new(tr("删除分组")),
+                                            )
+                                            .clicked()
+                                    {
+                                        self.groups_ui.delete =
+                                            Some((crate::group_service::DeletionTarget::Group(group.id), group.name.clone()));
                                         ui.close();
                                     }
                                 })
@@ -1016,6 +1056,10 @@ impl DevStart {
                                                 }
                                                 if ui.button(tr("打开项目目录")).clicked() {
                                                     self.report(service::open_file(&project.path));
+                                                    ui.close();
+                                                }
+                                                if ui.add_enabled(self.groups_ui.pending_is_idle(), egui::Button::new(tr("删除项目"))).clicked() {
+                                                    self.groups_ui.delete = Some((crate::group_service::DeletionTarget::Project(project.id), project.name.clone()));
                                                     ui.close();
                                                 }
                                                 ui.separator();
@@ -1323,13 +1367,14 @@ impl DevStart {
         });
     }
     fn console(&mut self, ui: &mut egui::Ui, id: u64) {
-        let tabbed = !self.tiled && ui.ctx().viewport_id() == egui::ViewportId::ROOT;
+        let root_console = ui.ctx().viewport_id() == egui::ViewportId::ROOT;
         let console_id = self
             .service
             .as_ref()
             .and_then(|s| s.runtime.runs.iter().find(|r| r.id == id))
             .map_or(id, |r| r.console_id);
-        let mut terminal_active = tabbed && self.console_terminal_tabs.contains(&console_id);
+        let mut terminal_active = root_console && self.console_terminal_tabs.contains(&console_id);
+        let mut terminal_selected = false;
         let can_find =
             self.selected_run == Some(id) || ui.ctx().viewport_id() != egui::ViewportId::ROOT;
         let find = !terminal_active
@@ -1511,21 +1556,29 @@ impl DevStart {
                         }
                     });
                 });
-                if compact {
+                if compact && !root_console {
                     ui.horizontal_wrapped(|ui| run_status(ui, run, self.light));
                 }
                 if tiled_root || tab_root {
-                    if !compact || tab_root {
-                        ui.horizontal(|ui| {
-                            let reserve = if tab_root { 170.0 } else { 0.0 };
-                            let width = (ui.available_width() - reserve).max(0.0);
+                    // Use the status row in compact cards and the command row in spacious headers.
+                    // Narrow cards move the switch to its own row rather than hide terminal access.
+                    let inline = available_width >= 360.0;
+                    if compact && !inline {
+                        ui.horizontal_wrapped(|ui| run_status(ui, run, self.light));
+                    }
+                    ui.horizontal(|ui| {
+                        let reserve = 170.0;
+                        let width = (ui.available_width() - reserve).max(0.0);
+                        if !compact || inline {
                             ui.allocate_ui_with_layout(
                                 Vec2::new(width, ui.text_style_height(&egui::TextStyle::Body)),
                                 egui::Layout::left_to_right(egui::Align::Center),
                                 |ui| {
-                                    ui.set_max_width(width);
                                     ui.set_min_width(width);
-                                    if !compact {
+                                    ui.set_max_width(width);
+                                    if compact {
+                                        ui.horizontal_wrapped(|ui| run_status(ui, run, self.light));
+                                    } else {
                                         ui.add(
                                             egui::Label::new(
                                                 RichText::new(
@@ -1544,31 +1597,19 @@ impl DevStart {
                                     }
                                 },
                             );
-                            if tab_root {
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if ui
-                                            .selectable_label(terminal_active, tr("终端"))
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                            .clicked()
-                                        {
-                                            terminal_active = true;
-                                            self.console_terminal_tabs.insert(console_id);
-                                        }
-                                        if ui
-                                            .selectable_label(!terminal_active, tr("启动日志"))
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                            .clicked()
-                                        {
-                                            terminal_active = false;
-                                            self.console_terminal_tabs.remove(&console_id);
-                                        }
-                                    },
-                                );
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if let Some(terminal) = console_mode_switch(ui, terminal_active) {
+                                terminal_active = terminal;
+                                terminal_selected = terminal;
+                                if terminal {
+                                    self.console_terminal_tabs.insert(console_id);
+                                } else {
+                                    self.console_terminal_tabs.remove(&console_id);
+                                }
                             }
                         });
-                    }
+                    });
                 } else {
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1623,6 +1664,9 @@ impl DevStart {
                 }
                 Ok((project, path)) => {
                     let view = self.console_terminals.entry(project).or_default();
+                    if terminal_selected {
+                        view.request_focus();
+                    }
                     if view.session.is_none() {
                         match s.terminals.open(project, &path) {
                             Ok(session) => view.attach(session),
@@ -1842,6 +1886,7 @@ impl DevStart {
     }
     fn dialogs(&mut self, ctx: &egui::Context) {
         self.project_scan_dialog(ctx);
+        self.group_dialogs(ctx);
         if let Some(id) = self.delete_script {
             let target = self.service.as_ref().and_then(|service| {
                 service.catalog.projects.iter().find_map(|project| {
@@ -2515,6 +2560,26 @@ fn run_state_legend(ui: &egui::Ui, light: bool) -> egui::text::LayoutJob {
     }
     job
 }
+/// Shared log/PTY switch for both root console layouts; state belongs to the logical console.
+fn console_mode_switch(ui: &mut egui::Ui, terminal_active: bool) -> Option<bool> {
+    let mut changed = None;
+    if ui
+        .selectable_label(terminal_active, tr("终端"))
+        .on_hover_text(tr("在当前项目目录执行命令"))
+        .clicked()
+    {
+        changed = Some(true);
+    }
+    if ui
+        .selectable_label(!terminal_active, "Console")
+        .on_hover_text(tr("查看启动日志"))
+        .clicked()
+    {
+        changed = Some(false);
+    }
+    changed
+}
+
 fn tiled_console_title(
     ui: &egui::Ui,
     run: &crate::runtime::Run,

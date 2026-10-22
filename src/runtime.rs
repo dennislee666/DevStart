@@ -383,6 +383,12 @@ impl Runtime {
             Entry::Command { program } => {
                 command.arg(program);
             }
+            Entry::Flutter { launch } => {
+                command
+                    .arg(std::env::current_exe().map_err(|e| e.to_string())?)
+                    .arg("--flutter-launch")
+                    .arg(serde_json::to_string(launch).map_err(|e| e.to_string())?);
+            }
             Entry::Java {
                 program,
                 main_class,
@@ -573,6 +579,13 @@ impl Runtime {
             }
         });
         Ok(id)
+    }
+    /// Report verified lifecycle completion, including termination errors, to configuration operations.
+    pub fn termination_result(&self, id: u64) -> Option<Result<(), String>> {
+        self.runs
+            .iter()
+            .find(|r| r.id == id)
+            .and_then(|r| r.control.completion())
     }
     pub fn stop(&mut self, id: u64) {
         if let Some(run) = self
