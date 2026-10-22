@@ -178,7 +178,6 @@ with tempfile.TemporaryDirectory(prefix='ds-api-', dir='/tmp') as temporary:
         assert any('API_READY' in row['text'] for row in found['rows'])
         assert rpc('logs.search', {'run_id': run_id, 'keyword': 'this-keyword-is-absent'})['matched_lines'] == 0
         checks.append('bounded Console keyword search and no-match result')
-        rpc('projects.delete', {'id': pid}, fail=True)
         rpc('scripts.delete', {'id': sid}, fail=True)
         run2 = rpc('runs.restart', {'script_id': sid})['run_id']
         assert run2 != run_id
@@ -249,11 +248,47 @@ with tempfile.TemporaryDirectory(prefix='ds-api-', dir='/tmp') as temporary:
         assert port_info['source'] == 'configured' and port_info['display'] == '8123'
         checks.append('prelaunch declared port and observation provenance')
         rpc('scripts.delete', {'id': added})
-        rpc('groups.delete', {'id': group})
-        assert rpc('projects.get', {'id': pid})['group'] == 1
-        rpc('projects.delete', {'id': pid})
+        keep_project = root / 'keep-project'
+        keep_project.mkdir()
+        (keep_project / 'dev.sh').write_text(
+            '#!/bin/bash\ntrap "exit 0" TERM\nprintf "KEEP_READY\\n"\nwhile true; do sleep 1; done\n'
+        )
+        keep_item = rpc('projects.create', {'path': str(keep_project), 'name': '保留运行验证'})
+        keep_run = rpc('runs.start', {'script_id': keep_item['scripts'][0]['id']})['run_id']
+        until('runs.get', {'id': keep_run}, lambda run: run['state'] == 'running')
+        deletion_project = root / 'deletion-project'
+        deletion_project.mkdir()
+        deletion_source = deletion_project / 'dev.sh'
+        deletion_source.write_text(
+            '#!/bin/bash\ntrap "exit 0" TERM\nprintf "DELETE_READY\\n"\nwhile true; do sleep 1; done\n'
+        )
+        deletion_item = rpc(
+            'projects.create',
+            {'path': str(deletion_project), 'name': '运行中删除验证', 'description': 'API验证'},
+        )
+        deletion_pid = deletion_item['id']
+        deletion_run = rpc('runs.start', {'script_id': deletion_item['scripts'][0]['id']})['run_id']
+        until('runs.get', {'id': deletion_run}, lambda run: run['state'] == 'running')
+        deleted = rpc('projects.delete', {'id': deletion_pid})
+        assert deleted == {'deleted': deletion_pid, 'source_files_deleted': False}
+        assert deletion_source.exists() and not (deletion_project / '.dev-start.json').exists()
+        assert not rpc('runs.get', {'id': deletion_run})['active']
+        assert rpc('runs.get', {'id': keep_run})['active']
+        assert all(item['id'] != deletion_pid for item in rpc('projects.list'))
+        rpc('runs.close', {'id': keep_run, 'stop': True})
+        until('runs.get', {'id': keep_run}, lambda run: not run['active'])
+        checks.append('active project deletion stops only its own run and preserves project source files')
+        deleted_group = rpc('groups.delete', {'id': group})
+        assert deleted_group == {
+            'deleted': group,
+            'projects_removed': 1,
+            'source_files_deleted': False,
+        }
+        assert not rpc('runs.get', {'id': run2})['active']
+        assert all(item['id'] != pid for item in rpc('projects.list'))
         assert (project / 'dev.sh').exists() and not (project / '.dev-start.json').exists()
         assert (data / 'projects' / str(pid) / '.dev-start.json').exists()
+        checks.append('group deletion removes only DevStart project registrations and preserves source files')
         service.terminate()
         service.wait(timeout=10)
         assert not endpoint.exists()
