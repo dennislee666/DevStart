@@ -944,7 +944,7 @@ impl DevStart {
                             } else {
                                 Color32::from_rgb(64, 24, 29)
                             })
-                            .stroke(egui::Stroke::new(1.0, tone(self.light, RED)));
+                            .stroke(egui::Stroke::new(1.0_f32, tone(self.light, RED)));
                     }
                     frame.show(ui, |ui| {
                         ui.set_width(370.0);

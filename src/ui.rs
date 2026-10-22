@@ -818,7 +818,10 @@ impl DevStart {
                                         ui.painter().rect_stroke(
                                             frame.response.rect,
                                             4.0,
-                                            egui::Stroke::new(1.5, tone(self.light, STARTING_BLUE)),
+                                            egui::Stroke::new(
+                                                1.5_f32,
+                                                tone(self.light, STARTING_BLUE),
+                                            ),
                                             egui::StrokeKind::Inside,
                                         );
                                     }
