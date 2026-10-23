@@ -943,6 +943,7 @@ impl DevStart {
             return;
         }
         let mut closed = None;
+        let mut close_all = false;
         egui::Area::new(egui::Id::new("git-result-notices"))
             .anchor(egui::Align2::RIGHT_BOTTOM, [-18.0, -18.0])
             .order(egui::Order::Foreground)
@@ -975,6 +976,9 @@ impl DevStart {
                                     if small(ui, icon::X, tr("关闭窗口")) {
                                         closed = Some(index);
                                     }
+                                    if small(ui, icon::BROOM, tr("关闭全部")) {
+                                        close_all = true;
+                                    }
                                 },
                             );
                         });
@@ -987,7 +991,9 @@ impl DevStart {
                     });
                 }
             });
-        if let Some(index) = closed {
+        if close_all {
+            self.git_page.notices.clear();
+        } else if let Some(index) = closed {
             self.git_page.notices.remove(index);
         }
     }

@@ -198,6 +198,7 @@
   "添加启动脚本": "Add launch script",
   "添加项目": "Add project",
   "清空当前 Console 日志": "Clear current Console logs",
+  "关闭全部": "Dismiss all",
   "版本 {0}\n{1}": "Version {0}\n{1}",
   "版本 {version}": "Version {version}",
   "版本历史": "Version history",

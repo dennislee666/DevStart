@@ -95,6 +95,11 @@ fn evidence(path: &Path, files: &[String]) -> Result<String, String> {
         if context.len() >= CONTEXT_LIMIT {
             break;
         }
+        let change = changes.iter().find(|change| &change.path == file).unwrap();
+        if change.directory {
+            context.push_str("[untracked directory selected; individual contents omitted]\n");
+            continue;
+        }
         let name = Path::new(file)
             .file_name()
             .unwrap_or_default()
@@ -107,15 +112,19 @@ fn evidence(path: &Path, files: &[String]) -> Result<String, String> {
             context.push_str("[credential-file content omitted]\n");
             continue;
         }
-        let status = &changes.iter().find(|c| &c.path == file).unwrap().status;
+        let status = &change.status;
         let patch = if status == "??" {
             let mut bytes = Vec::new();
-            if let Ok(source) = std::fs::File::open(path.join(file)) {
-                source
-                    .take(4096)
-                    .read_to_end(&mut bytes)
-                    .map_err(|e| e.to_string())?;
+            let source_path = path.join(file);
+            let metadata = std::fs::symlink_metadata(&source_path)
+                .map_err(|error| format!("Read selected file {}: {error}", file))?;
+            if !metadata.file_type().is_file() {
+                context.push_str("[non-regular file content omitted]\n");
+                continue;
             }
+            std::fs::File::open(source_path)
+                .and_then(|source| source.take(4096).read_to_end(&mut bytes))
+                .map_err(|error| format!("Read selected file {}: {error}", file))?;
             if bytes.contains(&0) {
                 "[binary content omitted]".into()
             } else {
