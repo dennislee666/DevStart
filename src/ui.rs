@@ -1487,11 +1487,11 @@ impl DevStart {
                                         egui::Frame::new()
                                             .fill(badge_bg)
                                             .stroke(egui::Stroke::new(1.0, badge_border))
-                                            .corner_radius(6.0)
-                                            .inner_margin(egui::Margin::symmetric(7, 2))
+                                            .corner_radius(9.0)
+                                            .inner_margin(egui::Margin::symmetric(6, 0))
                                             .show(ui, |ui| {
                                                 ui.label(
-                                                    RichText::new(value).color(badge_fg).small(),
+                                                    RichText::new(value).color(badge_fg).size(12.0),
                                                 );
                                             });
                                         return;
