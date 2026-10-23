@@ -182,7 +182,19 @@ python3 scripts/verify-api.py
 python3 scripts/verify-editor-java.py
 ```
 
-Verification scripts use temporary directories and sample processes, with no dependency on personal projects. Dependencies are pinned in `Cargo.lock`; the default registry mirror is RsProxy. See [dependency sources](docs/dependency-sources.md) for details and overrides.
+Verification scripts use temporary directories and sample processes, with no dependency on personal projects. Dependencies are pinned in `Cargo.lock`. The repository defaults to crates.io (Cargo’s official registry) so GitHub Actions and other shared builds do not depend on a China-region mirror. See [dependency sources](docs/dependency-sources.md) for more detail.
+
+**Optional (developers in China):** If crates.io is slow on your network, enable RsProxy or a similar mirror in your **user-level** `~/.cargo/config.toml` (do not commit this into the repo), for example:
+
+```toml
+[source.crates-io]
+replace-with = "rsproxy-sparse"
+
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"
+```
+
+Other working crate mirrors are fine too. The in-repo `.cargo/config.toml` intentionally does not force a mirror, so CI is not blocked by mirror 504s and similar failures.
 
 ## Documentation and contributions
 
