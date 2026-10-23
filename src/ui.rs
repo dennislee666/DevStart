@@ -2168,7 +2168,7 @@ impl DevStart {
                             if small(ui, icon::MAGNIFYING_GLASS, tr("搜索日志 · ⌘F")) {
                                 search.toggle();
                             }
-                            clear = small(ui, icon::ERASER, tr("清空视图"));
+                            clear = small(ui, icon::TRASH, tr("清空当前 Console 日志"));
                             open = small(ui, icon::FILE_TEXT, tr("打开日志文件"));
                             if let Some(favorite) = favorite_state
                                 && favorite_button(
@@ -2189,7 +2189,7 @@ impl DevStart {
                                 if small(ui, icon::MAGNIFYING_GLASS, tr("搜索日志 · ⌘F")) {
                                     search.toggle();
                                 }
-                                clear = small(ui, icon::ERASER, tr("清空视图"));
+                                clear = small(ui, icon::TRASH, tr("清空当前 Console 日志"));
                                 open = small(ui, icon::FILE_TEXT, tr("打开日志文件"));
                             }
                             if let Some(favorite) = favorite_state
@@ -2270,7 +2270,7 @@ impl DevStart {
                                 search.toggle();
                             }
 
-                            clear = small(ui, icon::ERASER, tr("清空视图"));
+                            clear = small(ui, icon::TRASH, tr("清空当前 Console 日志"));
                             open = small(ui, icon::FILE_TEXT, tr("打开日志文件"));
                             if let Some(favorite) = favorite_state
                                 && favorite_button(
