@@ -76,6 +76,9 @@ fn selected(path: &Path, files: &[String]) -> Result<Vec<String>, String> {
         return Err("Select at least one changed file".into());
     }
     let changes = changes(path)?;
+    selected_from_changes(&changes, files)
+}
+fn selected_from_changes(changes: &[Change], files: &[String]) -> Result<Vec<String>, String> {
     let mut result = vec![];
     for file in files {
         let item = changes
@@ -208,11 +211,36 @@ pub(super) fn commit_unlocked(
         return Err("Commit message must contain 1..16384 bytes".into());
     }
     let root = root(path)?;
-    let files = selected(&root, files)?;
+    let changes = changes(&root)?;
+    let files = selected_from_changes(&changes, files)?;
+    let untracked: Vec<_> = files
+        .iter()
+        .filter(|path| {
+            changes
+                .iter()
+                .any(|change| change.path == **path && change.status == "??")
+        })
+        .cloned()
+        .collect();
+    let untracked_set: std::collections::HashSet<_> = untracked.iter().collect();
+    let tracked: Vec<_> = files
+        .iter()
+        .filter(|path| !untracked_set.contains(path))
+        .cloned()
+        .collect();
     // NUL-delimited pathspecs avoid argv limits when default-selecting large change lists.
+    if !tracked.is_empty() {
+        let pathspec = CommitPathspec::new(&tracked)?;
+        let argument = format!("--pathspec-from-file={}", pathspec.0.display());
+        git(&root, &["add", "-u", &argument, "--pathspec-file-nul"])?;
+    }
+    if !untracked.is_empty() {
+        let pathspec = CommitPathspec::new(&untracked)?;
+        let argument = format!("--pathspec-from-file={}", pathspec.0.display());
+        git(&root, &["add", "-A", &argument, "--pathspec-file-nul"])?;
+    }
     let pathspec = CommitPathspec::new(&files)?;
     let argument = format!("--pathspec-from-file={}", pathspec.0.display());
-    git(&root, &["add", "-A", &argument, "--pathspec-file-nul"])?;
     let args = [
         "commit",
         "--only",
