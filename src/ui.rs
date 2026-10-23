@@ -1484,16 +1484,35 @@ impl DevStart {
                                                 RUNNING_BADGE_BORDER,
                                             )
                                         };
-                                        egui::Frame::new()
-                                            .fill(badge_bg)
-                                            .stroke(egui::Stroke::new(1.0, badge_border))
-                                            .corner_radius(9.0)
-                                            .inner_margin(egui::Margin::symmetric(6, 0))
-                                            .show(ui, |ui| {
-                                                ui.label(
-                                                    RichText::new(value).color(badge_fg).size(12.0),
-                                                );
-                                            });
+                                        let font = egui::FontId::proportional(12.0);
+                                        let text_width = ui.fonts_mut(|fonts| {
+                                            fonts
+                                                .layout_no_wrap(
+                                                    value.to_owned(),
+                                                    font.clone(),
+                                                    badge_fg,
+                                                )
+                                                .size()
+                                                .x
+                                        });
+                                        let (badge_rect, _) = ui.allocate_exact_size(
+                                            Vec2::new(text_width + 12.0, 18.0),
+                                            egui::Sense::hover(),
+                                        );
+                                        ui.painter().rect(
+                                            badge_rect,
+                                            egui::CornerRadius::same(9),
+                                            badge_bg,
+                                            egui::Stroke::new(1.0, badge_border),
+                                            egui::StrokeKind::Inside,
+                                        );
+                                        ui.put(
+                                            badge_rect,
+                                            egui::Label::new(
+                                                RichText::new(value).color(badge_fg).font(font),
+                                            )
+                                            .halign(egui::Align::Center),
+                                        );
                                         return;
                                     }
                                     let label = if index == 0 && failed {
