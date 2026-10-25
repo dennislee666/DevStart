@@ -657,19 +657,36 @@ impl DevStart {
                 }
             });
     }
-    fn launch(&mut self, id: u64) {
+    fn launch(&mut self, id: u64) -> Option<u64> {
         if let Some(service) = &mut self.service {
             match service.launch(id) {
-                Ok(run) => {
-                    self.selected_run = Some(run);
-                    self.tiled = true;
-                    self.filter = Filter::Running;
-                }
+                Ok(run) => return Some(run),
                 Err(e) => {
                     eprintln!("[dev start] {e}");
                     self.error = Some(e);
                 }
             }
+        }
+        None
+    }
+    fn activate_run_tab(&mut self, run_id: u64) {
+        let result = self
+            .service
+            .as_mut()
+            .ok_or_else(|| tr("工作空间不可用").to_owned())
+            .and_then(|service| service.runtime.open_tab(run_id));
+        if let Err(error) = result {
+            self.report(Err(error));
+            return;
+        }
+        self.selected_run = Some(run_id);
+        self.tiled = false;
+        self.filter = Filter::Running;
+    }
+    fn open_launch_in_tabs(&mut self, script_id: u64, active: Option<u64>) {
+        let run = active.or_else(|| self.launch(script_id));
+        if let Some(run) = run {
+            self.activate_run_tab(run);
         }
     }
     fn run_tabs(&mut self, ui: &mut egui::Ui) {
@@ -1532,15 +1549,26 @@ impl DevStart {
                                             },
                                         ))
                                     };
-                                    let response = ui.add(egui::Label::new(label).truncate());
+                                    let response =
+                                        ui.add(egui::Label::new(label).truncate().sense(
+                                            if index == 0 && row.script.is_some() {
+                                                egui::Sense::click()
+                                            } else {
+                                                egui::Sense::hover()
+                                            },
+                                        ));
                                     match index {
                                         0 => {
                                             if let Some(script) = &row.script {
-                                                response.on_hover_text(format!(
-                                                    "{}\n{}",
+                                                let response = response.on_hover_text(format!(
+                                                    "{}\n{}\n{}",
                                                     script.display_label(),
-                                                    script.description
+                                                    script.description,
+                                                    tr("双击在标签视图中打开")
                                                 ));
+                                                if response.double_clicked() {
+                                                    self.open_launch_in_tabs(script.id, active);
+                                                }
                                             } else {
                                                 response.on_hover_text(tr("项目暂无启动项"));
                                             }
@@ -1838,7 +1866,7 @@ impl DevStart {
             .clicked()
         });
         if launch_clicked {
-            self.launch(script.id);
+            let _ = self.launch(script.id);
         }
         let stop_clicked = launch_action_slot(ui, row_height, |ui| {
             action_button(ui, active.is_some(), icon::STOP, tr("停止"), None).clicked()
@@ -1860,10 +1888,7 @@ impl DevStart {
         });
         if restart_clicked {
             match self.service.as_mut().unwrap().restart(script.id) {
-                Ok(run) => {
-                    self.selected_run = Some(run);
-                    self.filter = Filter::Running;
-                }
+                Ok(_) => {}
                 Err(error) => self.report(Err(error)),
             }
         }
@@ -2071,8 +2096,20 @@ impl DevStart {
                                 |ui| {
                                     if tiled_root {
                                         let title = tiled_console_title(ui, run, self.light);
-                                        ui.add(egui::Label::new(title).truncate())
-                                            .on_hover_text(crate::i18n::run_title(run).as_ref());
+                                        let response = ui
+                                            .add(
+                                                egui::Label::new(title)
+                                                    .truncate()
+                                                    .sense(egui::Sense::click()),
+                                            )
+                                            .on_hover_text(format!(
+                                                "{}\n{}",
+                                                crate::i18n::run_title(run),
+                                                tr("双击在标签视图中打开")
+                                            ));
+                                        if response.double_clicked() {
+                                            self.open_console_as_tab = Some(id);
+                                        }
                                     } else {
                                         ui.add(
                                             egui::Label::new(

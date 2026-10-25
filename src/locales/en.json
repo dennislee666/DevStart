@@ -96,6 +96,7 @@
   "回退会保留当前版本，下次启动使用回退后的文件。": "The current version will be kept. The next launch will use the restored file.",
   "在当前保留的最近日志中搜索，按 Enter / Shift+Enter 跳转": "Search retained output; use Enter / Shift+Enter to navigate",
   "在标签视图中打开当前 Console": "Open this console in a tab",
+  "双击在标签视图中打开": "Double-click to open in tab view",
   "复制错误": "Copy error",
   "外观": "Appearance",
   "外观与字体": "Appearance and fonts",
