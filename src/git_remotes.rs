@@ -87,6 +87,16 @@ pub fn update(path: &Path, key: &str, branch: &str) -> Result<String, String> {
     let _guard = mutation_guard(path)?;
     let root = root(path)?;
     let target = current_target(&root, key, branch)?;
+    let conflicts = super::actions::unresolved_conflicts(&root)?;
+    if !conflicts.is_empty() {
+        return Err(format!(
+            "{}",
+            crate::i18n::tf(
+                "存在未解决的冲突，请先处理：{files}",
+                &[("files", conflicts.join("、"))]
+            )
+        ));
+    }
     if !super::actions::changes(&root)?.is_empty() {
         return Err("Commit or stash local changes before updating".into());
     }
@@ -138,6 +148,16 @@ pub fn submit(
 ) -> Result<String, String> {
     let _guard = mutation_guard(path)?;
     let root = root(path)?;
+    let conflicts = super::actions::unresolved_conflicts(&root)?;
+    if !conflicts.is_empty() {
+        return Err(format!(
+            "{}",
+            crate::i18n::tf(
+                "存在未解决的冲突，请先处理：{files}",
+                &[("files", conflicts.join("、"))]
+            )
+        ));
+    }
     if !files.is_empty() && message.trim().is_empty() {
         return Err("Commit message is required".into());
     }
@@ -156,28 +176,44 @@ pub fn submit(
                 Err(error) => Err(format!("{progress}{step}: FAILED\n{error}")),
             }
         };
-    execute(
-        &mut progress,
-        "Update Project",
-        git_output(
-            &root,
-            &[
-                "pull",
-                "--no-rebase",
-                "--no-edit",
-                "--autostash",
-                "--",
-                &target.url,
-                branch,
-            ],
-        )
-        .map(|(out, err)| format!("{out}\n{err}").replace(&target.url, &target.remote.url))
-        .map_err(|e| e.replace(&target.url, &target.remote.url)),
-    )?;
-    let conflicts = git(&root, &["diff", "--name-only", "--diff-filter=U"])?;
+    let update_result = git_output(
+        &root,
+        &[
+            "pull",
+            "--no-rebase",
+            "--no-edit",
+            "--autostash",
+            "--",
+            &target.url,
+            branch,
+        ],
+    )
+    .map(|(out, err)| format!("{out}\n{err}").replace(&target.url, &target.remote.url))
+    .map_err(|error| error.replace(&target.url, &target.remote.url));
+    match update_result {
+        Ok(output) => progress.push_str(&format!("Update Project: OK\n{output}\n")),
+        Err(error) => {
+            let conflicts = super::actions::unresolved_conflicts(&root)?;
+            if !conflicts.is_empty() {
+                return Err(format!(
+                    "Update Project: FAILED\n{error}\n{}",
+                    crate::i18n::tf(
+                        "自动暂存恢复发生冲突；本地改动仍保存在 Git stash 中。冲突文件：{files}",
+                        &[("files", conflicts.join("、"))]
+                    )
+                ));
+            }
+            return Err(format!("Update Project: FAILED\n{error}"));
+        }
+    }
+    let conflicts = super::actions::unresolved_conflicts(&root)?;
     if !conflicts.is_empty() {
         return Err(format!(
-            "{progress}Update Project: FAILED\nMerge/autostash conflicts; resolve before submitting:\n{conflicts}"
+            "{progress}Update Project: FAILED\n{}",
+            crate::i18n::tf(
+                "自动暂存恢复发生冲突；本地改动仍保存在 Git stash 中。冲突文件：{files}",
+                &[("files", conflicts.join("、"))]
+            )
         ));
     }
     if files.is_empty() {

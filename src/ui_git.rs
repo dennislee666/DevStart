@@ -592,6 +592,17 @@ impl DevStart {
                             .show(ui, |ui| {
                                 if let Some(d) = &self.git_page.details {
                                     let r = &d.repository;
+                                    let conflict_paths: Vec<_> = d
+                                        .files
+                                        .iter()
+                                        .filter(|file| file.status_label() == "冲突")
+                                        .map(|file| file.path.clone())
+                                        .collect();
+                                    let has_conflicts = !conflict_paths.is_empty();
+                                    let conflict_hint = tf(
+                                        "存在未解决的冲突，请先处理：{files}",
+                                        &[("files", conflict_paths.join("、"))],
+                                    );
                                     ui.strong(&r.name);
                                     ui.label(
                                         RichText::new(
@@ -610,7 +621,7 @@ impl DevStart {
                                         .iter()
                                         .find(|v| Some(&v.key) == remote_key.as_ref());
                                     ui.horizontal_wrapped(|ui| {
-                                        ui.add_enabled_ui(!busy, |ui| {
+                                        ui.add_enabled_ui(!busy && !has_conflicts, |ui| {
                                             let label = format!(
                                                 "{} {} {}",
                                                 icon::GIT_BRANCH,
@@ -640,12 +651,13 @@ impl DevStart {
                                                 }
                                             })
                                             .response
-                                            .on_hover_text(tr("切换分支"))
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                            .on_hover_text(if has_conflicts { conflict_hint.as_str() } else { tr("切换分支") })
+                                            .on_hover_cursor(if !busy && !has_conflicts { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Default });
                                         });
                                         let enabled = !busy
                                             && remote.is_some()
-                                            && !r.branch.starts_with("detached ");
+                                            && !r.branch.starts_with("detached ")
+                                            && !has_conflicts;
                                         if ui
                                             .add_enabled(
                                                 enabled,
@@ -660,9 +672,12 @@ impl DevStart {
                                             } else {
                                                 egui::CursorIcon::Default
                                             })
-                                            .on_hover_text(tr(
-                                                "从当前远程仓库当前分支获取最新版本与本地合并代码",
-                                            ))
+                                            .on_hover_text(if has_conflicts {
+                                                conflict_hint.as_str()
+                                            } else {
+                                                tr("从当前远程仓库当前分支获取最新版本与本地合并代码")
+                                            })
+                                            .on_disabled_hover_text(&conflict_hint)
                                             .clicked()
                                             && let Some(remote) = remote
                                         {
@@ -672,9 +687,9 @@ impl DevStart {
                                             ));
                                         }
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            let enabled = !busy && d.branches.len() > 1;
+                                            let enabled = !busy && d.branches.len() > 1 && !has_conflicts;
                                             if ui.add_enabled(enabled, egui::Button::new(button_label(ui, &format!("{} {}", icon::GIT_MERGE, tr("合并分支")), enabled)))
-                                                .on_hover_text(tr("选择来源与目标分支，在本地仓库执行合并"))
+                                                .on_hover_text(if has_conflicts { conflict_hint.as_str() } else { tr("选择来源与目标分支，在本地仓库执行合并") })
                                                 .on_hover_cursor(if enabled { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Default }).clicked() {
                                                 self.git_page.merge_picker = Some(merge_ui::Picker::new(r.project_id, &r.branch, &d.branches));
                                             }
@@ -706,6 +721,9 @@ impl DevStart {
                                             );
                                         }
                                     });
+                                    if has_conflicts {
+                                        ui.colored_label(tone(self.light, RED), &conflict_hint);
+                                    }
                                     ui.separator();
                                     ui.horizontal(|ui| {
                                         ui.strong(tr("文件变动"));
@@ -738,7 +756,8 @@ impl DevStart {
                                                         .on_hover_text(tr("选中或取消本分组的全部文件")).changed() {
                                                         self.git_page.selection.set_all(files.iter().copied(),all);
                                                     }
-                                                    toggle=ui.add(egui::Label::new(RichText::new(format!("{} ({})",tr(group),files.len())).small().color(tone(self.light,MUTED))).sense(egui::Sense::click()))
+                                                    let heading_color = if group == "冲突" { RED } else { MUTED };
+                                                    toggle=ui.add(egui::Label::new(RichText::new(format!("{} ({})",tr(group),files.len())).small().color(tone(self.light,heading_color))).sense(egui::Sense::click()))
                                                         .on_hover_cursor(egui::CursorIcon::PointingHand).clicked();
                                                 });
                                                 if toggle { header.toggle(); }
@@ -765,8 +784,11 @@ impl DevStart {
                                                                 .on_hover_ui(|ui| file_preview_tooltip(ui, &file.preview_path(r.root.as_deref().unwrap_or(&r.path))))
                                                         };
                                                         if !busy && !file.directory && file_response.double_clicked() { preview = Some(file.path.clone()); }
-                                                        let enabled = !busy && file.status != "??";
-                                                        let tooltip = if file.directory {
+                                                        let unresolved = file.status_label() == "冲突";
+                                                        let enabled = !busy && file.status != "??" && !unresolved;
+                                                        let tooltip = if unresolved {
+                                                            tr("冲突文件需先解决，不能直接回滚")
+                                                        } else if file.directory {
                                                             tr("未跟踪目录没有 HEAD 版本，无法回滚。")
                                                         } else if file.status == "??" {
                                                             tr("未跟踪文件没有 HEAD 版本，无法撤销恢复。")
@@ -795,12 +817,12 @@ impl DevStart {
                                                 ui.spinner().on_hover_text(tr("正在使用本地 AI 工具生成提交备注…"));
                                                 ui.label(tr("生成中…"));
                                             } else {
-                                                let enabled = !busy && !self.git_page.selection.selected.is_empty();
+                                                let enabled = !busy && !has_conflicts && !self.git_page.selection.selected.is_empty();
                                                 let label = format!("{} {}", icon::MAGIC_WAND, tr("生成"));
                                                 let response = ui.add_enabled(enabled, egui::Button::new(button_label(ui, &label, enabled)).min_size(egui::vec2(button_width, 32.0)));
                                                 response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tr("生成提交备注")));
                                                 generate_message = response.on_hover_text(tr("使用本地 AI 工具根据勾选文件生成提交备注，不会提交代码"))
-                                                    .on_disabled_hover_text(tr("请先勾选需要提交的文件，并等待当前任务完成"))
+                                                    .on_disabled_hover_text(if has_conflicts { tr("先解决合并冲突，再生成提交备注") } else { tr("请先勾选需要提交的文件，并等待当前任务完成") })
                                                     .on_hover_cursor(if enabled { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Default }).clicked();
                                             }
                                         });
@@ -809,6 +831,7 @@ impl DevStart {
                                         if ui
                                             .add_enabled(
                                                 !busy
+                                                    && !has_conflicts
                                                     && !self.git_page.selection.selected.is_empty()
                                                     && !self.git_page.message.trim().is_empty(),
                                                 egui::Button::new(button_label(
@@ -819,11 +842,13 @@ impl DevStart {
                                                         tr("提交本地")
                                                     ),
                                                     !busy
+                                                        && !has_conflicts
                                                         && !self.git_page.selection.selected.is_empty()
                                                         && !self.git_page.message.trim().is_empty(),
                                                 )),
                                             )
                                             .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .on_disabled_hover_text(if has_conflicts { conflict_hint.as_str() } else { tr("请先勾选需要提交的文件并填写提交备注") })
                                             .clicked()
                                         {
                                             action = Some(Action::Commit);

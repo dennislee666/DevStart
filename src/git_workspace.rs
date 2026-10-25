@@ -228,17 +228,18 @@ pub struct Snapshot {
 impl Snapshot {
     /// Group porcelain changes centrally; UI only renders the ordered, non-empty groups.
     pub fn change_groups(&self) -> Vec<(&'static str, Vec<&actions::Change>)> {
-        let mut groups: [Vec<&actions::Change>; 4] = Default::default();
+        let mut groups: [Vec<&actions::Change>; 5] = Default::default();
         for file in &self.files {
             let index = match file.status_label() {
-                "未跟踪" => 0,
-                "已新增" => 2,
-                "已删除" => 3,
-                _ => 1,
+                "冲突" => 0,
+                "未跟踪" => 1,
+                "已新增" => 3,
+                "已删除" => 4,
+                _ => 2,
             };
             groups[index].push(file);
         }
-        ["未跟踪", "有变化", "新文件", "删除"]
+        ["冲突", "未跟踪", "有变化", "新文件", "删除"]
             .into_iter()
             .zip(groups)
             .filter(|(_, files)| !files.is_empty())

@@ -68,6 +68,23 @@ pub fn changes(path: &Path) -> Result<Vec<Change>, String> {
     }
     Ok(result)
 }
+/// List paths with unresolved index stages before any action can stage or update them.
+pub fn unresolved_conflicts(path: &Path) -> Result<Vec<String>, String> {
+    let root = root(path)?;
+    Ok(
+        git(&root, &["diff", "--name-only", "--diff-filter=U", "-z"])?
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+fn conflict_error(paths: &[String]) -> String {
+    format!(
+        "存在未解决的合并冲突：{}。请先解决冲突并暂存文件，再继续操作。",
+        paths.join("、")
+    )
+}
 fn selected(path: &Path, files: &[String]) -> Result<Vec<String>, String> {
     if files.len() > 10000 {
         return Err("Select at most 10000 files".into());
@@ -207,10 +224,14 @@ pub(super) fn commit_unlocked(
     message: &str,
     files: &[String],
 ) -> Result<String, String> {
+    let root = root(path)?;
+    let conflicts = unresolved_conflicts(&root)?;
+    if !conflicts.is_empty() {
+        return Err(conflict_error(&conflicts));
+    }
     if message.trim().is_empty() || message.len() > 16384 {
         return Err("Commit message must contain 1..16384 bytes".into());
     }
-    let root = root(path)?;
     let changes = changes(&root)?;
     let files = selected_from_changes(&changes, files)?;
     let untracked: Vec<_> = files
@@ -263,6 +284,10 @@ pub fn push(path: &Path) -> Result<String, String> {
 pub fn pull(path: &Path) -> Result<String, String> {
     let _guard = mutation_guard(path)?;
     let root = root(path)?;
+    let conflicts = unresolved_conflicts(&root)?;
+    if !conflicts.is_empty() {
+        return Err(conflict_error(&conflicts));
+    }
     if !changes(&root)?.is_empty() {
         return Err("Commit or stash local changes before pulling".into());
     }
