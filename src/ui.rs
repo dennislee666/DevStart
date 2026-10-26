@@ -2720,44 +2720,48 @@ impl DevStart {
                 .as_ref()
                 .and_then(|s| s.runtime.runs.iter().find(|r| r.id == request.id))
                 .is_some_and(|run| run.state.active());
-            let title = match (request.target, active) {
-                (CloseRunTarget::Window, true) => tr("确认停止服务并关闭窗口吗？"),
-                (CloseRunTarget::Window, false) => tr("确认关闭窗口吗？"),
-                (CloseRunTarget::Tab, true) => tr("确认停止服务并关闭此标签吗？"),
-                (CloseRunTarget::Tab, false) => tr("确认关闭此标签吗？"),
-            };
-            egui::Modal::new(egui::Id::new("close-running-tab"))
-                .frame(dialog_ui::frame(ctx))
-                .show(ctx, |ui| {
-                    dialog_ui::content(ui);
-                    ui.heading(title);
-                    if let Some(run) = self
-                        .service
-                        .as_ref()
-                        .and_then(|s| s.runtime.runs.iter().find(|r| r.id == request.id))
-                    {
-                        ui.label(crate::i18n::run_title(run).as_ref());
-                    }
-                    dialog_ui::actions(ui, |ui| {
-                        let confirm = if active {
-                            tr("停止并关闭")
-                        } else {
-                            tr("关闭 Console")
-                        };
-                        if ui.button(confirm).clicked() {
-                            let result = self
-                                .service
-                                .as_mut()
-                                .ok_or(tr("工作空间不可用").to_string())
-                                .and_then(|s| s.runtime.close_tab(request.id, active));
-                            self.report(result);
-                            self.close_run = None;
+            // Recheck when rendering the request: a service may have exited after X was clicked.
+            if !active {
+                let result = self
+                    .service
+                    .as_mut()
+                    .ok_or(tr("工作空间不可用").to_string())
+                    .and_then(|s| s.runtime.close_tab(request.id, false));
+                self.report(result);
+                self.close_run = None;
+            } else {
+                let title = match request.target {
+                    CloseRunTarget::Window => tr("确认停止服务并关闭窗口吗？"),
+                    CloseRunTarget::Tab => tr("确认停止服务并关闭此标签吗？"),
+                };
+                egui::Modal::new(egui::Id::new("close-running-tab"))
+                    .frame(dialog_ui::frame(ctx))
+                    .show(ctx, |ui| {
+                        dialog_ui::content(ui);
+                        ui.heading(title);
+                        if let Some(run) = self
+                            .service
+                            .as_ref()
+                            .and_then(|s| s.runtime.runs.iter().find(|r| r.id == request.id))
+                        {
+                            ui.label(crate::i18n::run_title(run).as_ref());
                         }
-                        if ui.button(tr("取消")).clicked() {
-                            self.close_run = None;
-                        }
+                        dialog_ui::actions(ui, |ui| {
+                            if ui.button(tr("停止并关闭")).clicked() {
+                                let result = self
+                                    .service
+                                    .as_mut()
+                                    .ok_or(tr("工作空间不可用").to_string())
+                                    .and_then(|s| s.runtime.close_tab(request.id, true));
+                                self.report(result);
+                                self.close_run = None;
+                            }
+                            if ui.button(tr("取消")).clicked() {
+                                self.close_run = None;
+                            }
+                        });
                     });
-                });
+            }
         }
 
         if let Some((source, mut name, mut args, mut port)) = self.preset.clone() {
