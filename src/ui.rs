@@ -742,7 +742,7 @@ impl DevStart {
                             });
                             response.context_menu(|ui| {
                                 if ui.button(tr("独立 Console 窗口")).clicked() {
-                                    self.console_windows.entry(tab.id).or_default();
+                                    self.console_windows.entry(tab.console_id).or_default();
                                     ui.close();
                                 }
                                 if ui.button(tr("平铺独立窗口")).clicked() {
@@ -2481,11 +2481,12 @@ impl DevStart {
             .service
             .as_ref()
             .map(|s| {
-                s.runtime
-                    .runs
-                    .iter()
-                    .filter(|run| run.state.active() || self.console_windows.contains_key(&run.id))
-                    .map(|run| run.id)
+                s.run_tabs()
+                    .into_iter()
+                    .filter(|tab| {
+                        tab.state.active() || self.console_windows.contains_key(&tab.console_id)
+                    })
+                    .map(|tab| tab.console_id)
                     .collect()
             })
             .unwrap_or_default();
@@ -2503,17 +2504,21 @@ impl DevStart {
     }
     fn show_console_windows(&mut self, ctx: &egui::Context) {
         let ids: Vec<_> = self.console_windows.keys().copied().collect();
-        for id in ids {
-            let Some((title, console_id)) = self
+        for console_id in ids {
+            let Some((title, id)) = self
                 .service
                 .as_ref()
-                .and_then(|s| s.runtime.runs.iter().find(|r| r.id == id))
-                .map(|r| (crate::i18n::run_title(r).into_owned(), r.console_id))
+                .and_then(|service| {
+                    service
+                        .current_console_generation(console_id)
+                        .and_then(|id| service.runtime.runs.iter().find(|run| run.id == id))
+                })
+                .map(|run| (crate::i18n::run_title(run).into_owned(), run.id))
             else {
-                self.console_windows.remove(&id);
+                self.console_windows.remove(&console_id);
                 continue;
             };
-            let mut view = self.console_windows.remove(&id).unwrap_or_default();
+            let mut view = self.console_windows.remove(&console_id).unwrap_or_default();
             let placement = view.placement.take();
             let mut builder = egui::ViewportBuilder::default()
                 .with_title(format!("Console · {title}"))
@@ -2562,18 +2567,13 @@ impl DevStart {
                                 .inner_margin(14.0),
                         )
                         .show(child, |ui| {
-                            ui.push_id(("console-window", id), |ui| self.console(ui, id));
+                            ui.push_id(("console-window", console_id), |ui| self.console(ui, id));
                         });
                     child.request_repaint_after(Duration::from_millis(100));
                 },
             );
             if !closed {
-                let current = self
-                    .service
-                    .as_ref()
-                    .and_then(|s| s.current_console_run(id))
-                    .unwrap_or(id);
-                self.console_windows.insert(current, view);
+                self.console_windows.insert(console_id, view);
             }
         }
     }
@@ -3067,33 +3067,28 @@ impl eframe::App for DevStart {
         }
         self.editor_quit_guard(ctx);
         if let Some(s) = &mut self.service {
-            let count = s.runtime.runs.len();
+            let selected_console = self.selected_run.and_then(|id| {
+                s.runtime
+                    .runs
+                    .iter()
+                    .find(|run| run.id == id)
+                    .map(|run| run.console_id)
+            });
             s.poll();
             if let Some(api) = &self.api {
                 api.poll(s);
             }
-            if s.runtime.runs.len() > count && self.filter == Filter::Running {
-                self.selected_run = None;
+            if let Some(console_id) = selected_console {
+                self.selected_run = s.current_console_generation(console_id);
             }
-            let moved: Vec<_> = self
-                .console_windows
-                .keys()
-                .filter_map(|old| {
-                    s.current_console_run(*old)
-                        .filter(|new| new != old)
-                        .map(|new| (*old, new))
-                })
-                .collect();
-            for (old, new) in moved {
-                if let Some(view) = self.console_windows.remove(&old) {
-                    self.console_windows.insert(new, view);
-                }
-            }
+            let visible_consoles: HashSet<_> =
+                s.run_tabs().iter().map(|tab| tab.console_id).collect();
+            self.console_windows
+                .retain(|console_id, _| visible_consoles.contains(console_id));
             let retained: HashSet<_> = s.runtime.runs.iter().map(|r| r.id).collect();
             self.console_layouts
                 .retain(|(_, id), _| retained.contains(id));
             self.console_queries.retain(|id, _| retained.contains(id));
-            self.console_windows.retain(|id, _| retained.contains(id));
             if let Some(error) = s.runtime.error.take() {
                 self.error = Some(error);
             }

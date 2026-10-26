@@ -504,7 +504,7 @@ Console 各视图自动换行，保留最多3000行/2MiB；可搜索纯文本。
 
 ### 原标签内重启
 
-`runs.restart` 与界面重启共用服务路径：原 Console 的 `console_id` 保持不变，新进程获得唯一 `run_id`。旧记录 `superseded:true,tab_open:false`，用于诊断，不再列入会话导航。`runs.start` 表示显式新启动，与原标签重启区分。实例详情包含 `console_id`、`superseded`；客户端应以 `console_id` 保持窗口/标签身份，以 `run_id` 追踪进程事件。重启仍执行原优雅/强制关闭流程，校验失败且原进程尚未关闭时恢复原 Console 并显示失败原因。
+`runs.start`、`runs.restart` 与外部服务重新识别均复用同一逻辑服务的 `console_id`，每次真正的新运行仍使用唯一 `run_id`；启动检查中的重复请求返回同一待启动运行。旧代标记 `superseded:true,tab_open:false`，保留诊断日志但不再列入会话导航。外部服务按工作目录、监听端口和关联启动项匹配，重复识别同一 PID 不创建新记录；不同启动项或不同端口保持独立。`runs.list/get` 返回 `console_id`、`superseded`；客户端以 `console_id` 保持窗口/标签身份，以当前 `run_id` 追踪事件，显示打开 Console 时筛选 `tab_open && !superseded`。优雅/强制关闭流程不变，启动校验失败且原进程尚未关闭时恢复原 Console 并显示失败原因。
 
 ### 项目信息状态
 

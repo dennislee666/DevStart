@@ -117,6 +117,15 @@ impl Runtime {
         script: &Script,
         logs: PathBuf,
     ) -> Result<u64, String> {
+        self.launch_checked_in_console(project, script, logs, None)
+    }
+    fn launch_checked_in_console(
+        &mut self,
+        project: &Project,
+        script: &Script,
+        logs: PathBuf,
+        target: Option<u64>,
+    ) -> Result<u64, String> {
         let conflicts = |r: &Run| {
             r.associated_scripts.contains(&script.id)
                 || script
@@ -196,6 +205,9 @@ impl Runtime {
             lines: Default::default(),
             control: control.clone(),
         });
+        if self.rebind_console(id, target, |run| Self::same_launch_console(run, script)) {
+            journal.note("复用此启动项原有 Console，更新本次运行记录");
+        }
         journal.note("校验启动项配置…");
         let project = project.clone();
         let script = script.clone();
@@ -225,35 +237,80 @@ impl Runtime {
         script: &Script,
         logs: PathBuf,
     ) -> Result<u64, String> {
-        let index = self
-            .runs
-            .iter()
-            .position(|r| r.id == target)
-            .ok_or("运行记录不存在")?;
-        let console_id = self.runs[index].console_id;
-        let id = self.launch_checked(project, script, logs)?;
+        if !self.runs.iter().any(|run| run.id == target) {
+            return Err("运行记录不存在".into());
+        }
+        let id = self.launch_checked_in_console(project, script, logs, Some(target))?;
         if id == target {
             return Ok(id);
         }
-        let new_index = self
-            .runs
-            .iter()
-            .position(|r| r.id == id)
-            .ok_or("重启记录不存在")?;
+        self.note(id, "在当前 Console 中重启；确认原实例退出后启动新实例");
+        Ok(id)
+    }
+    fn same_directory(left: &std::path::Path, right: &std::path::Path) -> bool {
+        left == right
+            || left
+                .canonicalize()
+                .ok()
+                .zip(right.canonicalize().ok())
+                .is_some_and(|(left, right)| left == right)
+    }
+    fn same_launch_console(run: &Run, script: &Script) -> bool {
+        if run.external.is_none() {
+            return run.script_id == script.id;
+        }
+        run.associated_scripts.contains(&script.id)
+            && Self::same_directory(&run.cwd, &script.cwd)
+            && match script.expected_port {
+                Some(port) => run.expected_port == Some(port),
+                None => run.associated_scripts.len() == 1,
+            }
+    }
+    /// Reuse presentation identity, not process identity. Old generations retain
+    /// independent event IDs, controls and log paths until history retention evicts them.
+    fn rebind_console(
+        &mut self,
+        id: u64,
+        target: Option<u64>,
+        matches: impl Fn(&Run) -> bool,
+    ) -> bool {
+        let previous = target
+            .and_then(|target| {
+                self.runs
+                    .iter()
+                    .position(|run| run.id == target && run.id != id)
+            })
+            .or_else(|| {
+                self.runs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, run)| run.id != id && matches(run))
+                    .max_by_key(|(_, run)| {
+                        (
+                            run.tab_open && !run.superseded && run.state.active(),
+                            run.tab_open && !run.superseded,
+                            run.id,
+                        )
+                    })
+                    .map(|(index, _)| index)
+            });
+        let Some(position) = previous else {
+            return false;
+        };
+        let console_id = self.runs[position].console_id;
         for run in &mut self.runs {
-            if run.id != id
-                && (run.console_id == console_id || run.associated_scripts.contains(&script.id))
-            {
+            if run.id != id && (run.console_id == console_id || matches(run)) {
                 run.tab_open = false;
                 run.superseded = true;
                 run.console_id = console_id;
             }
         }
-        let mut replacement = self.runs.remove(new_index);
-        replacement.console_id = console_id;
-        self.runs.insert(index.min(self.runs.len()), replacement);
-        self.note(id, "在当前 Console 中重启；确认原实例退出后启动新实例");
-        Ok(id)
+        if let Some(index) = self.runs.iter().position(|run| run.id == id) {
+            let mut generation = self.runs.remove(index);
+            generation.console_id = console_id;
+            self.runs.insert(position.min(self.runs.len()), generation);
+        }
+        true
     }
     pub fn note(&self, id: u64, message: impl AsRef<str>) {
         if let Some(run) = self.runs.iter().find(|r| r.id == id) {
@@ -859,6 +916,16 @@ impl Runtime {
         if !crate::external::same_process(&candidate.process)? {
             return Err("识别的外部进程已变化，取消登记".into());
         }
+        if let Some(existing) = self
+            .runs
+            .iter()
+            .find(|run| run.state.active() && run.external.as_ref() == Some(&candidate.process))
+        {
+            return Ok(existing.id);
+        }
+        let script_id = *candidate.scripts.first().ok_or("外部运行缺少启动项")?;
+        let associated_scripts = candidate.scripts.clone();
+        let port = candidate.port;
         let id = crate::model::unique_id();
         let log_path = logs.join(format!("run-{id}.log"));
         let process = candidate.process;
@@ -888,7 +955,7 @@ impl Runtime {
             tab_open: true,
             close_requested: false,
             id,
-            script_id: *candidate.scripts.first().ok_or("外部运行缺少启动项")?,
+            script_id,
             associated_scripts: candidate.scripts,
             title: format!("{} / 外部运行（参数未识别）", candidate.project),
             command: process.command.clone(),
@@ -920,6 +987,17 @@ impl Runtime {
             },
             control: control.clone(),
         });
+        if self.rebind_console(id, None, |run| {
+            !run.state.active()
+                && run.expected_port == Some(port)
+                && Self::same_directory(&run.cwd, &process.cwd)
+                && run
+                    .associated_scripts
+                    .iter()
+                    .any(|id| associated_scripts.contains(id))
+        }) {
+            journal.note("外部服务重新识别，复用原有 Console");
+        }
         let tx = self.state_tx.clone();
         thread::spawn(move || {
             let result = monitor_external(&process, &control, &journal);

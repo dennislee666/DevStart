@@ -759,22 +759,37 @@ fn external_restart_waits_for_exit_and_captures_new_stdout() {
     let other = ExternalServer::new(&other_fixture);
     let other_identity = other.candidate().process;
     let mut runtime = Runtime::default();
-    runtime
+    let old = runtime
         .adopt(server.candidate(), &f.0.join("logs"))
         .unwrap();
-    runtime
+    let new = runtime
         .launch_checked(&server.project, &server.script, f.0.join("logs"))
         .unwrap();
     wait(&mut runtime, |r| {
-        r.runs.len() == 2
-            && r.runs[1]
-                .lines
-                .iter()
-                .any(|(_, t)| t.contains("SERVER_READY"))
+        r.runs
+            .iter()
+            .find(|run| run.id == new)
+            .unwrap()
+            .lines
+            .iter()
+            .any(|(_, t)| t.contains("SERVER_READY"))
     });
-    assert_eq!(runtime.runs[0].state, State::Stopped);
-    assert!(runtime.runs[1].external.is_none());
-    assert_ne!(runtime.runs[1].pid, server.child.id());
+    assert_eq!(
+        runtime.runs.iter().find(|run| run.id == old).unwrap().state,
+        State::Stopped
+    );
+    let current = runtime.runs.iter().find(|run| run.id == new).unwrap();
+    assert!(current.external.is_none());
+    assert_ne!(current.pid, server.child.id());
+    assert_eq!(current.console_id, old);
+    assert_eq!(
+        runtime
+            .runs
+            .iter()
+            .filter(|run| run.tab_open && !run.superseded)
+            .count(),
+        1
+    );
     assert!(crate::external::same_process(&other_identity).unwrap());
     runtime.stop_all();
     wait(&mut runtime, |r| r.runs.iter().all(|r| !r.state.active()));
@@ -785,7 +800,7 @@ fn owned_restart_is_serial_and_replaces_the_run() {
     let f = Fixture::new();
     let script = f.script("echo READY; while true; do sleep 1; done");
     let mut r = Runtime::default();
-    r.start("Fixture", &script, f.0.join("logs")).unwrap();
+    let old = r.start("Fixture", &script, f.0.join("logs")).unwrap();
     let project = crate::model::Project {
         description: String::new(),
         id: 1,
@@ -797,13 +812,28 @@ fn owned_restart_is_serial_and_replaces_the_run() {
         scripts: vec![script.clone()],
         explicit_scripts: true,
     };
-    r.launch_checked(&project, &script, f.0.join("logs"))
+    let new = r
+        .launch_checked(&project, &script, f.0.join("logs"))
         .unwrap();
     wait(&mut r, |r| {
-        r.runs.len() == 2 && r.runs[1].state == State::Running && r.runs[0].state == State::Stopped
+        r.runs
+            .iter()
+            .any(|run| run.id == new && run.state == State::Running)
+            && r.runs
+                .iter()
+                .any(|run| run.id == old && run.state == State::Stopped)
     });
-    assert_eq!(r.runs[0].state, State::Stopped);
-    assert_eq!(r.runs[1].state, State::Running);
+    assert_eq!(
+        r.runs
+            .iter()
+            .filter(|run| run.tab_open && !run.superseded)
+            .count(),
+        1
+    );
+    assert_eq!(
+        r.runs.iter().find(|run| run.id == new).unwrap().console_id,
+        old
+    );
     r.stop_all();
     wait(&mut r, |r| r.runs.iter().all(|r| !r.state.active()));
 }
@@ -1256,7 +1286,7 @@ fn checked_start_forces_a_term_ignoring_owned_group_before_relaunch() {
     let f = Fixture::new();
     let script = f.script("trap '' TERM; echo OLD_READY; while true; do sleep 1; done");
     let mut runtime = Runtime::default();
-    runtime.start("Fixture", &script, f.0.join("logs")).unwrap();
+    let old = runtime.start("Fixture", &script, f.0.join("logs")).unwrap();
     wait(&mut runtime, |r| {
         run_text(r, r.runs[0].id).contains("OLD_READY")
     });
@@ -1278,7 +1308,10 @@ fn checked_start_forces_a_term_ignoring_owned_group_before_relaunch() {
             .any(|r| r.id == id && r.state == State::Running)
             && run_text(r, id).contains("NEW_READY")
     });
-    assert_eq!(runtime.runs[0].state, State::Stopped);
+    assert_eq!(
+        runtime.runs.iter().find(|run| run.id == old).unwrap().state,
+        State::Stopped
+    );
     let text = run_text(&runtime, id);
     assert!(
         text.contains("优雅关闭超时") && text.contains("SIGKILL") && text.contains("确认原实例"),
@@ -1313,7 +1346,10 @@ fn checked_start_refuses_an_unrelated_listener_and_keeps_it_alive() {
     });
     assert!(run_text(&runtime, id).contains("无法确认归属"));
     assert!(!run_text(&runtime, id).contains("SIGTERM"));
-    assert_eq!(runtime.runs[0].state, State::Running);
+    assert_eq!(
+        runtime.runs.iter().find(|run| run.id == old).unwrap().state,
+        State::Running
+    );
     assert!(crate::external::same_process(&identity).unwrap());
     assert!(!f.0.join("forbidden-new-instance").exists());
     runtime.stop_all();
@@ -2843,6 +2879,18 @@ fn restart_from_old_duplicate_tab_collapses_duplicate_launch_tabs() {
             .iter()
             .any(|r| r.id == newer && r.state == State::Running)
     });
+    assert_eq!(s.run_tabs().len(), 1);
+    // Reconstruct two legacy visible slots to verify migration on an explicit restart.
+    for run in s
+        .runtime
+        .runs
+        .iter_mut()
+        .filter(|run| run.id == old || run.id == newer)
+    {
+        run.tab_open = true;
+        run.superseded = false;
+        run.console_id = run.id;
+    }
     assert_eq!(s.run_tabs().len(), 2);
     assert!(s.can_restart(old));
     let current = s.restart_run(old, sid).unwrap();
@@ -3771,3 +3819,6 @@ fn project_deletion_preserves_sibling_in_same_group_and_source_files() {
     s.runtime.stop(keep);
     wait(&mut s.runtime, |r| !r.runs.iter().any(|r| r.state.active()));
 }
+
+#[path = "tests_console_reuse.rs"]
+mod console_reuse;

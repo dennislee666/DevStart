@@ -887,13 +887,16 @@ impl Service {
             .filter(|t| open.contains(&t.id))
             .collect()
     }
-    pub fn current_console_run(&self, id: u64) -> Option<u64> {
-        let console_id = self.runtime.runs.iter().find(|r| r.id == id)?.console_id;
+    pub fn current_console_generation(&self, console_id: u64) -> Option<u64> {
         self.runtime
             .runs
             .iter()
-            .find(|r| r.console_id == console_id && r.tab_open && !r.superseded)
-            .map(|r| r.id)
+            .find(|run| run.console_id == console_id && run.tab_open && !run.superseded)
+            .map(|run| run.id)
+    }
+    pub fn current_console_run(&self, id: u64) -> Option<u64> {
+        let console_id = self.runtime.runs.iter().find(|r| r.id == id)?.console_id;
+        self.current_console_generation(console_id)
     }
     pub fn selected_run(&self, selected: Option<u64>) -> Option<u64> {
         selected
