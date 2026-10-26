@@ -74,6 +74,10 @@ fn evidence(path: &Path, files: &[String]) -> Result<String, String> {
     if files.is_empty() {
         return Err("Select changed files before generating a commit message".into());
     }
+    let conflicts = actions::unresolved_conflicts(path)?;
+    if files.iter().any(|file| conflicts.contains(file)) {
+        return Err("Selected files contain unresolved conflicts; exclude them before generating a commit message".into());
+    }
     if files.iter().any(|p| !changes.iter().any(|c| &c.path == p)) {
         return Err("File selection changed; refresh and generate again".into());
     }

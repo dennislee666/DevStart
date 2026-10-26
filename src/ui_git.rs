@@ -165,7 +165,27 @@ impl DevStart {
         let root = service.store.root.clone();
         let preference = service.catalog.preferences.commit_agent;
         let english = crate::i18n::current() == crate::i18n::Locale::English;
-        let files: Vec<_> = self.git_page.selection.selected.iter().cloned().collect();
+        let conflicts = self
+            .git_page
+            .details
+            .as_ref()
+            .map(|details| {
+                details
+                    .files
+                    .iter()
+                    .filter(|file| file.status_label() == "冲突")
+                    .map(|file| file.path.as_str())
+                    .collect::<std::collections::HashSet<_>>()
+            })
+            .unwrap_or_default();
+        let files: Vec<_> = self
+            .git_page
+            .selection
+            .selected
+            .iter()
+            .filter(|file| !conflicts.contains(file.as_str()))
+            .cloned()
+            .collect();
         let previous = self.git_page.message.clone();
         self.git_page.generating_message = true;
         self.git_page.request(move || {
@@ -656,8 +676,7 @@ impl DevStart {
                                         });
                                         let enabled = !busy
                                             && remote.is_some()
-                                            && !r.branch.starts_with("detached ")
-                                            && !has_conflicts;
+                                            && !r.branch.starts_with("detached ");
                                         if ui
                                             .add_enabled(
                                                 enabled,
@@ -672,12 +691,7 @@ impl DevStart {
                                             } else {
                                                 egui::CursorIcon::Default
                                             })
-                                            .on_hover_text(if has_conflicts {
-                                                conflict_hint.as_str()
-                                            } else {
-                                                tr("从当前远程仓库当前分支获取最新版本与本地合并代码")
-                                            })
-                                            .on_disabled_hover_text(&conflict_hint)
+                                            .on_hover_text(if has_conflicts { tr("更新会对未解决冲突采用远程版本；原本地改动保留在 Git stash 中") } else { tr("从当前远程仓库当前分支获取最新版本与本地合并代码") })
                                             .clicked()
                                             && let Some(remote) = remote
                                         {
@@ -817,12 +831,16 @@ impl DevStart {
                                                 ui.spinner().on_hover_text(tr("正在使用本地 AI 工具生成提交备注…"));
                                                 ui.label(tr("生成中…"));
                                             } else {
-                                                let enabled = !busy && !has_conflicts && !self.git_page.selection.selected.is_empty();
+                                                let has_selected_non_conflict = d.files.iter().any(|file|
+                                                    self.git_page.selection.selected.contains(&file.path)
+                                                        && file.status_label() != "冲突"
+                                                );
+                                                let enabled = !busy && has_selected_non_conflict;
                                                 let label = format!("{} {}", icon::MAGIC_WAND, tr("生成"));
                                                 let response = ui.add_enabled(enabled, egui::Button::new(button_label(ui, &label, enabled)).min_size(egui::vec2(button_width, 32.0)));
                                                 response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tr("生成提交备注")));
                                                 generate_message = response.on_hover_text(tr("使用本地 AI 工具根据勾选文件生成提交备注，不会提交代码"))
-                                                    .on_disabled_hover_text(if has_conflicts { tr("先解决合并冲突，再生成提交备注") } else { tr("请先勾选需要提交的文件，并等待当前任务完成") })
+                                                    .on_disabled_hover_text(if !has_selected_non_conflict && has_conflicts { tr("请至少选择一个非冲突文件生成提交备注") } else { tr("请先勾选需要提交的文件，并等待当前任务完成") })
                                                     .on_hover_cursor(if enabled { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Default }).clicked();
                                             }
                                         });

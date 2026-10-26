@@ -583,7 +583,7 @@ GUI 终端使用独立持久 PTY，默认进入登记项目目录本身；登录
 
 `git.remotes {"project_id":123}` 列出项目已配置的所有 fetch 地址，返回 key、name、url、preferred。同名 remote 有多个地址时分别列出。url 的凭据及查询参数隐藏，key 绑定真实名称与地址；不要猜测或缓存已过期的 key。preferred 优先为当前跟踪分支的远程，其次 origin，再其次首个地址。
 
-`git.update {"project_id":123,"remote_key":"从 git.remotes 获取","branch":"main"}` 精确获取所选地址的当前分支并 merge，不 rebase、不强制覆盖。执行前验证分支仍是 main、地址仍存在；本地有改动时拒绝操作。返回 job_id，查询 git.job 获取完成结果。冲突保留并返回原始失败原因。
+`git.update {"project_id":123,"remote_key":"从 git.remotes 获取","branch":"main"}` 精确获取所选地址的当前分支并 merge，不 rebase、不强制覆盖。执行前验证分支仍是 main、地址仍存在；本地改动（包含未跟踪文件）先保存到 Git stash，合并后恢复；无法自动合并的文件采用远程版本，冲突前的本地内容保留在 stash 中。无新提交时仍成功返回“已是最新”。返回 job_id，查询 git.job 获取完成结果。
 
 `git.push_target` 使用相同参数，把 HEAD 非强制推送到所选地址的同名当前分支，需要发布授权。GUI 的推送按钮遵循此选择；原 git.push / git.pull 接口和终端内直接输入的 Git 命令仍遵循 Git 自身的上游配置。
 
@@ -615,7 +615,7 @@ terminal.read 附加返回 segments：每段包含 text、role（output/prompt/i
 
 文件变动按未跟踪、有变化、新文件、删除分组；右侧图标撤销恢复仍需二次确认，未跟踪文件禁用恢复并提示无 HEAD 版本。
 
-GUI 提交操作：提交本地执行所选远程当前分支 pull --no-rebase --autostash，再提交所选文件；推送远程在此前提下继续 push。无二次确认；任一步失败立即停止。合并或 autostash 恢复冲突保留现场，禁止继续提交/推送。工作区无变更时推送可跳过提交，有变更但未选文件会报错。右下角结果通知保留，需用户手动关闭。底层 git.commit/git.push API 仍为独立原子动作。
+GUI 提交操作：提交本地执行所选远程当前分支 pull --no-rebase；更新前暂存已跟踪和未跟踪改动，更新后恢复，再提交所选文件；推送远程在此前提下继续 push。无二次确认；任一步失败立即停止。冲突无法自动完成时不会继续提交/推送，并保留本地恢复副本。若选中文件已被远程版本覆盖，则跳过这些文件且继续提交其他仍有改动的选中文件。工作区无变更时推送可跳过提交，有变更但未选文件会报错。右下角结果通知保留，需用户手动关闭。底层 git.commit/git.push API 仍为独立原子动作。
 
 GUI Update Project 点击后直接更新所选远程当前分支，无二次确认；成功或失败复用提交操作的右下角常驻结果通知，只有手动点击关闭图标才移除。
 

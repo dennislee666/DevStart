@@ -371,6 +371,8 @@
   "未解决的冲突文件：{files}": "Unresolved conflict files: {files}",
   "先解决冲突文件后再更新或提交": "Resolve conflicts before updating or committing",
   "先解决合并冲突，再生成提交备注": "Resolve merge conflicts before generating a commit message",
+  "请至少选择一个非冲突文件生成提交备注": "Select at least one file without conflicts to generate a commit message",
+  "更新会对未解决冲突采用远程版本；原本地改动保留在 Git stash 中": "Update resolves conflicts using the remote version and keeps the original local changes in Git stash",
   "自动暂存恢复发生冲突；本地改动仍保存在 Git stash 中。冲突文件：{files}": "Applying the autostash caused conflicts. Local changes remain in Git stash. Conflicted files: {files}",
   "冲突文件需先解决，不能直接回滚": "Resolve this conflict before restoring the file",
   "已重命名": "Renamed",
