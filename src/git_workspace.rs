@@ -7,6 +7,10 @@ pub mod actions;
 pub mod ai_message;
 #[path = "git_commit.rs"]
 pub mod commits;
+#[path = "git_conflicts.rs"]
+pub mod conflicts;
+#[path = "git_integration.rs"]
+pub mod integration;
 #[path = "git_merge.rs"]
 pub mod merging;
 #[path = "git_remotes.rs"]
@@ -52,20 +56,58 @@ fn git(path: &Path, args: &[&str]) -> Result<String, String> {
     Ok(git_output(path, args)?.0)
 }
 fn git_output(path: &Path, args: &[&str]) -> Result<(String, String), String> {
-    let mut child = Command::new("git")
-        .args(["--literal-pathspecs", "-c", "core.fsmonitor=false", "-C"])
+    let (out, err) = git_output_raw(path, args)?;
+    Ok((out.trim_end_matches('\n').to_owned(), err))
+}
+fn git_output_raw(path: &Path, args: &[&str]) -> Result<(String, String), String> {
+    git_output_input(path, args, None)
+}
+fn git_output_input(
+    path: &Path,
+    args: &[&str],
+    input: Option<&[u8]>,
+) -> Result<(String, String), String> {
+    let mut command = Command::new("git");
+    let mut verb_index = 0;
+    while args.get(verb_index) == Some(&"-c") {
+        verb_index += 2;
+    }
+    // Stash invokes Git clean internally with a magic root pathspec. Making that
+    // pathspec literal leaves untracked files in place and breaks stash recovery.
+    if !matches!(
+        args.get(verb_index).copied(),
+        Some("stash" | "merge" | "rebase" | "pull")
+    ) {
+        command.arg("--literal-pathspecs");
+    } else {
+        command.env_remove("GIT_LITERAL_PATHSPECS");
+    }
+    let mut child = command
+        .args(["-c", "core.fsmonitor=false", "-C"])
         .arg(path)
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_EDITOR", "false")
+        .env("GIT_EDITOR", "true")
         .env("GIT_SEQUENCE_EDITOR", "false")
         .process_group(0)
         .env("GIT_OPTIONAL_LOCKS", "0")
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Git: {e}"))?;
+    if let Some(input) = input {
+        use std::io::Write;
+        let bytes = input.to_vec();
+        let mut stdin = child.stdin.take().ok_or("Git stdin was not created")?;
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(&bytes);
+        });
+    }
     let (tx, rx) = std::sync::mpsc::channel();
     for (index, pipe) in [
         (
@@ -139,10 +181,7 @@ fn git_output(path: &Path, args: &[&str]) -> Result<(String, String), String> {
         eprintln!("[dev start git] {error}");
         return Err(error.trim().to_owned());
     }
-    Ok((
-        output[0].trim_end_matches('\n').to_owned(),
-        output[1].clone(),
-    ))
+    Ok((output[0].clone(), output[1].clone()))
 }
 /// One write operation per actual repository, shared by GUI workers and API jobs.
 struct MutationGuard(PathBuf);
@@ -218,6 +257,8 @@ pub fn inspect(id: u64, name: String, path: PathBuf) -> Repository {
 /// status/history also supply the summary, avoiding duplicate repository scans.
 #[derive(Clone)]
 pub struct Snapshot {
+    pub operation: integration::State,
+    pub update_method: integration::Method,
     pub repository: Repository,
     pub remotes: Vec<remotes::Remote>,
     pub branches: Vec<String>,
@@ -298,6 +339,8 @@ pub fn snapshot(project: &crate::model::Project, offset: usize) -> Result<Box<Sn
             error: None,
         };
         Ok(Box::new(Snapshot {
+            operation: integration::state(path)?,
+            update_method: integration::preferred_method(path),
             repository,
             branches,
             remotes,
@@ -372,6 +415,7 @@ pub fn history(path: &Path, offset: usize, limit: usize) -> Result<Vec<Commit>, 
 /// Switch the actual working tree; Git protects local changes. Never force, stash, or fetch.
 pub fn switch(path: &Path, branch: &str) -> Result<(), String> {
     let _guard = mutation_guard(path)?;
+    integration::ensure_idle(path)?;
     if !branches(path)?.iter().any(|b| b == branch) {
         return Err("Unknown local branch".into());
     }
@@ -607,129 +651,6 @@ mod tests {
         assert!(repo.0.join(".git/MERGE_HEAD").exists());
     }
     #[test]
-    fn submit_stops_on_autostash_conflicts_before_commit_or_push() {
-        let remote = Repo::new();
-        remote.commit("base");
-        let local = Repo::new();
-        git(
-            &local.0,
-            &["remote", "add", "origin", remote.0.to_str().unwrap()],
-        )
-        .unwrap();
-        git(&local.0, &["pull", "origin", "main"]).unwrap();
-        remote.commit("remote edit");
-        std::fs::write(local.0.join("file.txt"), "local edit").unwrap();
-        let key = remotes::list(&local.0).unwrap()[0].key.clone();
-        let error = remotes::submit(
-            &local.0,
-            &key,
-            "main",
-            "must not commit",
-            &["file.txt".into()],
-            true,
-        )
-        .unwrap_err();
-        assert!(error.contains("conflicts"));
-        assert!(!error.contains("Commit: OK"));
-        assert!(
-            !git(&local.0, &["diff", "--name-only", "--diff-filter=U"])
-                .unwrap()
-                .is_empty()
-        );
-        assert_eq!(
-            git(&local.0, &["rev-parse", "HEAD"]).unwrap(),
-            git(&remote.0, &["rev-parse", "HEAD"]).unwrap()
-        );
-    }
-    #[test]
-    fn submit_updates_then_commits_and_pushes_without_losing_unselected_edits() {
-        let remote = Repo::new();
-        remote.commit("base");
-        git(
-            &remote.0,
-            &["config", "receive.denyCurrentBranch", "ignore"],
-        )
-        .unwrap();
-        let local = Repo::new();
-        git(
-            &local.0,
-            &["remote", "add", "origin", remote.0.to_str().unwrap()],
-        )
-        .unwrap();
-        git(&local.0, &["pull", "origin", "main"]).unwrap();
-        git(&local.0, &["config", "user.name", "Test"]).unwrap();
-        git(&local.0, &["config", "user.email", "test@example.invalid"]).unwrap();
-        git(&local.0, &["config", "commit.gpgsign", "false"]).unwrap();
-        std::fs::write(remote.0.join("remote.txt"), "remote update").unwrap();
-        git(&remote.0, &["add", "remote.txt"]).unwrap();
-        git(
-            &remote.0,
-            &[
-                "-c",
-                "user.name=Test",
-                "-c",
-                "user.email=test@example.invalid",
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "-m",
-                "remote update",
-            ],
-        )
-        .unwrap();
-        std::fs::write(local.0.join("file.txt"), "local edit").unwrap();
-        std::fs::write(local.0.join("keep.txt"), "unselected").unwrap();
-        let key = remotes::list(&local.0).unwrap()[0].key.clone();
-        let output = remotes::submit(
-            &local.0,
-            &key,
-            "main",
-            "local message",
-            &["file.txt".into()],
-            true,
-        )
-        .unwrap();
-        assert!(output.contains("Push: OK"));
-        assert_eq!(
-            std::fs::read_to_string(local.0.join("remote.txt")).unwrap(),
-            "remote update"
-        );
-        assert_eq!(
-            git(&remote.0, &["rev-parse", "HEAD"]).unwrap(),
-            git(&local.0, &["rev-parse", "HEAD"]).unwrap()
-        );
-        assert!(
-            actions::changes(&local.0)
-                .unwrap()
-                .iter()
-                .any(|f| f.path == "keep.txt")
-        );
-        std::fs::write(local.0.join("file.txt"), "still here").unwrap();
-        let before = git(&local.0, &["rev-parse", "HEAD"]).unwrap();
-        git(
-            &local.0,
-            &["remote", "set-url", "origin", "/does/not/exist"],
-        )
-        .unwrap();
-        let key = remotes::list(&local.0).unwrap()[0].key.clone();
-        assert!(
-            remotes::submit(
-                &local.0,
-                &key,
-                "main",
-                "must not commit",
-                &["file.txt".into()],
-                true
-            )
-            .is_err()
-        );
-        assert_eq!(git(&local.0, &["rev-parse", "HEAD"]).unwrap(), before);
-        assert_eq!(
-            std::fs::read_to_string(local.0.join("file.txt")).unwrap(),
-            "still here"
-        );
-    }
-    #[test]
     fn working_diff_previews_text_and_rejects_binary_files() {
         let repo = Repo::new();
         repo.commit("base");
@@ -898,7 +819,11 @@ mod tests {
             "remote update"
         );
         std::fs::write(repo.0.join("file.txt"), "uncommitted").unwrap();
-        assert!(actions::pull(&repo.0).is_err());
+        assert!(actions::pull(&repo.0).unwrap().contains("没有任何变化"));
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("file.txt")).unwrap(),
+            "uncommitted"
+        );
     }
     #[test]
     fn update_uses_selected_address_and_branch_instead_of_implicit_upstream() {
@@ -1077,3 +1002,7 @@ mod tests {
         assert_eq!(git(&repo.0, &["branch", "--show-current"]).unwrap(), "main");
     }
 }
+
+#[cfg(test)]
+#[path = "git_workflow_tests.rs"]
+mod workflow_tests;

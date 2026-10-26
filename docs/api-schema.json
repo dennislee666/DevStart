@@ -1234,7 +1234,7 @@
         ],
         "additionalProperties": false
       },
-      "description": "Fetch and merge current upstream, refusing local changes. Merge conflicts are preserved and returned as errors. Returns {job_id,state:running}; poll git.job with id=job_id for terminal status. Do not retry before reading actual result."
+      "description": "Update the current branch from its preferred configured remote with the saved Merge/Rebase preference; preserve local edits and pause on conflicts. Returns job_id."
     },
     "git.restore": {
       "params": {
@@ -1423,6 +1423,13 @@
           },
           "branch": {
             "type": "string"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "merge",
+              "rebase"
+            ]
           }
         },
         "required": [
@@ -1432,7 +1439,7 @@
         ],
         "additionalProperties": false
       },
-      "description": "Fetch and merge the selected remote address current branch, no rebase/force; rejects dirty trees and stale branches/target keys. Returns {job_id,state:running}; poll git.job for completion. Select remote_key from git.remotes; do not guess it."
+      "description": "Fetch then Merge/Rebase without committing local edits or pushing. Local edits are restored through an owned stash; conflicts require review. Optional method defaults to the repository preference."
     },
     "git.push_target": {
       "params": {
@@ -1684,6 +1691,171 @@
         "additionalProperties": false
       },
       "description": "重新发现分组中已登记项目的当前名称、启动项与端口，完整扫描成功后原子更新。保留匹配启动源的 ID、收藏与显示备注；源目录无法读取或配置并发修改时整批失败。不会修改项目源文件。"
+    },
+    "git.rebase": {
+      "description": "Rebase current local branch onto an existing local branch. Rewrites local commit hashes; no force push. Returns job_id.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "onto": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project_id",
+          "onto"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "git.operation": {
+      "description": "Read merge/rebase/recovery state and conflicts.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "git.continue": {
+      "description": "Continue the resolved Merge/Rebase or finish local restoration. Returns job_id.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "git.abort": {
+      "description": "Abort active Merge/Rebase and restore the saved local edits. Returns job_id.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "git.conflict": {
+      "description": "Read base/current/incoming and working result with an optimistic version token. Binary/large blobs may omit text.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "file": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "file"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "git.resolve": {
+      "description": "Resolve only the exact reviewed version of a conflict; save backup and stage. Edited requires text. Returns job_id.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "file": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "resolution": {
+            "type": "object",
+            "properties": {
+              "choice": {
+                "enum": [
+                  "current",
+                  "incoming",
+                  "edited"
+                ]
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "choice"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "project_id",
+          "file",
+          "token",
+          "resolution"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "git.rebase_skip": {
+      "description": "Explicitly skip the currently replayed rebase commit (discarding it), then continue and restore saved local work. Requires user authorization; returns job_id.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "git.recovery_finish": {
+      "description": "Acknowledge manual recovery is complete; keep the original stash backup and clear only the DevStart recovery state. Requires user acknowledgment. Returns job_id.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "additionalProperties": false
+      }
     }
   }
 }

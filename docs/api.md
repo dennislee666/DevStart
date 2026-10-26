@@ -561,7 +561,7 @@ Choose `system`, `zh-CN`, or `en` through `settings.update`. GUI text updates im
 - `git.diff {"project_id":123,"file":"src/main.rs"}`：返回 output，包含 HEAD 到工作区的 diff；未跟踪文件显示文本预览（256 KiB 上限）。不执行外部 diff/textconv。
 - `git.commit {"project_id":123,"message":"说明","files":["src/main.rs"]}`：暂存并仅提交所选文件（最多 1000 个）；失败可能留下暂存状态，先检查 changes。使用用户 Git 身份与 hooks，不自动修改身份。不会把别的已暂存文件提交。
 - `git.push {"project_id":123}`：将已有本地提交推送到配置的 upstream，不强制推送，不自动创建上游。需要发布授权。
-- `git.pull {"project_id":123}`：拒绝脏工作区，以 merge 方式拉取上游，不 rebase。冲突保留，错误展示原始 Git 输出，后续通过 Git 命令解决。
+- `git.pull {"project_id":123}`：按当前分支首选远程和记住的 Merge/Rebase 方式执行 Update，保留本地改动，冲突暂停。
 - `git.restore {"project_id":123,"file":"src/main.rs"}`：破坏性操作，需要用户明确授权；将该文件的工作区和暂存区恢复到 HEAD。先保存 worktree.patch、index.patch、metadata.json 到 DevStart 的 git-backups，只保留最近十次。未跟踪文件不能回滚。二进制补丁包含修改内容，不上传。可在对应仓库使用 git apply 备份补丁恢复；index.patch 记录原暂存状态。
 - `git.command {"project_id":123,"command":"git status --short"}`：非交互 Git 参数命令，支持单/双引号及转义，不经过 shell；管道、重定向、环境变量替换不生效。可写仓库或远程，调用方必须获得对应操作授权。没有通用系统终端或交互式密码输入。
 
@@ -583,7 +583,7 @@ GUI 终端使用独立持久 PTY，默认进入登记项目目录本身；登录
 
 `git.remotes {"project_id":123}` 列出项目已配置的所有 fetch 地址，返回 key、name、url、preferred。同名 remote 有多个地址时分别列出。url 的凭据及查询参数隐藏，key 绑定真实名称与地址；不要猜测或缓存已过期的 key。preferred 优先为当前跟踪分支的远程，其次 origin，再其次首个地址。
 
-`git.update {"project_id":123,"remote_key":"从 git.remotes 获取","branch":"main"}` 精确获取所选地址的当前分支并 merge，不 rebase、不强制覆盖。执行前验证分支仍是 main、地址仍存在；本地改动（包含未跟踪文件）先保存到 Git stash，合并后恢复；无法自动合并的文件采用远程版本，冲突前的本地内容保留在 stash 中。无新提交时仍成功返回“已是最新”。返回 job_id，查询 git.job 获取完成结果。
+`git.update {"project_id":123,"remote_key":"从 git.remotes 获取","branch":"main","method":"merge"}` 先 Fetch，再按 `method`（`merge` / `rebase`）更新；省略时使用仓库记住的选择。需要时暂存并恢复本地修改，冲突保留供审阅；无变化仍成功返回，不提交工作区文件、不推送。返回 job_id。
 
 `git.push_target` 使用相同参数，把 HEAD 非强制推送到所选地址的同名当前分支，需要发布授权。GUI 的推送按钮遵循此选择；原 git.push / git.pull 接口和终端内直接输入的 Git 命令仍遵循 Git 自身的上游配置。
 
@@ -615,9 +615,9 @@ terminal.read 附加返回 segments：每段包含 text、role（output/prompt/i
 
 文件变动按未跟踪、有变化、新文件、删除分组；右侧图标撤销恢复仍需二次确认，未跟踪文件禁用恢复并提示无 HEAD 版本。
 
-GUI 提交操作：提交本地执行所选远程当前分支 pull --no-rebase；更新前暂存已跟踪和未跟踪改动，更新后恢复，再提交所选文件；推送远程在此前提下继续 push。无二次确认；任一步失败立即停止。冲突无法自动完成时不会继续提交/推送，并保留本地恢复副本。若选中文件已被远程版本覆盖，则跳过这些文件且继续提交其他仍有改动的选中文件。工作区无变更时推送可跳过提交，有变更但未选文件会报错。右下角结果通知保留，需用户手动关闭。底层 git.commit/git.push API 仍为独立原子动作。
+GUI Commit 仅提交勾选文件；Push 仅推送已有提交；“提交并推送”先 Commit 再 Push。Push 被远程非快进拒绝时由用户选择 Merge/Rebase 更新后重试。不会提交前强制更新，不会自动采用远程解决冲突，不强推。任何真实失败均保留输出与现场。
 
-GUI Update Project 点击后直接更新所选远程当前分支，无二次确认；成功或失败复用提交操作的右下角常驻结果通知，只有手动点击关闭图标才移除。
+GUI Update Project 打开 Merge/Rebase 选择；冲突时三栏工具支持查看基线、当前、传入版本与编辑结果，应用后仅标记文件已解决。继续/终止操作由用户明确触发。
 
 GUI 切换分支点击后直接执行安全切换；成功与失败复用右下角常驻通知，失败不再使用阻断弹窗。仅手动点击关闭图标移除；冲突不强制覆盖，详情保留 Git 原始原因。
 
@@ -628,3 +628,17 @@ GUI 切换分支点击后直接执行安全切换；成功与失败复用右下�
 设置字段 `commit_agent` 可选 `discover`（初始自动检测并记住首次成功工具）、`auto`（每次重新检测）、`codex`、`claude`、`cursor`。通过 settings.get/settings.update 读取和修改。GUI 默认选中全部文件变动，保留刷新期间用户手动排除项；单次 git.commit 最多支持 10000 个所选文件。AI 生成仅填写备注，不自动提交。
 
 Flutter 启动入口使用 `{"Flutter":{"launch":{...}}}`，平台、设备、模拟器及 SDK 字段详见 [Flutter 启动协议](flutter-launch.md)。扫描不运行 SDK，设备准备仅在点击启动时发生。
+
+## Git Merge/Rebase 与冲突恢复
+
+`git.operation {"project_id":123}` 读取 `operation`、`conflicts`、`recovering`、`recovery_stash`、`recovery_failed`、`can_continue`、`can_abort`。
+
+- `git.rebase {"project_id":123,"onto":"main"}`：将当前分支变基到已有本地分支；不推送，不强制重写远程。
+- `git.conflict {"project_id":123,"file":"src/example.rs"}`：读取 `base/current/incoming/result` 与 `token`、双方上下文标签；不修改仓库。
+- `git.resolve {"project_id":123,"file":"src/example.rs","token":"读取时的 token","resolution":{"choice":"edited","text":"人工合并后的完整内容\n"}}`：保存备份后写入并暂存。也支持 `{"choice":"current"}` 或 `{"choice":"incoming"}`（包括删除与二进制）。版本已变化时拒绝写入。
+- `git.continue {"project_id":123}`：全部冲突解决后继续 Merge/Rebase 或完成 stash 恢复。
+- `git.abort {"project_id":123}`：终止正在进行的 Merge/Rebase 并恢复原本地修改。
+- `git.rebase_skip {"project_id":123}`：跳过当前重放提交；该提交内容会从本次 Rebase 丢弃，调用方须取得明确授权。
+- `git.recovery_finish {"project_id":123}`：调用方已确认手动恢复完成后清除恢复状态；保留原 stash 副本。
+
+以上写操作返回 job_id，通过 git.job 获取真实结果；调用方负责用户授权。Rebase 的 current 为目标基线，incoming 为正在重放的本地提交，不能将它们固定解释为“本地/远程”。

@@ -181,6 +181,8 @@ mod tests {
             include_str!("ui_git.rs"),
             include_str!("ui_git_commit.rs"),
             include_str!("ui_git_remote.rs"),
+            include_str!("ui_git_merge.rs"),
+            include_str!("ui_git_operations.rs"),
             include_str!("ui_project_scan.rs"),
             include_str!("ui_terminal.rs"),
             include_str!("ui_console_search.rs"),

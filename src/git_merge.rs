@@ -14,6 +14,7 @@ pub fn merge(path: &Path, source: &str, target: &str) -> Result<String, String> 
     validate_pair(source, target)?;
     let _guard = mutation_guard(path)?;
     let path = root(path)?;
+    super::integration::ensure_idle(&path)?;
     let local = branches(&path)?;
     if !local.iter().any(|b| b == source) || !local.iter().any(|b| b == target) {
         return Err(

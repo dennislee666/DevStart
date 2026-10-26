@@ -225,6 +225,7 @@ pub(super) fn commit_unlocked(
     files: &[String],
 ) -> Result<String, String> {
     let root = root(path)?;
+    super::integration::ensure_idle(&root)?;
     let conflicts = unresolved_conflicts(&root)?;
     if !conflicts.is_empty() {
         return Err(conflict_error(&conflicts));
@@ -282,17 +283,14 @@ pub fn push(path: &Path) -> Result<String, String> {
     Ok(format!("{out}\n{err}"))
 }
 pub fn pull(path: &Path) -> Result<String, String> {
-    let _guard = mutation_guard(path)?;
     let root = root(path)?;
-    let conflicts = unresolved_conflicts(&root)?;
-    if !conflicts.is_empty() {
-        return Err(conflict_error(&conflicts));
-    }
-    if !changes(&root)?.is_empty() {
-        return Err("Commit or stash local changes before pulling".into());
-    }
-    let (out, err) = git_output(&root, &["pull", "--no-rebase", "--no-edit"])?;
-    Ok(format!("{out}\n{err}"))
+    let branch = git(&root, &["branch", "--show-current"])?;
+    let remotes = super::remotes::list(&root)?;
+    let remote = remotes
+        .iter()
+        .find(|r| r.preferred)
+        .ok_or("No remote configured")?;
+    super::remotes::update(&root, &remote.key, &branch)
 }
 /// Store reverse patches before restoring both index and worktree from HEAD. Keep ten snapshots.
 pub fn restore(path: &Path, file: &str, backup_root: &Path) -> Result<String, String> {

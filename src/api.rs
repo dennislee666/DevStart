@@ -31,6 +31,14 @@ pub const METHODS: &[&str] = &[
     "git.history",
     "git.switch",
     "git.merge",
+    "git.rebase",
+    "git.operation",
+    "git.continue",
+    "git.abort",
+    "git.rebase_skip",
+    "git.recovery_finish",
+    "git.conflict",
+    "git.resolve",
     "git.restore_version",
     "editor.list",
     "editor.open",
@@ -208,16 +216,33 @@ pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, Strin
             Ok(json!(crate::git_workspace::remotes::list(path)?))
         }
         "git.update" | "git.push_target" => {
-            config::fields(p, &["project_id", "remote_key", "branch"])?;
+            config::fields(
+                p,
+                if method == "git.update" {
+                    &["project_id", "remote_key", "branch", "method"]
+                } else {
+                    &["project_id", "remote_key", "branch"]
+                },
+            )?;
             let path = config::project(s, config::id(p, "project_id")?)?
                 .path
                 .clone();
             let key = config::text(p, "remote_key")?.to_owned();
             let branch = config::text(p, "branch")?.to_owned();
             let update = method == "git.update";
+            let update_method = match p.get("method") {
+                Some(value) => serde_json::from_value(value.clone())
+                    .map_err(|e| format!("Invalid update method: {e}"))?,
+                None => crate::git_workspace::integration::preferred_method(&path),
+            };
             let id = crate::git_jobs::start(move || {
                 if update {
-                    crate::git_workspace::remotes::update(&path, &key, &branch)
+                    crate::git_workspace::remotes::update_with_method(
+                        &path,
+                        &key,
+                        &branch,
+                        update_method,
+                    )
                 } else {
                     crate::git_workspace::remotes::push(&path, &key, &branch)
                 }
@@ -297,6 +322,69 @@ pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, Strin
                 crate::git_workspace::version_restore::restore(&path, &commit, &branch, &head)
             })?;
             Ok(json!({"job_id":id,"state":"running"}))
+        }
+        "git.operation" | "git.conflict" => {
+            config::fields(
+                p,
+                if method == "git.conflict" {
+                    &["project_id", "file"]
+                } else {
+                    &["project_id"]
+                },
+            )?;
+            let path = &config::project(s, config::id(p, "project_id")?)?.path;
+            if method == "git.conflict" {
+                Ok(json!(crate::git_workspace::conflicts::inspect(
+                    path,
+                    config::text(p, "file")?
+                )?))
+            } else {
+                Ok(json!(crate::git_workspace::integration::state(path)?))
+            }
+        }
+        "git.rebase"
+        | "git.continue"
+        | "git.abort"
+        | "git.resolve"
+        | "git.rebase_skip"
+        | "git.recovery_finish" => {
+            config::fields(
+                p,
+                match method {
+                    "git.rebase" => &["project_id", "onto"],
+                    "git.resolve" => &["project_id", "file", "token", "resolution"],
+                    _ => &["project_id"],
+                },
+            )?;
+            let path = config::project(s, config::id(p, "project_id")?)?
+                .path
+                .clone();
+            let method = method.to_owned();
+            let params = p.clone();
+            let id = crate::git_jobs::start(move || match method.as_str() {
+                "git.rebase" => {
+                    crate::git_workspace::integration::rebase(&path, config::text(&params, "onto")?)
+                }
+                "git.continue" => crate::git_workspace::integration::continue_operation(&path),
+                "git.abort" => crate::git_workspace::integration::abort(&path),
+                "git.rebase_skip" => crate::git_workspace::integration::skip_rebase_commit(&path),
+                "git.recovery_finish" => {
+                    crate::git_workspace::integration::finish_manual_recovery(&path)
+                }
+                _ => crate::git_workspace::conflicts::resolve(
+                    &path,
+                    config::text(&params, "file")?,
+                    config::text(&params, "token")?,
+                    serde_json::from_value(
+                        params
+                            .get("resolution")
+                            .cloned()
+                            .ok_or("Missing resolution")?,
+                    )
+                    .map_err(|e| e.to_string())?,
+                ),
+            })?;
+            Ok(json!({"job_id": id, "state": "running"}))
         }
         "git.merge" => {
             config::fields(p, &["project_id", "source", "target"])?;

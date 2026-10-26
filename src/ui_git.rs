@@ -5,6 +5,8 @@ use super::*;
 mod commit_ui;
 #[path = "ui_git_merge.rs"]
 mod merge_ui;
+#[path = "ui_git_operations.rs"]
+mod operations_ui;
 #[path = "ui_git_remote.rs"]
 mod remote_ui;
 use crate::git_workspace::{self as git, Repository, actions};
@@ -37,9 +39,16 @@ pub(super) struct GitPage {
     preview_error: Option<String>,
     notices: Vec<(bool, String)>,
     merge_picker: Option<merge_ui::Picker>,
+    update_picker: Option<operations_ui::UpdatePicker>,
+    rebase_picker: Option<operations_ui::RebasePicker>,
+    conflict_editor: Option<operations_ui::ConflictEditor>,
+    push_rejected: Option<operations_ui::PushRejected>,
 }
 type Details = git::Snapshot;
 enum Reply {
+    Resolved(u64, Result<Box<Details>, String>, Result<String, String>),
+    Conflict(u64, Result<git::conflicts::Document, String>),
+    PushRejected(u64, String, String, String),
     List(Vec<Repository>),
     Generated(
         u64,
@@ -61,7 +70,15 @@ enum Action {
     RestoreVersion(String, String, String),
     Commit,
     Push(String, String),
-    Update(String, String),
+    Update(String, String, git::integration::Method),
+    UpdateThenPush(String, String, git::integration::Method),
+    CommitAndPush(String, String),
+    Rebase(String),
+    Continue,
+    FinishRecovery,
+    SkipRebase,
+    Abort,
+    Resolve(String, String, git::conflicts::Resolution),
 }
 fn details(project: &crate::model::Project, offset: usize) -> Result<Box<Details>, String> {
     git::snapshot(project, offset)
@@ -218,50 +235,24 @@ impl DevStart {
             .join("git-backups");
         let message = self.git_page.message.clone();
         let files: Vec<_> = self.git_page.selection.selected.iter().cloned().collect();
-        let destination = self.git_page.remote_choices.get(&id).cloned().zip(
-            self.git_page
-                .details
-                .as_ref()
-                .map(|d| d.repository.branch.clone()),
-        );
         self.git_page.request(move || {
-            if matches!(action, Action::Commit | Action::Push(_, _)) {
-                let push = matches!(action, Action::Push(_, _));
-                let result = match &action {
-                    Action::Push(key, branch) => {
-                        git::remotes::submit(&project.path, key, branch, &message, &files, true)
-                    }
-                    _ => match destination {
-                        Some((key, branch)) => git::remotes::submit(
-                            &project.path,
-                            &key,
-                            &branch,
-                            &message,
-                            &files,
-                            false,
-                        ),
-                        None => Err("No remote selected; select a remote before submitting".into()),
-                    },
-                };
-                let success = result.is_ok();
-                let operation = if push {
-                    "Update → Commit → Push"
-                } else {
-                    "Update → Commit"
-                };
-                let output = format!(
-                    "{} · {operation}\n{}",
-                    project.name,
-                    result.unwrap_or_else(|error| error)
-                );
-                return Reply::Submitted(id, details(&project, 0), success, output);
+            if let Action::Resolve(file, token, resolution) = &action {
+                let result =
+                    git::conflicts::resolve(&project.path, file, token, resolution.clone());
+                return Reply::Resolved(id, details(&project, 0), result);
             }
+            let push_target = match &action {
+                Action::Push(key, branch)
+                | Action::CommitAndPush(key, branch)
+                | Action::UpdateThenPush(key, branch, _) => Some((key.clone(), branch.clone())),
+                _ => None,
+            };
             let notification = match &action {
-                Action::Update(_, _) => Some("Update Project"),
+                Action::Update(_, _, _) => Some("Update Project"),
                 Action::Merge(_, _) => Some("git merge"),
                 Action::RestoreVersion(_, _, _) => Some("Restore version"),
                 Action::Switch(_) => Some("git switch"),
-                _ => None,
+                _ => Some("Git"),
             };
             let (label, result) = match action {
                 Action::Merge(source, target) => (
@@ -288,11 +279,52 @@ impl DevStart {
                     format!("git push {branch}"),
                     git::remotes::push(&project.path, &key, &branch),
                 ),
-                Action::Update(key, branch) => (
-                    format!("git pull (merge) {branch}"),
-                    git::remotes::update(&project.path, &key, &branch),
+                Action::Update(key, branch, method) => (
+                    format!("Update ({}) {branch}", method.label()),
+                    git::remotes::update_with_method(&project.path, &key, &branch, method),
+                ),
+                Action::CommitAndPush(key, branch) => (
+                    "Commit and Push".into(),
+                    git::remotes::submit(&project.path, &key, &branch, &message, &files, true),
+                ),
+                Action::UpdateThenPush(key, branch, method) => (
+                    "Update and retry Push".into(),
+                    git::remotes::update_with_method(&project.path, &key, &branch, method)
+                        .and_then(|updated| {
+                            git::remotes::push(&project.path, &key, &branch)
+                                .map(|pushed| format!("{updated}\n{pushed}"))
+                        }),
+                ),
+                Action::Rebase(onto) => (
+                    format!("git rebase {onto}"),
+                    git::integration::rebase(&project.path, &onto),
+                ),
+                Action::SkipRebase => (
+                    "Skip replayed commit".into(),
+                    git::integration::skip_rebase_commit(&project.path),
+                ),
+                Action::FinishRecovery => (
+                    "Finish manual recovery".into(),
+                    git::integration::finish_manual_recovery(&project.path),
+                ),
+                Action::Continue => (
+                    "Continue Git operation".into(),
+                    git::integration::continue_operation(&project.path),
+                ),
+                Action::Abort => (
+                    "Abort Git operation".into(),
+                    git::integration::abort(&project.path),
+                ),
+                Action::Resolve(file, token, resolution) => (
+                    format!("Resolve {file}"),
+                    git::conflicts::resolve(&project.path, &file, &token, resolution),
                 ),
             };
+            if let (Some((key, branch)), Err(error)) = (push_target, &result)
+                && git::remotes::push_rejected(error)
+            {
+                return Reply::PushRejected(id, key, branch, error.clone());
+            }
             let success = result.is_ok();
             let output = match result {
                 Ok(out) => format!(
@@ -333,6 +365,20 @@ impl DevStart {
         if let Some(reply) = reply {
             self.git_page.pending = None;
             let reply = match reply {
+                Reply::Resolved(id, snapshot, result) => match result {
+                    Ok(output) => {
+                        self.git_page.conflict_editor = None;
+                        self.git_page.notices.push((true, output.clone()));
+                        Reply::Selected(id, snapshot, Some(output))
+                    }
+                    Err(error) => {
+                        if let Some(editor) = &mut self.git_page.conflict_editor {
+                            editor.error = Some(error.clone());
+                        }
+                        self.git_page.append_output(&error);
+                        return;
+                    }
+                },
                 Reply::Submitted(id, snapshot, success, output) => {
                     self.git_page.notices.push((success, output.clone()));
                     Reply::Selected(id, snapshot, Some(output))
@@ -340,6 +386,27 @@ impl DevStart {
                 other => other,
             };
             match reply {
+                Reply::Conflict(id, result) => {
+                    if self.git_page.selected == Some(id) {
+                        match result {
+                            Ok(doc) => {
+                                self.git_page.conflict_editor =
+                                    Some(operations_ui::ConflictEditor::new(id, doc))
+                            }
+                            Err(error) => self.git_page.preview_error = Some(error),
+                        }
+                    }
+                }
+                Reply::PushRejected(id, key, branch, error) => {
+                    self.git_page.append_output(&error);
+                    self.git_page.push_rejected = Some(operations_ui::PushRejected {
+                        project: id,
+                        key,
+                        branch,
+                        error,
+                    });
+                    self.git_select(id, 0);
+                }
                 Reply::Generated(id, preference, previous, result) => {
                     self.git_page.generating_message = false;
                     match result {
@@ -381,7 +448,9 @@ impl DevStart {
                             .push((false, format!("{}\n{error}", tr("生成提交备注失败")))),
                     }
                 }
-                Reply::Submitted(..) => unreachable!("submission normalized above"),
+                Reply::Submitted(..) | Reply::Resolved(..) => {
+                    unreachable!("submission normalized above")
+                }
                 Reply::List(rows) => {
                     self.git_page.rows = rows;
                     self.git_page.loaded = true;
@@ -425,6 +494,7 @@ impl DevStart {
                     Err(e) => self.git_page.error = Some(e),
                 },
                 Reply::Selected(id, result, output) => {
+                    let operation_result = output.is_some();
                     if let Some(text) = output {
                         self.git_page.append_output(&text);
                     }
@@ -458,7 +528,18 @@ impl DevStart {
                                 self.git_page.detail_cache.remove(&old);
                             }
                             self.git_page.detail_cache.insert(id, d.clone());
+                            let conflict = if operation_result {
+                                d.operation.conflicts.first().cloned()
+                            } else {
+                                None
+                            };
+                            let path = d.repository.path.clone();
                             self.git_page.details = Some(d);
+                            if let Some(file) = conflict {
+                                self.git_page.request(move || {
+                                    Reply::Conflict(id, git::conflicts::inspect(&path, &file))
+                                });
+                            }
                         }
                         Err(e) => {
                             self.git_page.error = Some(e);
@@ -479,6 +560,7 @@ impl DevStart {
         let mut selection = None;
         let mut action = None;
         let mut preview = None;
+        let mut conflict_preview = None;
         let mut page = None;
         let mut inspect = None;
         let mut historical_diff = None;
@@ -619,6 +701,7 @@ impl DevStart {
                                         .map(|file| file.path.clone())
                                         .collect();
                                     let has_conflicts = !conflict_paths.is_empty();
+                                    let operation_busy = d.operation.busy();
                                     let conflict_hint = tf(
                                         "存在未解决的冲突，请先处理：{files}",
                                         &[("files", conflict_paths.join("、"))],
@@ -641,7 +724,7 @@ impl DevStart {
                                         .iter()
                                         .find(|v| Some(&v.key) == remote_key.as_ref());
                                     ui.horizontal_wrapped(|ui| {
-                                        ui.add_enabled_ui(!busy && !has_conflicts, |ui| {
+                                        ui.add_enabled_ui(!busy && !operation_busy, |ui| {
                                             let label = format!(
                                                 "{} {} {}",
                                                 icon::GIT_BRANCH,
@@ -672,11 +755,11 @@ impl DevStart {
                                             })
                                             .response
                                             .on_hover_text(if has_conflicts { conflict_hint.as_str() } else { tr("切换分支") })
-                                            .on_hover_cursor(if !busy && !has_conflicts { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Default });
+                                            .on_hover_cursor(if !busy && !operation_busy { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Default });
                                         });
                                         let enabled = !busy
                                             && remote.is_some()
-                                            && !r.branch.starts_with("detached ");
+                                            && !r.branch.starts_with("detached ") && !operation_busy;
                                         if ui
                                             .add_enabled(
                                                 enabled,
@@ -691,17 +774,19 @@ impl DevStart {
                                             } else {
                                                 egui::CursorIcon::Default
                                             })
-                                            .on_hover_text(if has_conflicts { tr("更新会对未解决冲突采用远程版本；原本地改动保留在 Git stash 中") } else { tr("从当前远程仓库当前分支获取最新版本与本地合并代码") })
+                                            .on_hover_text(if has_conflicts { tr("请先解决冲突并完成当前操作") } else { tr("从当前远程仓库当前分支获取最新版本与本地合并代码") })
                                             .clicked()
                                             && let Some(remote) = remote
                                         {
-                                            action = Some(Action::Update(
-                                                remote.key.clone(),
-                                                r.branch.clone(),
-                                            ));
+                                            self.git_page.update_picker = Some(operations_ui::UpdatePicker {
+                                                project: r.project_id, key: remote.key.clone(), branch: r.branch.clone(), method: d.update_method,
+                                            });
+                                        }
+                                        if ui.add_enabled(!busy && !operation_busy && d.branches.len() > 1, egui::Button::new("Rebase…")).clicked() {
+                                            self.git_page.rebase_picker = Some(operations_ui::RebasePicker::new(r.project_id, &r.branch, &d.branches));
                                         }
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            let enabled = !busy && d.branches.len() > 1 && !has_conflicts;
+                                            let enabled = !busy && d.branches.len() > 1 && !operation_busy;
                                             if ui.add_enabled(enabled, egui::Button::new(button_label(ui, &format!("{} {}", icon::GIT_MERGE, tr("合并分支")), enabled)))
                                                 .on_hover_text(if has_conflicts { conflict_hint.as_str() } else { tr("选择来源与目标分支，在本地仓库执行合并") })
                                                 .on_hover_cursor(if enabled { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Default }).clicked() {
@@ -737,6 +822,19 @@ impl DevStart {
                                     });
                                     if has_conflicts {
                                         ui.colored_label(tone(self.light, RED), &conflict_hint);
+                                    }
+                                    if operation_busy {
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label(format!("{} · {}", tr("Git 操作已暂停"), d.operation.operation.as_deref().unwrap_or(tr("恢复本地改动"))));
+                                            if ui.add_enabled(!busy && d.operation.can_continue, egui::Button::new(tr("继续"))).clicked() { action = Some(Action::Continue); }
+                                            if ui.add_enabled(!busy && d.operation.can_abort, egui::Button::new(tr("终止操作"))).clicked() { action = Some(Action::Abort); }
+                                            if d.operation.operation.as_deref() == Some("rebase") && ui.add_enabled(!busy, egui::Button::new(tr("跳过此提交…"))).clicked() { action = Some(Action::SkipRebase); }
+                                            if !busy && d.operation.recovery_failed && ui.button(tr("结束手动恢复…")).clicked() { action = Some(Action::FinishRecovery); }
+                                            if !busy && let Some(file) = conflict_paths.first() && ui.button(tr("解决冲突")).clicked() { conflict_preview = Some(file.clone()); }
+                                        });
+                                    }
+                                    if let Some(stash) = &d.operation.recovery_stash {
+                                        ui.label(RichText::new(format!("{}: {}", tr("本地恢复副本"), &stash[..12])).small().color(tone(self.light, MUTED)));
                                     }
                                     ui.separator();
                                     ui.horizontal(|ui| {
@@ -788,7 +886,8 @@ impl DevStart {
                                                             self.git_page.selection.set(&file.path, checked);
                                                         }
                                                         ui.label(RichText::new(if file.directory { icon::FOLDER } else { icon::FILE }).color(tone(self.light, MUTED)));
-                                                        let width = (ui.available_width() - 44.0).max(20.0);
+                                                        let reserved = if file.status_label() == "冲突" { 116.0 } else { 44.0 };
+                                                        let width = (ui.available_width() - reserved).max(20.0);
                                                         let file_response = file_name_response(ui, &file.path, width, !file.directory);
                                                         let file_response = if file.directory {
                                                             file_response.on_hover_text(tr("未跟踪目录不能作为单个文件预览；选择后提交会包含其中全部文件"))
@@ -797,7 +896,11 @@ impl DevStart {
                                                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                                                                 .on_hover_ui(|ui| file_preview_tooltip(ui, &file.preview_path(r.root.as_deref().unwrap_or(&r.path))))
                                                         };
-                                                        if !busy && !file.directory && file_response.double_clicked() { preview = Some(file.path.clone()); }
+                                                        if !busy && !file.directory && file_response.double_clicked() {
+                                                            if file.status_label() == "冲突" { conflict_preview = Some(file.path.clone()); }
+                                                            else { preview = Some(file.path.clone()); }
+                                                        }
+                                                        if file.status_label() == "冲突" && ui.add_enabled(!busy, egui::Button::new(tr("解决"))).clicked() { conflict_preview = Some(file.path.clone()); }
                                                         let unresolved = file.status_label() == "冲突";
                                                         let enabled = !busy && file.status != "??" && !unresolved;
                                                         let tooltip = if unresolved {
@@ -849,7 +952,7 @@ impl DevStart {
                                         if ui
                                             .add_enabled(
                                                 !busy
-                                                    && !has_conflicts
+                                                    && !operation_busy
                                                     && !self.git_page.selection.selected.is_empty()
                                                     && !self.git_page.message.trim().is_empty(),
                                                 egui::Button::new(button_label(
@@ -860,7 +963,7 @@ impl DevStart {
                                                         tr("提交本地")
                                                     ),
                                                     !busy
-                                                        && !has_conflicts
+                                                        && !operation_busy
                                                         && !self.git_page.selection.selected.is_empty()
                                                         && !self.git_page.message.trim().is_empty(),
                                                 )),
@@ -873,7 +976,7 @@ impl DevStart {
                                         }
                                         if ui
                                             .add_enabled(
-                                                !busy
+                                                !busy && !operation_busy
                                                     && self
                                                         .git_page
                                                         .remote_choices
@@ -885,7 +988,7 @@ impl DevStart {
                                                         icon::UPLOAD_SIMPLE,
                                                         tr("推送远程")
                                                     ),
-                                                    !busy
+                                                    !busy && !operation_busy
                                                         && self
                                                             .git_page
                                                             .remote_choices
@@ -899,6 +1002,10 @@ impl DevStart {
                                         {
                                             action =
                                                 Some(Action::Push(key.clone(), r.branch.clone()));
+                                        }
+                                        if ui.add_enabled(!busy && !operation_busy && !self.git_page.selection.selected.is_empty() && !self.git_page.message.trim().is_empty() && remote.is_some(), egui::Button::new(tr("提交并推送"))).clicked()
+                                            && let Some(remote) = remote {
+                                            action = Some(Action::CommitAndPush(remote.key.clone(), r.branch.clone()));
                                         }
                                     });
                                 } else if busy {
@@ -945,6 +1052,14 @@ impl DevStart {
         {
             self.git_select(id, offset);
         }
+        if let Some(file) = conflict_preview
+            && let Some(d) = &self.git_page.details
+        {
+            let path = d.repository.path.clone();
+            let id = d.repository.project_id;
+            self.git_page
+                .request(move || Reply::Conflict(id, git::conflicts::inspect(&path, &file)));
+        }
         if let Some(file) = preview
             && let Some(d) = &self.git_page.details
         {
@@ -971,7 +1086,12 @@ impl DevStart {
         if let Some(action) = action {
             if matches!(
                 action,
-                Action::Commit | Action::Push(_, _) | Action::Update(_, _) | Action::Switch(_)
+                Action::Commit
+                    | Action::CommitAndPush(_, _)
+                    | Action::Continue
+                    | Action::Push(_, _)
+                    | Action::Update(_, _, _)
+                    | Action::Switch(_)
             ) {
                 self.git_action(action);
             } else {
@@ -1043,6 +1163,7 @@ impl DevStart {
     fn git_dialogs(&mut self, ctx: &egui::Context) {
         self.git_remote_dialog(ctx);
         self.git_merge_dialog(ctx);
+        self.git_operation_dialogs(ctx);
         if let Some(error) = self.git_page.preview_error.clone() {
             let mut close = false;
             let response = egui::Modal::new(egui::Id::new("git-preview-message"))
@@ -1063,19 +1184,26 @@ impl DevStart {
         if let Some(action) = self.git_page.confirm.clone() {
             let response=egui::Modal::new(egui::Id::new("git-confirm-action")).frame(dialog_ui::frame(ctx)).show(ctx,|ui|{
                 dialog_ui::content(ui);ui.set_width(420.0);
-                let title=match &action{Action::Switch(_)=>tr("切换分支"),Action::Merge(_,_)=>tr("合并分支"),Action::Restore(_)=>tr("回滚文件"),Action::RestoreVersion(_,_,_)=>tr("恢复到当前版本"),Action::Commit=>tr("提交本地"),Action::Push(_,_)=>tr("推送远程"),Action::Update(_,_)=>"Update"};
+                let title=match &action{Action::Switch(_)=>tr("切换分支"),Action::Merge(_,_)=>tr("合并分支"),Action::Restore(_)=>tr("回滚文件"),Action::RestoreVersion(_,_,_)=>tr("恢复到当前版本"),Action::Commit=>tr("提交本地"),Action::Push(_,_)=>tr("推送远程"),Action::Update(_,_,_)=>"Update", Action::UpdateThenPush(_,_,_)=>"Update and Push",Action::CommitAndPush(_,_)=>tr("提交并推送"),Action::Rebase(_)=>"Rebase",Action::Continue=>tr("继续"),Action::FinishRecovery=>tr("结束手动恢复"),Action::SkipRebase=>tr("跳过此提交"),Action::Abort=>tr("终止操作"),Action::Resolve(_,_,_)=>tr("解决冲突")};
                 ui.heading(title);
                 if let Some(d)=&self.git_page.details{ui.label(RichText::new(format!("{} · {}",d.repository.name,d.repository.branch)).small().color(tone(self.light,MUTED)));}
                 match &action{
+                    Action::Abort=>{ui.label(tr("终止当前 Merge/Rebase，恢复到操作前的分支状态，并尝试恢复已保存的本地改动。"));},
+                    Action::SkipRebase=>{ui.label(tr("确认跳过当前正在重放的提交？该提交在此次 Rebase 中的改动将被丢弃，之后继续处理后续提交。"));},
+                    Action::FinishRecovery=>{ui.label(tr("确认已检查并手动恢复本地改动？恢复副本会继续保留在 Git stash 中，此操作只结束恢复状态。"));},
+                    Action::Continue|Action::Resolve(_,_,_)=>{},
+                    Action::Rebase(onto)=>{ui.label(onto);},
+                    Action::CommitAndPush(_,_)=>{ui.label(tr("提交选中文件，然后推送已有提交。"));},
+                    Action::Update(_,_,method)|Action::UpdateThenPush(_,_,method)=>{ui.label(method.label());},
                     Action::Merge(source,target)=>{ui.label(format!("{source} → {target}"));},
                     Action::Switch(branch)=>{ui.label(branch);ui.label(tr("切换会更新实际项目文件，关联项目也会受到影响。无冲突的本地修改会保留；冲突时将取消切换并提示原因。"));},
                     Action::RestoreVersion(commit,branch,_)=>{ui.label(tr("确认要把这个版本恢复为本地最新版本吗？"));ui.label(format!("{branch} · {commit}"));ui.label(tr("将生成新的本地恢复提交，保留历史，不修改远程。之后需自行推送以同步远程。"));},
                     Action::Restore(file)=>{ui.label(file);ui.label(tr("恢复到 HEAD，覆盖此文件的工作区和暂存区改动。DevStart 会先保存备份。"));},
                     Action::Commit=>{ui.label(&self.git_page.message);ui.label(tf("提交 {count} 个选中文件",&[("count",self.git_page.selection.selected.len().to_string())]));},
-                    Action::Push(key,branch)|Action::Update(key,branch)=>{
+                    Action::Push(key,branch)=>{
                         if let Some(d)=&self.git_page.details && let Some(remote)=d.remotes.iter().find(|r|&r.key==key){ui.label(format!("{} · {}",remote.name,remote.url));}
                         ui.label(branch);
-                        ui.label(if matches!(&action,Action::Update(_,_)){tr("从当前远程仓库当前分支获取最新版本与本地合并代码")}else{tr("将本地提交推送到所选远程仓库的当前分支，不强制覆盖。")});
+                        ui.label(if matches!(&action,Action::Update(_,_,_)){tr("从当前远程仓库当前分支获取最新版本与本地合并代码")}else{tr("将本地提交推送到所选远程仓库的当前分支，不强制覆盖。")});
                     },
                 }
                 dialog_ui::actions(ui,|ui|{

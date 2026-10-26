@@ -2586,7 +2586,7 @@ fn runtime_timing_has_real_spawn_timestamp_and_freezes_at_exit() {
     assert_eq!(timing.elapsed_display, "21分钟19秒");
     assert!(timing.started_at.is_some());
     assert!(timing.started_at_unix_ms.is_some());
-    assert!(timing.display.ends_with(" - 21分钟19秒"));
+    assert!(timing.display.ends_with(" - 00:21:19"));
     run.started = Instant::now() - Duration::from_secs(600);
     assert_eq!(run.timing().elapsed_seconds, 1279);
     run.elapsed_offset = Duration::from_secs(86400);
