@@ -16,6 +16,26 @@ pub struct LaunchTableRow {
     pub script: Option<Script>,
 }
 
+/// Filtered project views keep project identity and ordering in the service layer.
+pub struct LaunchProjectSection {
+    pub project_id: u64,
+    pub project_name: String,
+    pub project_path: std::path::PathBuf,
+    pub rows: Vec<LaunchTableRow>,
+}
+pub enum LaunchTableContent {
+    Flat(Vec<LaunchTableRow>),
+    Projects(Vec<LaunchProjectSection>),
+}
+impl LaunchTableContent {
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::Flat(rows) => rows.is_empty(),
+            Self::Projects(projects) => projects.is_empty(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LaunchSortColumn {
     Group,
@@ -36,6 +56,19 @@ pub struct LaunchSort {
     pub direction: SortDirection,
 }
 
+impl LaunchSort {
+    /// The selected group is constant, so its default ordering becomes project name.
+    pub fn for_project_sections(self) -> Self {
+        if self.column == LaunchSortColumn::Group {
+            Self {
+                column: LaunchSortColumn::Project,
+                direction: SortDirection::Ascending,
+            }
+        } else {
+            self
+        }
+    }
+}
 impl Default for LaunchSort {
     fn default() -> Self {
         Self {
@@ -1075,6 +1108,58 @@ impl Service {
                 keep.then_some(visible)
             })
             .collect()
+    }
+    /// A selected group is organized by project; all-project and favorites views stay flat.
+    pub fn launch_table_content(
+        &self,
+        filter: Filter,
+        query: &str,
+        sort: LaunchSort,
+        group_filter: Option<u64>,
+    ) -> Result<LaunchTableContent, String> {
+        let grouped = filter == Filter::All && group_filter.is_some();
+        let sort = if grouped {
+            sort.for_project_sections()
+        } else {
+            sort
+        };
+        let rows = self.launch_table_rows(filter, query, sort, group_filter)?;
+        if !grouped {
+            return Ok(LaunchTableContent::Flat(rows));
+        }
+        let mut sections = std::collections::BTreeMap::new();
+        for row in rows {
+            let project = sections
+                .entry(row.project_id)
+                .or_insert_with(|| LaunchProjectSection {
+                    project_id: row.project_id,
+                    project_name: row.project_name.clone(),
+                    project_path: row.project_path.clone(),
+                    rows: vec![],
+                });
+            // Empty projects have a title row only, without a placeholder launch/action row.
+            if row.script.is_some() {
+                project.rows.push(row);
+            }
+        }
+        let mut sections: Vec<_> = sections.into_values().collect();
+        sections.sort_by(|left, right| {
+            let names = left
+                .project_name
+                .to_lowercase()
+                .cmp(&right.project_name.to_lowercase());
+            let names = if sort.column == LaunchSortColumn::Project
+                && sort.direction == SortDirection::Descending
+            {
+                names.reverse()
+            } else {
+                names
+            };
+            names
+                .then_with(|| left.project_path.cmp(&right.project_path))
+                .then_with(|| left.project_id.cmp(&right.project_id))
+        });
+        Ok(LaunchTableContent::Projects(sections))
     }
     /// Return table rows in the requested view and sort order.
     pub fn launch_table_rows(

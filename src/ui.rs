@@ -901,7 +901,12 @@ impl DevStart {
                 .then_some(self.project_group_filter)
                 .flatten();
             let rows = self.service.as_ref().map(|service| {
-                service.launch_table_rows(self.filter, &self.query, self.launch_sort, group_filter)
+                service.launch_table_content(
+                    self.filter,
+                    &self.query,
+                    self.launch_sort,
+                    group_filter,
+                )
             });
             match rows {
                 Some(Ok(rows)) => self.launch_table(ui, rows),
@@ -1202,14 +1207,25 @@ impl DevStart {
                 }
             });
     }
-    fn launch_table(&mut self, ui: &mut egui::Ui, rows: Vec<service::LaunchTableRow>) {
+    fn launch_table(&mut self, ui: &mut egui::Ui, content: service::LaunchTableContent) {
         egui::ScrollArea::both()
             .id_salt("launch-table")
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let spacing = ui.spacing().item_spacing.x;
-                let widths = launch_table_column_widths(ui.available_width(), spacing);
-                let table_width = widths.iter().sum::<f32>() + spacing * 6.0;
+                let grouped = matches!(&content, service::LaunchTableContent::Projects(_));
+                let sort = if grouped {
+                    self.launch_sort.for_project_sections()
+                } else {
+                    self.launch_sort
+                };
+                let columns: &[usize] = if grouped {
+                    &[1, 0, 3, 4, 5, 6]
+                } else {
+                    &[0, 1, 2, 3, 4, 5, 6]
+                };
+                let widths = launch_table_column_widths(ui.available_width(), spacing, grouped);
+                let table_width = widths.iter().sum::<f32>() + spacing * (columns.len() - 1) as f32;
                 ui.set_min_width(table_width);
                 ui.set_max_width(table_width);
                 if self.filter == Filter::All {
@@ -1218,35 +1234,32 @@ impl DevStart {
                 }
                 let row_height = self.preferences().row_height();
                 ui.horizontal(|ui| {
-                    for (label, width, column) in [
-                        (tr("启动项名"), widths[0], None),
-                        (
-                            tr("项目"),
-                            widths[1],
-                            Some(service::LaunchSortColumn::Project),
-                        ),
-                        (
-                            tr("组名"),
-                            widths[2],
-                            Some(service::LaunchSortColumn::Group),
-                        ),
-                        (tr("启动命令"), widths[3], None),
-                        (
-                            tr("状态"),
-                            widths[4],
-                            Some(service::LaunchSortColumn::Status),
-                        ),
-                        (tr("端口"), widths[5], Some(service::LaunchSortColumn::Port)),
-                        (tr("操作"), widths[6], None),
-                    ] {
+                    for &index in columns {
+                        let (label, column) = match index {
+                            0 => (
+                                if grouped {
+                                    tr("启动项")
+                                } else {
+                                    tr("启动项名")
+                                },
+                                None,
+                            ),
+                            1 => (tr("项目"), Some(service::LaunchSortColumn::Project)),
+                            2 => (tr("组名"), Some(service::LaunchSortColumn::Group)),
+                            3 => (tr("启动命令"), None),
+                            4 => (tr("状态"), Some(service::LaunchSortColumn::Status)),
+                            5 => (tr("端口"), Some(service::LaunchSortColumn::Port)),
+                            _ => (tr("操作"), None),
+                        };
+                        let width = widths[index];
                         ui.allocate_ui_with_layout(
                             Vec2::new(width, row_height),
                             egui::Layout::left_to_right(egui::Align::Center),
                             |ui| {
                                 ui.set_min_width(width);
                                 if let Some(column) = column {
-                                    let selected = self.launch_sort.column == column;
-                                    let direction = self.launch_sort.direction;
+                                    let selected = sort.column == column;
+                                    let direction = sort.direction;
                                     let indicator = if selected {
                                         match direction {
                                             service::SortDirection::Ascending => "↑",
@@ -1301,7 +1314,7 @@ impl DevStart {
                     }
                 });
                 ui.separator();
-                if rows.is_empty() {
+                if content.is_empty() {
                     ui.add_space(8.0);
                     let empty = if self.filter == Filter::Favorites {
                         tr("暂无收藏的启动项")
@@ -1311,11 +1324,67 @@ impl DevStart {
                     ui.label(RichText::new(empty).small().color(tone(self.light, MUTED)));
                     return;
                 }
-                for row in &rows {
-                    self.launch_table_row(ui, row, widths);
-                    ui.separator();
+                match content {
+                    service::LaunchTableContent::Flat(rows) => {
+                        for row in &rows {
+                            self.launch_table_row(ui, row, widths, false);
+                            ui.separator();
+                        }
+                    }
+                    service::LaunchTableContent::Projects(projects) => {
+                        for project in projects {
+                            self.launch_project_title(ui, &project, widths[1], table_width);
+                            for row in &project.rows {
+                                self.launch_table_row(ui, row, widths, true);
+                                ui.separator();
+                            }
+                            ui.add_space(8.0);
+                        }
+                    }
                 }
             });
+    }
+    fn launch_project_title(
+        &self,
+        ui: &mut egui::Ui,
+        project: &service::LaunchProjectSection,
+        width: f32,
+        table_width: f32,
+    ) {
+        ui.push_id(("launch-project-title", project.project_id), |ui| {
+            egui::Frame::new()
+                .fill(if self.light {
+                    Color32::from_gray(245)
+                } else {
+                    Color32::from_gray(24)
+                })
+                .corner_radius(4.0)
+                .inner_margin(egui::Margin::symmetric(0, 6))
+                .show(ui, |ui| {
+                    ui.set_min_width(table_width);
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(width, 32.0),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_min_width(width);
+                            ui.add(
+                                egui::Label::new(RichText::new(&project.project_name).strong())
+                                    .truncate(),
+                            )
+                            .on_hover_text(&project.project_name);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(service::path_label(&project.project_path))
+                                        .size(10.0)
+                                        .color(tone(self.light, MUTED)),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(project.project_path.display().to_string());
+                        },
+                    );
+                });
+        });
     }
     fn project_group_filter_bar(&mut self, ui: &mut egui::Ui) {
         let groups = self
@@ -1378,10 +1447,14 @@ impl DevStart {
         ui: &mut egui::Ui,
         row: &service::LaunchTableRow,
         widths: [f32; 7],
+        grouped: bool,
     ) {
         let script_id = row.script.as_ref().map(|script| script.id).unwrap_or(0);
         ui.push_id((row.project_id, script_id), |ui| {
-            let row_height = self.preferences().row_height().max(40.0);
+            let row_height = self
+                .preferences()
+                .row_height()
+                .max(if grouped { 30.0 } else { 40.0 });
             let active = row
                 .script
                 .as_ref()
@@ -1452,7 +1525,13 @@ impl DevStart {
                         ui.set_min_width(ui.available_width());
                     }
                     ui.horizontal(|ui| {
-                        for (index, value) in text.iter().enumerate() {
+                        let columns: &[usize] = if grouped {
+                            &[1, 0, 3, 4, 5]
+                        } else {
+                            &[0, 1, 2, 3, 4, 5]
+                        };
+                        for &index in columns {
+                            let value = &text[index];
                             let layout = if index == 1 {
                                 egui::Layout::top_down(egui::Align::Min)
                                     .with_main_align(egui::Align::Center)
@@ -1464,6 +1543,9 @@ impl DevStart {
                                 layout,
                                 |ui| {
                                     ui.set_min_width(widths[index]);
+                                    if index == 1 && grouped {
+                                        return;
+                                    }
                                     if index == 1 {
                                         let name =
                                             ui.add(
@@ -3495,11 +3577,23 @@ fn launch_widths(width: f32, item_spacing: f32) -> (f32, f32, f32, f32) {
         port,
     )
 }
-fn launch_table_column_widths(width: f32, item_spacing: f32) -> [f32; 7] {
+fn launch_table_column_widths(width: f32, item_spacing: f32, grouped: bool) -> [f32; 7] {
     let operation_slots = LAUNCH_ACTION_SLOT_COUNT + 1;
     let operation_width = LAUNCH_ACTION_SLOT_WIDTH * operation_slots as f32
         + item_spacing * (operation_slots - 1) as f32;
-    let data_width = (width - operation_width - item_spacing * 6.0).max(650.0);
+    let gaps = if grouped { 5.0 } else { 6.0 };
+    let data_width = (width - operation_width - item_spacing * gaps).max(650.0);
+    if grouped {
+        return [
+            data_width * 0.22,
+            data_width * 0.28,
+            0.0,
+            data_width * 0.27,
+            data_width * 0.10,
+            data_width * 0.13,
+            operation_width,
+        ];
+    }
     [
         data_width * 0.14,
         data_width * 0.27,

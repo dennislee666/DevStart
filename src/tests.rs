@@ -3822,3 +3822,6 @@ fn project_deletion_preserves_sibling_in_same_group_and_source_files() {
 
 #[path = "tests_console_reuse.rs"]
 mod console_reuse;
+
+#[path = "tests_launch_sections.rs"]
+mod launch_sections;
