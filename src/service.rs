@@ -934,6 +934,19 @@ impl Service {
             .filter(|t| open.contains(&t.id))
             .collect()
     }
+    /// Keep editor output attached to the latest generation of its launch item.
+    pub fn editor_console_run(&self, script_id: u64) -> Option<u64> {
+        self.runtime
+            .runs
+            .iter()
+            .rev()
+            .find(|run| {
+                !run.superseded
+                    && run.tab_open
+                    && (run.script_id == script_id || run.associated_scripts.contains(&script_id))
+            })
+            .map(|run| run.id)
+    }
     pub fn current_console_generation(&self, console_id: u64) -> Option<u64> {
         self.runtime
             .runs

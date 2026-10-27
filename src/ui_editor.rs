@@ -279,6 +279,21 @@ impl DevStart {
         )
         .on_hover_text(doc.path.display().to_string());
         ui.add_space(8.0);
+        if let Some(run_id) = self
+            .service
+            .as_ref()
+            .and_then(|s| s.editor_console_run(sid))
+        {
+            let height = ui.available_height();
+            egui::TopBottomPanel::bottom(egui::Id::new(("editor-console", sid)))
+                .resizable(true)
+                .default_height((height * 0.38).clamp(160.0, 320.0))
+                .min_height(100.0_f32.min(height * 0.5))
+                .max_height(height * 0.75)
+                .show_inside(ui, |ui| {
+                    self.console(ui, run_id);
+                });
+        }
         self.code_buffer(ui, &doc);
         if save || run {
             if !self.save_editor(sid) {

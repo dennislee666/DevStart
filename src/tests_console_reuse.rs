@@ -8,11 +8,13 @@ fn completed_closed_and_failed_launches_keep_one_console_beyond_history_limit() 
     let mut service = api_service(&fixture);
     service.import(&fixture.0, 1).unwrap();
     let script = service.catalog.projects[0].scripts[0].id;
+    assert_eq!(service.editor_console_run(script), None);
     let mut console = None;
     let mut previous = None;
     for pass in 0..12 {
         service.catalog.projects[0].scripts[0].enabled = pass != 4;
         let run = service.launch(script).unwrap();
+        assert_eq!(service.editor_console_run(script), Some(run));
         let stable = *console.get_or_insert(run);
         assert_eq!(service.run_tabs().len(), 1);
         assert_eq!(service.session_tabs().len(), 1);
@@ -38,8 +40,10 @@ fn completed_closed_and_failed_launches_keep_one_console_beyond_history_limit() 
         );
         assert!(current.log_path.is_file());
         assert_eq!(service.current_console_generation(stable), Some(run));
+        assert_eq!(service.editor_console_run(script), Some(run));
         if pass == 2 {
             service.runtime.close_tab(run, false).unwrap();
+            assert_eq!(service.editor_console_run(script), None);
         }
         previous = Some(run);
     }
