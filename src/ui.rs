@@ -1348,9 +1348,11 @@ impl DevStart {
                                 table_width,
                                 combined,
                             );
-                            for row in &project.rows {
-                                self.launch_table_row(ui, row, widths, true);
-                                ui.separator();
+                            if self.expanded.contains(&project.project_id) {
+                                for row in &project.rows {
+                                    self.launch_table_row(ui, row, widths, true);
+                                    ui.separator();
+                                }
                             }
                             ui.add_space(8.0);
                         }
@@ -1393,8 +1395,38 @@ impl DevStart {
                             egui::Layout::top_down(egui::Align::Min),
                             |ui| {
                                 ui.set_min_width(width);
-                                ui.add(egui::Label::new(RichText::new(&label).strong()).truncate())
-                                    .on_hover_text(&label);
+                                ui.horizontal(|ui| {
+                                    let expanded = self.expanded.contains(&project.project_id);
+                                    let arrow_clicked = small(
+                                        ui,
+                                        if expanded {
+                                            icon::CARET_DOWN
+                                        } else {
+                                            icon::CARET_RIGHT
+                                        },
+                                        if expanded {
+                                            tr("收起启动项")
+                                        } else {
+                                            tr("展开启动项")
+                                        },
+                                    );
+                                    let name_clicked = ui
+                                        .add(
+                                            egui::Button::new(RichText::new(&label).strong())
+                                                .frame(false)
+                                                .truncate(),
+                                        )
+                                        .on_hover_text(&label)
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked();
+                                    if arrow_clicked || name_clicked {
+                                        if expanded {
+                                            self.expanded.remove(&project.project_id);
+                                        } else {
+                                            self.expanded.insert(project.project_id);
+                                        }
+                                    }
+                                });
                                 ui.add(
                                     egui::Label::new(
                                         RichText::new(service::path_label(&project.project_path))
