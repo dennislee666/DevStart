@@ -490,5 +490,7 @@
   "勾选目录会将其中所有未跟踪文件纳入本次提交": "Selecting a directory includes all its untracked files in this commit",
   "恢复本地改动": "Restore local changes",
   "无法确定启动项端口": "Cannot determine the launch item port",
-  "请先勾选需要提交的文件并填写提交备注": "Select files and enter a commit message first"
+  "请先勾选需要提交的文件并填写提交备注": "Select files and enter a commit message first",
+  "组名 / 项目": "Group / Project",
+  "项目操作": "Project actions"
 }

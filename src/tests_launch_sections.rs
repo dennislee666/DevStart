@@ -33,9 +33,10 @@ fn project(
 }
 fn service(fixture: &Fixture) -> Service {
     let mut service = api_service(fixture);
+    service.catalog.groups[0].name = "Alpha team".into();
     service.catalog.groups.push(crate::model::Group {
         id: 2,
-        name: "Other".into(),
+        name: "Beta team".into(),
     });
     service.catalog.projects = vec![
         project(fixture, 10, "Alpha", 1, &[9000, 7000]),
@@ -73,17 +74,27 @@ fn filtered_group_has_one_title_per_project_and_no_placeholder_launch_for_empty_
                     && row.script.is_some())
         );
     }
-    let LaunchTableContent::Flat(rows) = service
+    let LaunchTableContent::Projects(all) = service
         .launch_table_content(Filter::All, "", LaunchSort::default(), None)
         .unwrap()
     else {
-        panic!("all projects must stay flat")
+        panic!("all projects must use sections")
     };
-    assert_eq!(rows.len(), 6);
-    assert!(
-        rows.iter()
-            .any(|row| row.project_id == 12 && row.script.is_none())
+    assert_eq!(all.len(), 4);
+    assert_eq!(
+        all.iter()
+            .map(|section| section.group.id)
+            .collect::<Vec<_>>(),
+        vec![1, 1, 1, 2]
     );
+    for section in all {
+        let target = section.action_target();
+        assert_eq!(target.project_id, section.project_id);
+        assert_eq!(target.group.id, section.group.id);
+        assert_eq!(target.project_path, section.project_path);
+        assert_eq!(target.project_favorite, section.project_favorite);
+        assert!(target.script.is_none());
+    }
 }
 #[test]
 fn filtered_sort_keeps_project_sections_contiguous_and_sorts_launches_within_them() {
@@ -142,6 +153,34 @@ fn filtered_sort_keeps_project_sections_contiguous_and_sorts_launches_within_the
             .map(|p| p.project_name.as_str())
             .collect::<Vec<_>>(),
         vec!["Empty", "Beta", "Alpha"]
+    );
+    let LaunchTableContent::Projects(all) = service
+        .launch_table_content(Filter::All, "", sort, None)
+        .unwrap()
+    else {
+        panic!("expected all sections")
+    };
+    assert_eq!(
+        all.iter()
+            .map(|section| section.project_id)
+            .collect::<Vec<_>>(),
+        vec![12, 11, 10, 13]
+    );
+    let sort = LaunchSort {
+        column: LaunchSortColumn::Group,
+        direction: SortDirection::Descending,
+    };
+    let LaunchTableContent::Projects(all) = service
+        .launch_table_content(Filter::All, "", sort, None)
+        .unwrap()
+    else {
+        panic!("expected all sections")
+    };
+    assert_eq!(
+        all.iter()
+            .map(|section| section.project_id)
+            .collect::<Vec<_>>(),
+        vec![13, 10, 11, 12]
     );
 }
 #[test]

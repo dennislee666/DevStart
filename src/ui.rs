@@ -1214,7 +1214,8 @@ impl DevStart {
             .show(ui, |ui| {
                 let spacing = ui.spacing().item_spacing.x;
                 let grouped = matches!(&content, service::LaunchTableContent::Projects(_));
-                let sort = if grouped {
+                let combined = grouped && self.project_group_filter.is_none();
+                let sort = if grouped && !combined {
                     self.launch_sort.for_project_sections()
                 } else {
                     self.launch_sort
@@ -1224,7 +1225,8 @@ impl DevStart {
                 } else {
                     &[0, 1, 2, 3, 4, 5, 6]
                 };
-                let widths = launch_table_column_widths(ui.available_width(), spacing, grouped);
+                let widths =
+                    launch_table_column_widths(ui.available_width(), spacing, grouped, combined);
                 let table_width = widths.iter().sum::<f32>() + spacing * (columns.len() - 1) as f32;
                 ui.set_min_width(table_width);
                 ui.set_max_width(table_width);
@@ -1244,7 +1246,13 @@ impl DevStart {
                                 },
                                 None,
                             ),
-                            1 => (tr("项目"), Some(service::LaunchSortColumn::Project)),
+                            1 => {
+                                if combined {
+                                    (tr("组名 / 项目"), Some(service::LaunchSortColumn::Group))
+                                } else {
+                                    (tr("项目"), Some(service::LaunchSortColumn::Project))
+                                }
+                            }
                             2 => (tr("组名"), Some(service::LaunchSortColumn::Group)),
                             3 => (tr("启动命令"), None),
                             4 => (tr("状态"), Some(service::LaunchSortColumn::Status)),
@@ -1333,7 +1341,13 @@ impl DevStart {
                     }
                     service::LaunchTableContent::Projects(projects) => {
                         for project in projects {
-                            self.launch_project_title(ui, &project, widths[1], table_width);
+                            self.launch_project_title(
+                                ui,
+                                &project,
+                                widths[1],
+                                table_width,
+                                combined,
+                            );
                             for row in &project.rows {
                                 self.launch_table_row(ui, row, widths, true);
                                 ui.separator();
@@ -1345,12 +1359,23 @@ impl DevStart {
             });
     }
     fn launch_project_title(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         project: &service::LaunchProjectSection,
         width: f32,
         table_width: f32,
+        combined: bool,
     ) {
+        let label = if combined {
+            format!(
+                "{} / {}",
+                crate::i18n::group_name(&project.group),
+                project.project_name
+            )
+        } else {
+            project.project_name.clone()
+        };
+        let row = project.action_target();
         ui.push_id(("launch-project-title", project.project_id), |ui| {
             egui::Frame::new()
                 .fill(if self.light {
@@ -1362,27 +1387,41 @@ impl DevStart {
                 .inner_margin(egui::Margin::symmetric(0, 6))
                 .show(ui, |ui| {
                     ui.set_min_width(table_width);
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(width, 32.0),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.set_min_width(width);
-                            ui.add(
-                                egui::Label::new(RichText::new(&project.project_name).strong())
+                    ui.horizontal(|ui| {
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(width, 32.0),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                ui.set_min_width(width);
+                                ui.add(egui::Label::new(RichText::new(&label).strong()).truncate())
+                                    .on_hover_text(&label);
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(service::path_label(&project.project_path))
+                                            .size(10.0)
+                                            .color(tone(self.light, MUTED)),
+                                    )
                                     .truncate(),
-                            )
-                            .on_hover_text(&project.project_name);
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(service::path_label(&project.project_path))
-                                        .size(10.0)
-                                        .color(tone(self.light, MUTED)),
                                 )
-                                .truncate(),
-                            )
-                            .on_hover_text(project.project_path.display().to_string());
-                        },
-                    );
+                                .on_hover_text(project.project_path.display().to_string());
+                            },
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            icon_menu(ui, icon::DOTS_THREE, |ui| {
+                                self.group_action_items(ui, &project.group)
+                            })
+                            .response
+                            .on_hover_text(tr("分组操作"))
+                            .widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    ui.is_enabled(),
+                                    tr("分组操作"),
+                                )
+                            });
+                            self.project_action_menu(ui, &row, 28.0, false);
+                        });
+                    });
                 });
         });
     }
@@ -1678,7 +1717,7 @@ impl DevStart {
                             |ui| {
                                 ui.set_min_width(widths[6]);
                                 ui.horizontal(|ui| {
-                                    self.launch_table_actions(ui, row, active, row_height);
+                                    self.launch_table_actions(ui, row, active, row_height, grouped);
                                 });
                             },
                         );
@@ -1692,6 +1731,7 @@ impl DevStart {
         row: &service::LaunchTableRow,
         active: Option<u64>,
         row_height: f32,
+        grouped: bool,
     ) {
         if let Some(script) = &row.script {
             let favorite_project = (self.filter == Filter::Favorites && row.project_favorite)
@@ -1702,13 +1742,16 @@ impl DevStart {
                 launch_action_slot(ui, row_height, |ui| ui.add_space(0.0));
             }
         }
-        self.project_action_menu(ui, row, row_height);
+        if !grouped {
+            self.project_action_menu(ui, row, row_height, true);
+        }
     }
     fn project_action_menu(
         &mut self,
         ui: &mut egui::Ui,
         row: &service::LaunchTableRow,
         row_height: f32,
+        include_group: bool,
     ) {
         let groups = self
             .service
@@ -1784,39 +1827,56 @@ impl DevStart {
                         ui.close();
                     }
                 }
-                ui.separator();
-                if ui.button(tr("重命名分组")).clicked() {
-                    self.rename_entity = Some((true, row.group.id, row.group.name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(
-                        self.groups_ui.pending_is_idle(),
-                        egui::Button::new(tr("重新扫描更新项目启动脚本")),
-                    )
-                    .clicked()
-                {
-                    self.refresh_group(row.group.id, ui.ctx());
-                    ui.close();
-                }
-                if row.group.id != 1
-                    && ui
-                        .add_enabled(
-                            self.groups_ui.pending_is_idle(),
-                            egui::Button::new(tr("删除分组")),
-                        )
-                        .clicked()
-                {
-                    self.groups_ui.delete = Some((
-                        crate::group_service::DeletionTarget::Group(row.group.id),
-                        row.group.name.clone(),
-                    ));
-                    ui.close();
+                if include_group {
+                    ui.separator();
+                    self.group_action_items(ui, &row.group);
                 }
             })
             .response
-            .on_hover_text(tr("项目及分组操作"));
+            .on_hover_text(if include_group {
+                tr("项目及分组操作")
+            } else {
+                tr("项目操作")
+            })
+            .widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tr("项目操作"))
+            });
         });
+    }
+    fn group_action_items(&mut self, ui: &mut egui::Ui, group: &crate::model::Group) {
+        if ui.button(tr("添加项目")).clicked() {
+            self.import_group = group.id;
+            self.import_dialog = true;
+            ui.close();
+        }
+        if ui.button(tr("重命名分组")).clicked() {
+            self.rename_entity = Some((true, group.id, group.name.clone()));
+            ui.close();
+        }
+        if ui
+            .add_enabled(
+                self.groups_ui.pending_is_idle(),
+                egui::Button::new(tr("重新扫描更新项目启动脚本")),
+            )
+            .clicked()
+        {
+            self.refresh_group(group.id, ui.ctx());
+            ui.close();
+        }
+        if group.id != 1
+            && ui
+                .add_enabled(
+                    self.groups_ui.pending_is_idle(),
+                    egui::Button::new(tr("删除分组")),
+                )
+                .clicked()
+        {
+            self.groups_ui.delete = Some((
+                crate::group_service::DeletionTarget::Group(group.id),
+                group.name.clone(),
+            ));
+            ui.close();
+        }
     }
     fn launch_row(
         &mut self,
@@ -3577,12 +3637,28 @@ fn launch_widths(width: f32, item_spacing: f32) -> (f32, f32, f32, f32) {
         port,
     )
 }
-fn launch_table_column_widths(width: f32, item_spacing: f32, grouped: bool) -> [f32; 7] {
-    let operation_slots = LAUNCH_ACTION_SLOT_COUNT + 1;
+fn launch_table_column_widths(
+    width: f32,
+    item_spacing: f32,
+    grouped: bool,
+    combined: bool,
+) -> [f32; 7] {
+    let operation_slots = LAUNCH_ACTION_SLOT_COUNT + usize::from(!grouped);
     let operation_width = LAUNCH_ACTION_SLOT_WIDTH * operation_slots as f32
         + item_spacing * (operation_slots - 1) as f32;
     let gaps = if grouped { 5.0 } else { 6.0 };
     let data_width = (width - operation_width - item_spacing * gaps).max(650.0);
+    if combined {
+        return [
+            data_width * 0.20,
+            data_width * 0.34,
+            0.0,
+            data_width * 0.24,
+            data_width * 0.10,
+            data_width * 0.12,
+            operation_width,
+        ];
+    }
     if grouped {
         return [
             data_width * 0.22,

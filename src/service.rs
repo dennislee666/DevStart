@@ -18,10 +18,24 @@ pub struct LaunchTableRow {
 
 /// Filtered project views keep project identity and ordering in the service layer.
 pub struct LaunchProjectSection {
+    pub group: Group,
+    pub project_favorite: bool,
     pub project_id: u64,
     pub project_name: String,
     pub project_path: std::path::PathBuf,
     pub rows: Vec<LaunchTableRow>,
+}
+impl LaunchProjectSection {
+    pub fn action_target(&self) -> LaunchTableRow {
+        LaunchTableRow {
+            group: self.group.clone(),
+            project_id: self.project_id,
+            project_name: self.project_name.clone(),
+            project_path: self.project_path.clone(),
+            project_favorite: self.project_favorite,
+            script: None,
+        }
+    }
 }
 pub enum LaunchTableContent {
     Flat(Vec<LaunchTableRow>),
@@ -1109,7 +1123,7 @@ impl Service {
             })
             .collect()
     }
-    /// A selected group is organized by project; all-project and favorites views stay flat.
+    /// Project views are ordered by group/project; favorites retain their flat table.
     pub fn launch_table_content(
         &self,
         filter: Filter,
@@ -1117,8 +1131,8 @@ impl Service {
         sort: LaunchSort,
         group_filter: Option<u64>,
     ) -> Result<LaunchTableContent, String> {
-        let grouped = filter == Filter::All && group_filter.is_some();
-        let sort = if grouped {
+        let grouped = filter == Filter::All;
+        let sort = if grouped && group_filter.is_some() {
             sort.for_project_sections()
         } else {
             sort
@@ -1132,6 +1146,8 @@ impl Service {
             let project = sections
                 .entry(row.project_id)
                 .or_insert_with(|| LaunchProjectSection {
+                    group: row.group.clone(),
+                    project_favorite: row.project_favorite,
                     project_id: row.project_id,
                     project_name: row.project_name.clone(),
                     project_path: row.project_path.clone(),
@@ -1155,7 +1171,23 @@ impl Service {
             } else {
                 names
             };
-            names
+            let groups = if group_filter.is_none() {
+                let groups = crate::i18n::group_name(&left.group)
+                    .to_lowercase()
+                    .cmp(&crate::i18n::group_name(&right.group).to_lowercase());
+                if sort.column == LaunchSortColumn::Group
+                    && sort.direction == SortDirection::Descending
+                {
+                    groups.reverse()
+                } else {
+                    groups
+                }
+            } else {
+                std::cmp::Ordering::Equal
+            };
+            groups
+                .then_with(|| left.group.id.cmp(&right.group.id))
+                .then(names)
                 .then_with(|| left.project_path.cmp(&right.project_path))
                 .then_with(|| left.project_id.cmp(&right.project_id))
         });
