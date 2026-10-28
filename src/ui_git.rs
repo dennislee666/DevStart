@@ -39,7 +39,6 @@ pub(super) struct GitPage {
     preview_error: Option<String>,
     notices: Vec<(bool, String)>,
     merge_picker: Option<merge_ui::Picker>,
-    update_picker: Option<operations_ui::UpdatePicker>,
     rebase_picker: Option<operations_ui::RebasePicker>,
     conflict_editor: Option<operations_ui::ConflictEditor>,
     push_rejected: Option<operations_ui::PushRejected>,
@@ -778,9 +777,7 @@ impl DevStart {
                                             .clicked()
                                             && let Some(remote) = remote
                                         {
-                                            self.git_page.update_picker = Some(operations_ui::UpdatePicker {
-                                                project: r.project_id, key: remote.key.clone(), branch: r.branch.clone(), method: d.update_method,
-                                            });
+                                            action = Some(Action::Update(remote.key.clone(), r.branch.clone(), d.update_method));
                                         }
                                         if ui.add_enabled(!busy && !operation_busy && d.branches.len() > 1, egui::Button::new("Rebase…")).clicked() {
                                             self.git_page.rebase_picker = Some(operations_ui::RebasePicker::new(r.project_id, &r.branch, &d.branches));

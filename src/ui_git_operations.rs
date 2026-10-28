@@ -1,12 +1,6 @@
 //! IDEA-style operation choices and explicit three-pane conflict review.
 use super::*;
 use git::integration::Method;
-pub(super) struct UpdatePicker {
-    pub project: u64,
-    pub key: String,
-    pub branch: String,
-    pub method: Method,
-}
 pub(super) struct RebasePicker {
     project: u64,
     current: String,
@@ -79,47 +73,7 @@ impl DevStart {
         let busy = self.git_page.pending.is_some();
         let mut action = None;
         let selected = self.git_page.selected;
-        if let Some(picker) = &mut self.git_page.update_picker {
-            let mut close = selected != Some(picker.project);
-            let response = egui::Modal::new(egui::Id::new("git-update-method"))
-                .frame(dialog_ui::frame(ctx))
-                .show(ctx, |ui| {
-                    dialog_ui::content(ui);
-                    ui.set_width(430.0);
-                    ui.heading("Update Project");
-                    ui.label(&picker.branch);
-                    ui.radio_value(&mut picker.method, Method::Merge, "Merge")
-                        .on_hover_text(tr("合并远程提交，必要时创建合并提交。"));
-                    ui.radio_value(&mut picker.method, Method::Rebase, "Rebase")
-                        .on_hover_text(tr(
-                            "把本地提交重新应用到远程最新提交之后，会改写本地提交哈希。",
-                        ));
-                    ui.label(
-                        RichText::new(tr(
-                            "本地未提交改动会先保存并在更新后恢复；冲突由你确认处理。",
-                        ))
-                        .small()
-                        .color(tone(self.light, MUTED)),
-                    );
-                    dialog_ui::actions(ui, |ui| {
-                        close |= ui.button(tr("取消")).clicked();
-                        if ui
-                            .add_enabled(!busy, egui::Button::new(tr("更新")))
-                            .clicked()
-                        {
-                            action = Some(Action::Update(
-                                picker.key.clone(),
-                                picker.branch.clone(),
-                                picker.method,
-                            ));
-                            close = true;
-                        }
-                    });
-                });
-            if close || response.should_close() {
-                self.git_page.update_picker = None;
-            }
-        } else if let Some(picker) = &mut self.git_page.rebase_picker {
+        if let Some(picker) = &mut self.git_page.rebase_picker {
             let mut close = selected != Some(picker.project);
             let response = egui::Modal::new(egui::Id::new("git-rebase-picker")).frame(dialog_ui::frame(ctx)).show(ctx, |ui| {
                 dialog_ui::content(ui); ui.set_width(440.0); ui.heading("Rebase");
