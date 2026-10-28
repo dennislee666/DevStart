@@ -1221,9 +1221,9 @@ impl DevStart {
                     self.launch_sort
                 };
                 let columns: &[usize] = if grouped {
-                    &[1, 0, 3, 4, 5, 6]
+                    &[1, 0, 4, 5, 6]
                 } else {
-                    &[0, 1, 2, 3, 4, 5, 6]
+                    &[0, 1, 2, 4, 5, 6]
                 };
                 let widths =
                     launch_table_column_widths(ui.available_width(), spacing, grouped, combined);
@@ -1238,14 +1238,7 @@ impl DevStart {
                 ui.horizontal(|ui| {
                     for &index in columns {
                         let (label, column) = match index {
-                            0 => (
-                                if grouped {
-                                    tr("启动项")
-                                } else {
-                                    tr("启动项名")
-                                },
-                                None,
-                            ),
+                            0 => (tr("启动项"), None),
                             1 => {
                                 if combined {
                                     (tr("组名 / 项目"), Some(service::LaunchSortColumn::Group))
@@ -1522,10 +1515,7 @@ impl DevStart {
     ) {
         let script_id = row.script.as_ref().map(|script| script.id).unwrap_or(0);
         ui.push_id((row.project_id, script_id), |ui| {
-            let row_height = self
-                .preferences()
-                .row_height()
-                .max(if grouped { 30.0 } else { 40.0 });
+            let row_height = self.preferences().row_height().max(44.0);
             let active = row
                 .script
                 .as_ref()
@@ -1597,13 +1587,13 @@ impl DevStart {
                     }
                     ui.horizontal(|ui| {
                         let columns: &[usize] = if grouped {
-                            &[1, 0, 3, 4, 5]
+                            &[1, 0, 4, 5]
                         } else {
-                            &[0, 1, 2, 3, 4, 5]
+                            &[0, 1, 2, 4, 5]
                         };
                         for &index in columns {
                             let value = &text[index];
-                            let layout = if index == 1 {
+                            let layout = if index == 0 || index == 1 {
                                 egui::Layout::top_down(egui::Align::Min)
                                     .with_main_align(egui::Align::Center)
                             } else {
@@ -1710,6 +1700,19 @@ impl DevStart {
                                                 egui::Sense::hover()
                                             },
                                         ));
+                                    if index == 0 {
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(&text[3])
+                                                    .monospace()
+                                                    .size(10.5)
+                                                    .color(tone(self.light, MUTED)),
+                                            )
+                                            .halign(egui::Align::Min)
+                                            .truncate(),
+                                        )
+                                        .on_hover_text(&text[3]);
+                                    }
                                     match index {
                                         0 => {
                                             if let Some(script) = &row.script {
@@ -2944,7 +2947,7 @@ impl DevStart {
                 .default_width(500.0)
                 .show(ctx, |ui| {
                     dialog_ui::content(ui);
-                    ui.label(tr("启动项名称"));
+                    ui.label(tr("启动项"));
                     ui.text_edit_singleline(&mut name);
                     ui.label(tr("参数（每行一个，原样传递）"));
                     ui.add(
@@ -3123,7 +3126,7 @@ impl DevStart {
             dialog_ui::window(ctx, tr("修改信息")).open(&mut open).collapsible(false).resizable(false).default_width(440.0).show(ctx,|ui|{
                 dialog_ui::content(ui);
                 ui.horizontal(|ui|{
-                    ui.label(tr("启动项名称"));
+                    ui.label(tr("启动项"));
                     let response=ui.add(egui::TextEdit::singleline(&mut draft.name).desired_width(270.0)).on_hover_text(tr("最多50个字符"));
                     if response.changed(){draft.reset_name=false;}
                     if ui.button(tr("恢复默认")).on_hover_cursor(egui::CursorIcon::PointingHand).clicked(){draft.name=draft.default_name.clone();draft.reset_name=true;}
@@ -3678,14 +3681,14 @@ fn launch_table_column_widths(
     let operation_slots = LAUNCH_ACTION_SLOT_COUNT + usize::from(!grouped);
     let operation_width = LAUNCH_ACTION_SLOT_WIDTH * operation_slots as f32
         + item_spacing * (operation_slots - 1) as f32;
-    let gaps = if grouped { 5.0 } else { 6.0 };
+    let gaps = if grouped { 4.0 } else { 5.0 };
     let data_width = (width - operation_width - item_spacing * gaps).max(650.0);
     if combined {
         return [
-            data_width * 0.20,
+            data_width * 0.44,
             data_width * 0.34,
             0.0,
-            data_width * 0.24,
+            0.0,
             data_width * 0.10,
             data_width * 0.12,
             operation_width,
@@ -3693,20 +3696,20 @@ fn launch_table_column_widths(
     }
     if grouped {
         return [
-            data_width * 0.22,
+            data_width * 0.49,
             data_width * 0.28,
             0.0,
-            data_width * 0.27,
+            0.0,
             data_width * 0.10,
             data_width * 0.13,
             operation_width,
         ];
     }
     [
-        data_width * 0.14,
+        data_width * 0.38,
         data_width * 0.27,
         data_width * 0.12,
-        data_width * 0.24,
+        0.0,
         data_width * 0.10,
         data_width * 0.13,
         operation_width,
