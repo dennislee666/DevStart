@@ -1212,145 +1212,166 @@ impl DevStart {
             .id_salt("launch-table")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                let spacing = ui.spacing().item_spacing.x;
-                let grouped = matches!(&content, service::LaunchTableContent::Projects(_));
-                let combined = grouped && self.project_group_filter.is_none();
-                let sort = if grouped && !combined {
-                    self.launch_sort.for_project_sections()
-                } else {
-                    self.launch_sort
-                };
-                let columns: &[usize] = if grouped {
-                    &[1, 0, 4, 5, 6]
-                } else {
-                    &[0, 1, 2, 4, 5, 6]
-                };
-                let widths =
-                    launch_table_column_widths(ui.available_width(), spacing, grouped, combined);
-                let table_width = widths.iter().sum::<f32>() + spacing * (columns.len() - 1) as f32;
-                ui.set_min_width(table_width);
-                ui.set_max_width(table_width);
-                if self.filter == Filter::All {
-                    self.project_group_filter_bar(ui);
-                    ui.add_space(4.0);
-                }
-                let row_height = self.preferences().row_height();
-                ui.horizontal(|ui| {
-                    for &index in columns {
-                        let (label, column) = match index {
-                            0 => (tr("启动项"), None),
-                            1 => {
-                                if combined {
-                                    (tr("组名 / 项目"), Some(service::LaunchSortColumn::Group))
-                                } else {
-                                    (tr("项目"), Some(service::LaunchSortColumn::Project))
-                                }
-                            }
-                            2 => (tr("组名"), Some(service::LaunchSortColumn::Group)),
-                            3 => (tr("启动命令"), None),
-                            4 => (tr("状态"), Some(service::LaunchSortColumn::Status)),
-                            5 => (tr("端口"), Some(service::LaunchSortColumn::Port)),
-                            _ => (tr("操作"), None),
+                // Reserve one action slot plus spacing, including at horizontal scroll end.
+                egui::Frame::new()
+                    .inner_margin(egui::Margin {
+                        right: 36,
+                        ..Default::default()
+                    })
+                    .show(ui, |ui| {
+                        let spacing = ui.spacing().item_spacing.x;
+                        let grouped = matches!(&content, service::LaunchTableContent::Projects(_));
+                        let combined = grouped && self.project_group_filter.is_none();
+                        let sort = if grouped && !combined {
+                            self.launch_sort.for_project_sections()
+                        } else {
+                            self.launch_sort
                         };
-                        let width = widths[index];
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(width, row_height),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.set_min_width(width);
-                                if let Some(column) = column {
-                                    let selected = sort.column == column;
-                                    let direction = sort.direction;
-                                    let indicator = if selected {
-                                        match direction {
-                                            service::SortDirection::Ascending => "↑",
-                                            service::SortDirection::Descending => "↓",
-                                        }
-                                    } else {
-                                        "↕"
-                                    };
-                                    let response = ui
-                                        .add(
-                                            egui::Button::new(
-                                                RichText::new(format!("{label} {indicator}"))
-                                                    .small()
-                                                    .color(tone(
-                                                        self.light,
-                                                        if selected { ACCENT } else { MUTED },
-                                                    )),
+                        let columns: &[usize] = if grouped {
+                            &[1, 0, 4, 5, 6]
+                        } else {
+                            &[0, 1, 2, 4, 5, 6]
+                        };
+                        let widths = launch_table_column_widths(
+                            ui.available_width(),
+                            spacing,
+                            grouped,
+                            combined,
+                        );
+                        let table_width =
+                            widths.iter().sum::<f32>() + spacing * (columns.len() - 1) as f32;
+                        ui.set_min_width(table_width);
+                        ui.set_max_width(table_width);
+                        if self.filter == Filter::All {
+                            self.project_group_filter_bar(ui);
+                            ui.add_space(4.0);
+                        }
+                        let row_height = self.preferences().row_height();
+                        ui.horizontal(|ui| {
+                            for &index in columns {
+                                let (label, column) = match index {
+                                    0 => (tr("启动项"), None),
+                                    1 => {
+                                        if combined {
+                                            (
+                                                tr("组名 / 项目"),
+                                                Some(service::LaunchSortColumn::Group),
                                             )
-                                            .frame(false)
-                                            .min_size(Vec2::new(width, row_height)),
-                                        )
-                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                        .on_hover_text(tr("点击列名切换排序方向"));
-                                    if response.clicked() {
-                                        self.launch_sort = if selected {
-                                            service::LaunchSort {
-                                                column,
-                                                direction: match direction {
-                                                    service::SortDirection::Ascending => {
-                                                        service::SortDirection::Descending
+                                        } else {
+                                            (tr("项目"), Some(service::LaunchSortColumn::Project))
+                                        }
+                                    }
+                                    2 => (tr("组名"), Some(service::LaunchSortColumn::Group)),
+                                    3 => (tr("启动命令"), None),
+                                    4 => (tr("状态"), Some(service::LaunchSortColumn::Status)),
+                                    5 => (tr("端口"), Some(service::LaunchSortColumn::Port)),
+                                    _ => (tr("操作"), None),
+                                };
+                                let width = widths[index];
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(width, row_height),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        ui.set_min_width(width);
+                                        if let Some(column) = column {
+                                            let selected = sort.column == column;
+                                            let direction = sort.direction;
+                                            let indicator = if selected {
+                                                match direction {
+                                                    service::SortDirection::Ascending => "↑",
+                                                    service::SortDirection::Descending => "↓",
+                                                }
+                                            } else {
+                                                "↕"
+                                            };
+                                            let response = ui
+                                                .add(
+                                                    egui::Button::new(
+                                                        RichText::new(format!(
+                                                            "{label} {indicator}"
+                                                        ))
+                                                        .small()
+                                                        .color(tone(
+                                                            self.light,
+                                                            if selected { ACCENT } else { MUTED },
+                                                        )),
+                                                    )
+                                                    .frame(false)
+                                                    .min_size(Vec2::new(width, row_height)),
+                                                )
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                .on_hover_text(tr("点击列名切换排序方向"));
+                                            if response.clicked() {
+                                                self.launch_sort = if selected {
+                                                    service::LaunchSort {
+                                                        column,
+                                                        direction: match direction {
+                                                            service::SortDirection::Ascending => {
+                                                                service::SortDirection::Descending
+                                                            }
+                                                            service::SortDirection::Descending => {
+                                                                service::SortDirection::Ascending
+                                                            }
+                                                        },
                                                     }
-                                                    service::SortDirection::Descending => {
-                                                        service::SortDirection::Ascending
+                                                } else {
+                                                    service::LaunchSort {
+                                                        column,
+                                                        direction:
+                                                            service::SortDirection::Ascending,
                                                     }
-                                                },
+                                                };
                                             }
                                         } else {
-                                            service::LaunchSort {
-                                                column,
-                                                direction: service::SortDirection::Ascending,
-                                            }
-                                        };
-                                    }
-                                } else {
-                                    ui.add(
-                                        egui::Label::new(RichText::new(label).small().weak())
-                                            .truncate(),
-                                    );
-                                }
-                            },
-                        );
-                    }
-                });
-                ui.separator();
-                if content.is_empty() {
-                    ui.add_space(8.0);
-                    let empty = if self.filter == Filter::Favorites {
-                        tr("暂无收藏的启动项")
-                    } else {
-                        tr("没有匹配的项目启动项")
-                    };
-                    ui.label(RichText::new(empty).small().color(tone(self.light, MUTED)));
-                    return;
-                }
-                match content {
-                    service::LaunchTableContent::Flat(rows) => {
-                        for row in &rows {
-                            self.launch_table_row(ui, row, widths, false);
-                            ui.separator();
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(label).small().weak(),
+                                                )
+                                                .truncate(),
+                                            );
+                                        }
+                                    },
+                                );
+                            }
+                        });
+                        ui.separator();
+                        if content.is_empty() {
+                            ui.add_space(8.0);
+                            let empty = if self.filter == Filter::Favorites {
+                                tr("暂无收藏的启动项")
+                            } else {
+                                tr("没有匹配的项目启动项")
+                            };
+                            ui.label(RichText::new(empty).small().color(tone(self.light, MUTED)));
+                            return;
                         }
-                    }
-                    service::LaunchTableContent::Projects(projects) => {
-                        for project in projects {
-                            self.launch_project_title(
-                                ui,
-                                &project,
-                                widths[1],
-                                table_width,
-                                combined,
-                            );
-                            if self.expanded.contains(&project.project_id) {
-                                for row in &project.rows {
-                                    self.launch_table_row(ui, row, widths, true);
+                        match content {
+                            service::LaunchTableContent::Flat(rows) => {
+                                for row in &rows {
+                                    self.launch_table_row(ui, row, widths, false);
                                     ui.separator();
                                 }
                             }
-                            ui.add_space(8.0);
+                            service::LaunchTableContent::Projects(projects) => {
+                                for project in projects {
+                                    self.launch_project_title(
+                                        ui,
+                                        &project,
+                                        widths[1],
+                                        table_width,
+                                        combined,
+                                    );
+                                    if self.expanded.contains(&project.project_id) {
+                                        for row in &project.rows {
+                                            self.launch_table_row(ui, row, widths, true);
+                                            ui.separator();
+                                        }
+                                    }
+                                    ui.add_space(8.0);
+                                }
+                            }
                         }
-                    }
-                }
+                    });
             });
     }
     fn launch_project_title(
