@@ -1,0 +1,14 @@
+{
+  "date": "2026-10-29",
+  "private_api_tests": {"passed": 12, "failed": 0},
+  "public_api_tests": {"passed": 12, "failed": 0},
+  "mcp_stdio": {
+    "tool_count": 61,
+    "typed_non_git_tools": 60,
+    "legacy_dispatchers": 1,
+    "checked": ["initialize", "tools/list", "resources/read", "groups.create", "projects.create", "runs.start", "runs.get", "logs.read", "logs.clear", "runs.restart", "runs.stop", "projects.delete", "groups.delete"],
+    "result": "passed",
+    "source_directory_preserved": true
+  },
+  "client_scope": "Local stdio protocol verified using an isolated Python MCP client. Codex, Claude and Cursor configuration examples documented; no user client configuration overwritten, no claim of testing every host application."
+}
