@@ -3825,3 +3825,67 @@ mod console_reuse;
 
 #[path = "tests_launch_sections.rs"]
 mod launch_sections;
+
+#[test]
+fn api_preset_description_and_console_clear_preserve_disk_output() {
+    use serde_json::json;
+    let f = Fixture::new();
+    f.script("# agent fixture\necho AGENT_OUTPUT\n");
+    let mut s = api_service(&f);
+    let p = api_call(&mut s, "projects.create", json!({"path":f.0}));
+    let pid = p["id"].as_u64().unwrap();
+    let source = s.catalog.projects[0].scripts[0].id;
+    let preset = api_call(
+        &mut s,
+        "scripts.preset",
+        json!({"source_id":source,"name":"Agent copy","args":["a b"]}),
+    );
+    let sid = preset["id"].as_u64().unwrap();
+    assert_ne!(source, sid);
+    assert_eq!(s.script(sid).unwrap().args, vec!["a b"]);
+    assert!(s.runtime.runs.is_empty());
+    api_call(&mut s, "scripts.describe", json!({"id":sid}));
+    let result = api_call(&mut s, "runs.start", json!({"script_id":sid}));
+    let rid = result["run_id"].as_u64().unwrap();
+    wait(&mut s.runtime, |r| {
+        r.runs.iter().any(|r| r.id == rid && !r.state.active())
+    });
+    let log = api_call(
+        &mut s,
+        "logs.read",
+        json!({"run_id":rid,"offset":0,"limit":65536}),
+    );
+    assert!(
+        s.runtime
+            .runs
+            .iter()
+            .find(|r| r.id == rid)
+            .unwrap()
+            .lines
+            .len()
+            > 0
+    );
+    api_call(&mut s, "logs.clear", json!({"run_id":rid}));
+    assert!(
+        s.runtime
+            .runs
+            .iter()
+            .find(|r| r.id == rid)
+            .unwrap()
+            .lines
+            .len()
+            == 0
+    );
+    assert_eq!(
+        api_call(
+            &mut s,
+            "logs.read",
+            json!({"run_id":rid,"offset":0,"limit":65536})
+        )["bytes"],
+        log["bytes"]
+    );
+    assert!(crate::api::dispatch(&mut s, "logs.clear", &json!({"run_id":1})).is_err());
+    api_call(&mut s, "scripts.delete", json!({"id":sid}));
+    api_call(&mut s, "projects.delete", json!({"id":pid}));
+    assert!(f.0.is_dir());
+}

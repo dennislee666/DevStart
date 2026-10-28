@@ -70,6 +70,8 @@ pub const METHODS: &[&str] = &[
     "scripts.get",
     "scripts.ports",
     "scripts.status",
+    "scripts.preset",
+    "scripts.describe",
     "scripts.create",
     "scripts.update",
     "scripts.delete",
@@ -83,6 +85,7 @@ pub const METHODS: &[&str] = &[
     "runs.stop_all",
     "runs.bulk_plan",
     "runs.bulk_apply",
+    "logs.clear",
     "logs.search",
     "logs.open_target",
     "logs.read",
@@ -588,6 +591,37 @@ pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, Strin
             let run = run(s, config::id(p, "run_id")?)?;
             crate::console_text::open(config::text(p, "target")?, &run.cwd)?;
             Ok(json!({"opened":true}))
+        }
+        "scripts.preset" => {
+            config::fields(p, &["source_id", "name", "args", "expected_port"])?;
+            let args: Vec<String> =
+                serde_json::from_value(p["args"].clone()).map_err(|e| e.to_string())?;
+            let port: Option<u16> =
+                serde_json::from_value(p.get("expected_port").cloned().unwrap_or(Value::Null))
+                    .map_err(|e| e.to_string())?;
+            if port == Some(0) {
+                return Err("端口需为 1–65535 的整数".into());
+            }
+            let id = s.add_preset(
+                config::id(p, "source_id")?,
+                config::text(p, "name")?,
+                args,
+                port,
+            )?;
+            Ok(json!(s.script(id)))
+        }
+        "scripts.describe" => {
+            config::fields(p, &["id"])?;
+            let id = config::id(p, "id")?;
+            s.generate_description(id)?;
+            Ok(json!(s.script(id)))
+        }
+        "logs.clear" => {
+            config::fields(p, &["run_id"])?;
+            let id = config::id(p, "run_id")?;
+            run(s, id)?;
+            s.runtime.clear(id);
+            Ok(json!({"run_id":id,"cleared":true,"process_stopped":false}))
         }
         "logs.search" => {
             config::fields(

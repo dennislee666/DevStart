@@ -1856,6 +1856,73 @@
         ],
         "additionalProperties": false
       }
+    },
+    "logs.clear": {
+      "description": "清空指定运行实例的当前 Console 内存视图，不停止服务、不删除磁盘日志；logs.read 的历史内容和字节游标不受影响。",
+      "params": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scripts.preset": {
+      "description": "从已有启动项复制配置，替换名称、参数及端口；不自动运行，保留原入口的执行启用状态。args 是完整 argv 数组，省略端口清空端口。",
+      "params": {
+        "type": "object",
+        "properties": {
+          "source_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expected_port": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 65535
+          }
+        },
+        "required": [
+          "source_id",
+          "name",
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scripts.describe": {
+      "description": "根据源文件注释及已有运行证据生成并保存启动项简介，不运行脚本，不调用外部 AI。",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
     }
   }
 }

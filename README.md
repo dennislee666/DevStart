@@ -206,3 +206,5 @@ python3 scripts/verify-editor-java.py
 ### 界面语言
 
 DevStart 支持简体中文和英文，默认跟随系统首选的受支持语言。可在设置 → 语言 → 界面语言中选择，然后应用并保存。切换语言不会重启服务，也不会翻译用户内容和原始日志。
+
+非 Git AI 自动化覆盖分组、项目、启动项、扫描、启停、日志、编辑器、终端与设置。完整契约见 [API 与 MCP 说明书](docs/api.md#10-非-git-能力开放与独立-mcp-工具)；运行时可调用 api.docs 或读取 devstart://docs/api。
