@@ -1871,10 +1871,23 @@ impl DevStart {
             });
             launch_action_slot(ui, row_height, |ui| {
                 if let Some(script) = &row.script {
-                    if favorite_button(ui, script.favorite, tr("收藏启动项"), self.light) {
+                    if favorite_button(
+                        ui,
+                        script.favorite,
+                        if script.favorite {
+                            tr("取消收藏启动项")
+                        } else {
+                            tr("收藏启动项")
+                        },
+                        self.light,
+                    ) {
                         let result = self.service.as_mut().unwrap().script_favorite(script.id);
                         self.report(result);
                     }
+                } else {
+                    ui.add_enabled_ui(false, |ui| {
+                        favorite_button(ui, false, tr("收藏启动项"), self.light);
+                    });
                 }
             });
             launch_action_slot(ui, row_height, |ui| {
@@ -3730,7 +3743,12 @@ fn favorite_button(ui: &mut egui::Ui, selected: bool, tooltip: &str, light: bool
     } else {
         "action-outline"
     };
-    let text = RichText::new(icon::STAR)
+    let symbol = if selected {
+        egui_phosphor::fill::STAR
+    } else {
+        icon::STAR
+    };
+    let text = RichText::new(symbol)
         .family(egui::FontFamily::Name(family.into()))
         .size(16.0);
     let text = if selected {
@@ -3738,10 +3756,14 @@ fn favorite_button(ui: &mut egui::Ui, selected: bool, tooltip: &str, light: bool
     } else {
         text.color(tone(light, MUTED))
     };
-    ui.add(egui::Button::new(text).frame(false))
-        .on_hover_text(tooltip)
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
+    ui.add(
+        egui::Button::new(text)
+            .frame(false)
+            .min_size(Vec2::splat(LAUNCH_ACTION_SLOT_WIDTH)),
+    )
+    .on_hover_text(tooltip)
+    .on_hover_cursor(egui::CursorIcon::PointingHand)
+    .clicked()
 }
 
 fn tone(light: bool, dark: Color32) -> Color32 {
