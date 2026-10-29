@@ -500,5 +500,9 @@
   "查看修改": "View changes",
   "忽略文件": "Ignore file",
   "仅忽略未跟踪文件或目录，向 .gitignore 添加精确路径；已跟踪文件不会取消跟踪。": "Ignore an untracked file or directory using an exact .gitignore rule. Tracked files remain tracked.",
-  "返回": "Back"
+  "返回": "Back",
+  "提交备注不能为空": "Commit message required",
+  "请填写提交备注或生成备注。": "Enter a commit message or generate one.",
+  "知道了": "OK",
+  "请等待当前任务完成": "Wait for the current operation to finish"
 }
