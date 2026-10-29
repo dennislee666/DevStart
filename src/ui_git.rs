@@ -66,6 +66,7 @@ enum Action {
     Switch(String),
     Merge(String, String),
     Restore(String),
+    Ignore(String),
     RestoreVersion(String, String, String),
     Commit,
     Push(String, String),
@@ -254,6 +255,10 @@ impl DevStart {
                 _ => Some("Git"),
             };
             let (label, result) = match action {
+                Action::Ignore(file) => (
+                    format!("Ignore {file}"),
+                    actions::ignore(&project.path, &file),
+                ),
                 Action::Merge(source, target) => (
                     format!("git merge {source} → {target}"),
                     git::merging::merge(&project.path, &source, &target),
@@ -885,7 +890,7 @@ impl DevStart {
                                                         ui.label(RichText::new(if file.directory { icon::FOLDER } else { icon::FILE }).color(tone(self.light, MUTED)));
                                                         let reserved = if file.status_label() == "冲突" { 116.0 } else { 44.0 };
                                                         let width = (ui.available_width() - reserved).max(20.0);
-                                                        let file_response = file_name_response(ui, &file.path, width, !file.directory);
+                                                        let file_response = file_name_response(ui, &file.path, width, true);
                                                         let file_response = if file.directory {
                                                             file_response.on_hover_text(tr("未跟踪目录不能作为单个文件预览；选择后提交会包含其中全部文件"))
                                                         } else {
@@ -893,6 +898,18 @@ impl DevStart {
                                                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                                                                 .on_hover_ui(|ui| file_preview_tooltip(ui, &file.preview_path(r.root.as_deref().unwrap_or(&r.path))))
                                                         };
+                                                        file_response.context_menu(|ui| {
+                                                            if ui.add_enabled(!busy,egui::Button::new(if checked { tr("取消选择") } else { tr("选择文件") })).clicked() {
+                                                                self.git_page.selection.set(&file.path,!checked); ui.close();
+                                                            }
+                                                            if ui.add_enabled(!busy && !file.directory,egui::Button::new(tr("查看修改"))).clicked() {
+                                                                preview = Some(file.path.clone()); ui.close();
+                                                            }
+                                                            let ignore_enabled = !busy && file.status == "??";
+                                                            if ui.add_enabled(ignore_enabled,egui::Button::new(tr("忽略文件")))
+                                                                .on_hover_text(tr("仅忽略未跟踪文件或目录，向 .gitignore 添加精确路径；已跟踪文件不会取消跟踪。"))
+                                                                .clicked() { action=Some(Action::Ignore(file.path.clone())); ui.close(); }
+                                                        });
                                                         if !busy && !file.directory && file_response.double_clicked() {
                                                             if file.status_label() == "冲突" { conflict_preview = Some(file.path.clone()); }
                                                             else { preview = Some(file.path.clone()); }
@@ -1084,6 +1101,7 @@ impl DevStart {
             if matches!(
                 action,
                 Action::Commit
+                    | Action::Ignore(_)
                     | Action::CommitAndPush(_, _)
                     | Action::Continue
                     | Action::Push(_, _)
@@ -1181,7 +1199,7 @@ impl DevStart {
         if let Some(action) = self.git_page.confirm.clone() {
             let response=egui::Modal::new(egui::Id::new("git-confirm-action")).frame(dialog_ui::frame(ctx)).show(ctx,|ui|{
                 dialog_ui::content(ui);ui.set_width(420.0);
-                let title=match &action{Action::Switch(_)=>tr("切换分支"),Action::Merge(_,_)=>tr("合并分支"),Action::Restore(_)=>tr("回滚文件"),Action::RestoreVersion(_,_,_)=>tr("恢复到当前版本"),Action::Commit=>tr("提交本地"),Action::Push(_,_)=>tr("推送远程"),Action::Update(_,_,_)=>"Update", Action::UpdateThenPush(_,_,_)=>"Update and Push",Action::CommitAndPush(_,_)=>tr("提交并推送"),Action::Rebase(_)=>"Rebase",Action::Continue=>tr("继续"),Action::FinishRecovery=>tr("结束手动恢复"),Action::SkipRebase=>tr("跳过此提交"),Action::Abort=>tr("终止操作"),Action::Resolve(_,_,_)=>tr("解决冲突")};
+                let title=match &action{Action::Switch(_)=>tr("切换分支"),Action::Merge(_,_)=>tr("合并分支"),Action::Restore(_)=>tr("回滚文件"),Action::Ignore(_)=>tr("忽略文件"),Action::RestoreVersion(_,_,_)=>tr("恢复到当前版本"),Action::Commit=>tr("提交本地"),Action::Push(_,_)=>tr("推送远程"),Action::Update(_,_,_)=>"Update", Action::UpdateThenPush(_,_,_)=>"Update and Push",Action::CommitAndPush(_,_)=>tr("提交并推送"),Action::Rebase(_)=>"Rebase",Action::Continue=>tr("继续"),Action::FinishRecovery=>tr("结束手动恢复"),Action::SkipRebase=>tr("跳过此提交"),Action::Abort=>tr("终止操作"),Action::Resolve(_,_,_)=>tr("解决冲突")};
                 ui.heading(title);
                 if let Some(d)=&self.git_page.details{ui.label(RichText::new(format!("{} · {}",d.repository.name,d.repository.branch)).small().color(tone(self.light,MUTED)));}
                 match &action{
@@ -1195,6 +1213,7 @@ impl DevStart {
                     Action::Merge(source,target)=>{ui.label(format!("{source} → {target}"));},
                     Action::Switch(branch)=>{ui.label(branch);ui.label(tr("切换会更新实际项目文件，关联项目也会受到影响。无冲突的本地修改会保留；冲突时将取消切换并提示原因。"));},
                     Action::RestoreVersion(commit,branch,_)=>{ui.label(tr("确认要把这个版本恢复为本地最新版本吗？"));ui.label(format!("{branch} · {commit}"));ui.label(tr("将生成新的本地恢复提交，保留历史，不修改远程。之后需自行推送以同步远程。"));},
+                    Action::Ignore(file)=>{ui.label(file);},
                     Action::Restore(file)=>{ui.label(file);ui.label(tr("恢复到 HEAD，覆盖此文件的工作区和暂存区改动。DevStart 会先保存备份。"));},
                     Action::Commit=>{ui.label(&self.git_page.message);ui.label(tf("提交 {count} 个选中文件",&[("count",self.git_page.selection.selected.len().to_string())]));},
                     Action::Push(key,branch)=>{

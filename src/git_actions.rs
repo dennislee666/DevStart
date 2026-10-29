@@ -417,3 +417,74 @@ pub fn command(path: &Path, input: &str) -> Result<String, String> {
     let (out, err) = git_output(&root, &refs)?;
     Ok(format!("{out}\n{err}"))
 }
+
+/// Ignore exactly a current untracked status entry; never remove tracked files from the index.
+pub fn ignore(path: &Path, file: &str) -> Result<String, String> {
+    let path = root(path)?;
+    let _guard = mutation_guard(&path)?;
+    let entry = changes(&path)?
+        .into_iter()
+        .find(|c| c.path == file && c.status == "??")
+        .ok_or("只能忽略当前未跟踪的文件或目录，请刷新后重试")?;
+    if file.chars().any(char::is_control)
+        || Path::new(file).is_absolute()
+        || Path::new(file)
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err("无法安全表示此文件的忽略规则".into());
+    }
+    let target = path.join(".gitignore");
+    if let Ok(meta) = std::fs::symlink_metadata(&target) {
+        if !meta.is_file() || meta.file_type().is_symlink() {
+            return Err(".gitignore 必须为普通文件".into());
+        }
+    }
+    let mut data = match std::fs::read(&target) {
+        Ok(data) => data,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(e.to_string()),
+    };
+    let mut rule = String::from("/");
+    for ch in file.chars() {
+        if matches!(ch, '\\' | '*' | '?' | '[' | ']' | ' ' | '#' | '!') {
+            rule.push('\\');
+        }
+        rule.push(ch);
+    }
+    if entry.directory && !rule.ends_with('/') {
+        rule.push('/');
+    }
+    let newline = if data.windows(2).any(|w| w == b"\r\n") {
+        b"\r\n".as_slice()
+    } else {
+        b"\n".as_slice()
+    };
+    if !data.is_empty() && !data.ends_with(b"\n") {
+        data.extend_from_slice(newline);
+    }
+    data.extend_from_slice(rule.as_bytes());
+    data.extend_from_slice(newline);
+    // A new sibling temporary file avoids partial .gitignore contents on write failure.
+    let temp = path.join(format!(".gitignore.devstart-{}", crate::model::unique_id()));
+    let result = (|| {
+        use std::io::Write;
+        let mut out = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp)
+            .map_err(|e| e.to_string())?;
+        out.write_all(&data)
+            .and_then(|_| out.sync_all())
+            .map_err(|e| e.to_string())?;
+        if let Ok(meta) = std::fs::metadata(&target) {
+            std::fs::set_permissions(&temp, meta.permissions()).map_err(|e| e.to_string())?;
+        }
+        std::fs::rename(&temp, &target).map_err(|e| e.to_string())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result?;
+    Ok(format!("已添加忽略规则：{rule}"))
+}

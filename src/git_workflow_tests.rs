@@ -419,3 +419,28 @@ fn interrupted_restore_does_not_reapply_or_delete_recovery_backups() {
     assert!(!integration::state(&repo.0).unwrap().busy());
     assert_eq!(git(&repo.0, &["rev-parse", "refs/stash"]).unwrap(), stash);
 }
+
+#[test]
+fn ignore_context_action_is_exact_and_preserves_source_and_existing_rules() {
+    let repo = Repo::new();
+    repo.commit("tracked.txt", "tracked");
+    repo.write(".gitignore", "# existing\r\nold/");
+    repo.write("[a]* space.md", "keep");
+    repo.write("aX space.md", "other");
+    actions::ignore(&repo.0, "[a]* space.md").unwrap();
+    assert!(repo.0.join("[a]* space.md").exists());
+    assert!(
+        repo.text(".gitignore")
+            .starts_with("# existing\r\nold/\r\n")
+    );
+    let files = actions::changes(&repo.0).unwrap();
+    assert!(!files.iter().any(|f| f.path == "[a]* space.md"));
+    assert!(files.iter().any(|f| f.path == "aX space.md"));
+    repo.write("tracked.txt", "modified");
+    assert!(actions::ignore(&repo.0, "tracked.txt").is_err());
+    assert_eq!(repo.text("tracked.txt"), "modified");
+    std::fs::create_dir(repo.0.join("cache")).unwrap();
+    repo.write("cache/item", "keep");
+    actions::ignore(&repo.0, "cache/").unwrap();
+    assert!(repo.0.join("cache/item").exists());
+}
