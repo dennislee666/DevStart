@@ -1891,6 +1891,8 @@ impl DevStart {
             });
             if row.project_id != 0 {
                 self.project_action_menu(ui, row, row_height, true);
+            } else {
+                launch_action_slot(ui, row_height, |_| {});
             }
             return;
         }
@@ -3852,7 +3854,11 @@ fn launch_action_slot<R>(
     ui.allocate_ui_with_layout(
         Vec2::new(LAUNCH_ACTION_SLOT_WIDTH, height),
         egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-        content,
+        |ui| {
+            // Empty actions must reserve the same geometry as visible buttons.
+            ui.set_min_size(Vec2::new(LAUNCH_ACTION_SLOT_WIDTH, height));
+            content(ui)
+        },
     )
     .inner
 }
