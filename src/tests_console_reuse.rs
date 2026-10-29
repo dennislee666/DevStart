@@ -275,3 +275,42 @@ fn external_services_on_different_ports_keep_separate_consoles() {
             .console_id
     );
 }
+
+#[test]
+fn running_table_tracks_exact_sessions_and_ambiguous_external_once() {
+    let fixture = Fixture::new();
+    let mut server = ExternalServer::new(&fixture);
+    let mut alternative = server.script.clone();
+    alternative.id += 1;
+    server.project.scripts.push(alternative);
+    let mut service = api_service(&fixture);
+    service.catalog.projects.push(server.project.clone());
+    let id = service
+        .runtime
+        .adopt(server.candidate(), &fixture.0.join("logs"))
+        .unwrap();
+    let rows = service.running_table_rows(crate::service::LaunchSort::default());
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].run_id, Some(id));
+    assert!(rows[0].script.is_none());
+    assert_eq!(
+        service
+            .runtime
+            .runs
+            .iter()
+            .find(|r| r.id == id)
+            .unwrap()
+            .associated_scripts
+            .len(),
+        2
+    );
+    service.runtime.stop(id);
+    wait(&mut service.runtime, |r| {
+        r.runs.iter().any(|r| r.id == id && !r.state.active())
+    });
+    assert!(
+        service
+            .running_table_rows(crate::service::LaunchSort::default())
+            .is_empty()
+    );
+}

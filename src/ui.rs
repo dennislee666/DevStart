@@ -89,6 +89,7 @@ pub struct DevStart {
     bulk_confirm: Option<crate::bulk::Plan>,
     collapsed_groups: HashSet<u64>,
     tiled: bool,
+    running_list: bool,
     preset: Option<(u64, String, String, String)>,
     group_dialog: bool,
     group_name: String,
@@ -173,6 +174,7 @@ impl DevStart {
             bulk_confirm: None,
             collapsed_groups: HashSet::new(),
             tiled: true,
+            running_list: true,
             preset: None,
             group_dialog: false,
             group_name: String::new(),
@@ -346,7 +348,7 @@ impl DevStart {
                         self.filter = filter;
                         if filter == Filter::Running {
                             self.selected_run = None;
-                            self.tiled = true;
+                            self.running_list = true;
                         }
                     }
                 }
@@ -425,6 +427,7 @@ impl DevStart {
                                         self.filter = Filter::Running;
                                         self.selected_run = Some(tab.id);
                                         self.tiled = false;
+                                        self.running_list = false;
                                     }
                                 }
                             });
@@ -496,7 +499,7 @@ impl DevStart {
             .exact_height(
                 row_height
                     + 12.0
-                    + if running && !self.tiled && has_tabs {
+                    + if running && !self.running_list && !self.tiled && has_tabs {
                         row_height + 4.0
                     } else {
                         0.0
@@ -575,8 +578,14 @@ impl DevStart {
 
                     if running {
                         if ui
+                            .selectable_label(self.running_list, tr("列表视图"))
+                            .clicked()
+                        {
+                            self.running_list = true;
+                        }
+                        if ui
                             .selectable_label(
-                                self.tiled,
+                                self.tiled && !self.running_list,
                                 button_label(
                                     ui,
                                     &tf("{0} 平铺视图", &[("0", (icon::SQUARES_FOUR).to_string())]),
@@ -587,10 +596,11 @@ impl DevStart {
                             .clicked()
                         {
                             self.tiled = true;
+                            self.running_list = false;
                         }
                         if ui
                             .selectable_label(
-                                !self.tiled,
+                                !self.tiled && !self.running_list,
                                 button_label(
                                     ui,
                                     &tf(
@@ -604,6 +614,7 @@ impl DevStart {
                             .clicked()
                         {
                             self.tiled = false;
+                            self.running_list = false;
                         }
                         for (action, symbol, label) in [
                             (crate::bulk::Action::Stop, icon::STOP, tr("全部停止")),
@@ -650,7 +661,7 @@ impl DevStart {
                         });
                     }
                 });
-                if running && !self.tiled && has_tabs {
+                if running && !self.running_list && !self.tiled && has_tabs {
                     ui.spacing_mut().button_padding = Vec2::new(9.0, 3.0);
                     ui.spacing_mut().item_spacing.y = 3.0;
                     self.run_tabs(ui);
@@ -681,6 +692,7 @@ impl DevStart {
         }
         self.selected_run = Some(run_id);
         self.tiled = false;
+        self.running_list = false;
         self.filter = Filter::Running;
     }
     fn open_launch_in_tabs(&mut self, script_id: u64, active: Option<u64>) {
@@ -774,6 +786,7 @@ impl DevStart {
                             if response.clicked() {
                                 self.selected_run = Some(tab.id);
                                 self.tiled = false;
+                                self.running_list = false;
                             }
                         });
                     }
@@ -781,11 +794,21 @@ impl DevStart {
             });
     }
     fn running_content(&mut self, ui: &mut egui::Ui) {
+        if self.running_list {
+            let rows = self
+                .service
+                .as_ref()
+                .map(|s| s.running_table_rows(self.launch_sort))
+                .unwrap_or_default();
+            self.launch_table(ui, service::LaunchTableContent::Flat(rows));
+            return;
+        }
         if self.tiled {
             self.tiled_consoles(ui);
             if let Some(id) = self.open_console_as_tab.take() {
                 self.selected_run = Some(id);
                 self.tiled = false;
+                self.running_list = false;
                 self.filter = Filter::Running;
             }
             return;
@@ -1340,7 +1363,11 @@ impl DevStart {
                             let empty = if self.filter == Filter::Favorites {
                                 tr("暂无收藏的启动项")
                             } else {
-                                tr("没有匹配的项目启动项")
+                                if self.filter == Filter::Running {
+                                    tr("暂无运行中的启动项")
+                                } else {
+                                    tr("没有匹配的项目启动项")
+                                }
                             };
                             ui.label(RichText::new(empty).small().color(tone(self.light, MUTED)));
                             return;
@@ -1535,12 +1562,13 @@ impl DevStart {
         grouped: bool,
     ) {
         let script_id = row.script.as_ref().map(|script| script.id).unwrap_or(0);
-        ui.push_id((row.project_id, script_id), |ui| {
+        ui.push_id((row.project_id, script_id, row.run_id), |ui| {
             let row_height = self.preferences().row_height().max(44.0);
-            let active = row
-                .script
-                .as_ref()
-                .and_then(|script| self.service.as_ref()?.active_run(script.id));
+            let active = row.run_id.or_else(|| {
+                row.script
+                    .as_ref()
+                    .and_then(|script| self.service.as_ref()?.active_run(script.id))
+            });
             let failed = row.script.as_ref().is_some_and(|script| {
                 self.service
                     .as_ref()
@@ -1582,7 +1610,7 @@ impl DevStart {
                 .map(crate::model::Script::tab_command)
                 .unwrap_or_else(|| "—".into());
             let project_path = service::path_label(&row.project_path);
-            let text = [
+            let mut text = [
                 launch_name,
                 row.project_name.clone(),
                 crate::i18n::group_name(&row.group).to_owned(),
@@ -1590,6 +1618,28 @@ impl DevStart {
                 tr(status).to_owned(),
                 port.label.clone(),
             ];
+            if let Some(run) = row.run_id.and_then(|id| {
+                self.service
+                    .as_ref()?
+                    .runtime
+                    .runs
+                    .iter()
+                    .find(|r| r.id == id)
+            }) {
+                text[0] = run.launch_name.clone();
+                text[3] = run.display_command.clone();
+                text[4] = tr(run.state.label()).to_owned();
+                text[5] = if run.listening_ports.is_empty() {
+                    run.expected_port.map_or("--".into(), |p| p.to_string())
+                } else {
+                    run.listening_ports
+                        .iter()
+                        .map(|p| p.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+            }
+            let is_running = is_running || row.run_id.is_some();
             egui::Frame::new()
                 .fill(if is_running {
                     if self.light {
@@ -1715,7 +1765,9 @@ impl DevStart {
                                     };
                                     let response =
                                         ui.add(egui::Label::new(label).truncate().sense(
-                                            if index == 0 && row.script.is_some() {
+                                            if index == 0
+                                                && (row.script.is_some() || row.run_id.is_some())
+                                            {
                                                 egui::Sense::click()
                                             } else {
                                                 egui::Sense::hover()
@@ -1736,7 +1788,11 @@ impl DevStart {
                                     }
                                     match index {
                                         0 => {
-                                            if let Some(script) = &row.script {
+                                            if let Some(id) = row.run_id {
+                                                if response.double_clicked() {
+                                                    self.activate_run_tab(id);
+                                                }
+                                            } else if let Some(script) = &row.script {
                                                 let response = response.on_hover_text(format!(
                                                     "{}\n{}\n{}",
                                                     script.display_label(),
@@ -1789,6 +1845,55 @@ impl DevStart {
         row_height: f32,
         grouped: bool,
     ) {
+        if let Some(id) = row.run_id {
+            launch_action_slot(ui, row_height, |ui| {
+                if small(ui, icon::TERMINAL_WINDOW, tr("查看 Console")) {
+                    self.activate_run_tab(id);
+                }
+            });
+            launch_action_slot(ui, row_height, |ui| {
+                if small(ui, icon::STOP, tr("停止")) {
+                    self.service.as_mut().unwrap().runtime.stop(id);
+                }
+            });
+            let sid = row.script.as_ref().map(|s| s.id);
+            let can_restart = sid.is_some_and(|sid| {
+                self.service
+                    .as_ref()
+                    .is_some_and(|s| s.can_restart_target(id, sid))
+            });
+            launch_action_slot(ui, row_height, |ui| {
+                if action_button(ui, can_restart, icon::ARROW_CLOCKWISE, tr("重启"), None).clicked()
+                {
+                    let result = self.service.as_mut().unwrap().restart_run(id, sid.unwrap());
+                    self.report(result.map(|_| ()));
+                }
+            });
+            launch_action_slot(ui, row_height, |ui| {
+                if let Some(script) = &row.script {
+                    if favorite_button(ui, script.favorite, tr("收藏启动项"), self.light) {
+                        let result = self.service.as_mut().unwrap().script_favorite(script.id);
+                        self.report(result);
+                    }
+                }
+            });
+            launch_action_slot(ui, row_height, |ui| {
+                if let Some(script) = &row.script {
+                    if small(ui, icon::PENCIL_SIMPLE, tr("编辑原脚本文件")) {
+                        self.open_editor(script.id);
+                    }
+                }
+            });
+            launch_action_slot(ui, row_height, |ui| {
+                if small(ui, icon::DOTS_THREE, tr("查看 Console")) {
+                    self.activate_run_tab(id);
+                }
+            });
+            if row.project_id != 0 {
+                self.project_action_menu(ui, row, row_height, true);
+            }
+            return;
+        }
         if let Some(script) = &row.script {
             let favorite_project = (self.filter == Filter::Favorites && row.project_favorite)
                 .then_some(row.project_id);

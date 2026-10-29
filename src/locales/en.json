@@ -492,5 +492,7 @@
   "无法确定启动项端口": "Cannot determine the launch item port",
   "请先勾选需要提交的文件并填写提交备注": "Select files and enter a commit message first",
   "组名 / 项目": "Group / Project",
-  "项目操作": "Project actions"
+  "项目操作": "Project actions",
+  "列表视图": "List view",
+  "暂无运行中的启动项": "No active launches"
 }

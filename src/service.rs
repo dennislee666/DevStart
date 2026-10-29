@@ -8,6 +8,7 @@ use std::{path::Path, process::Command};
 
 #[derive(Clone)]
 pub struct LaunchTableRow {
+    pub run_id: Option<u64>,
     pub group: Group,
     pub project_id: u64,
     pub project_name: String,
@@ -28,6 +29,7 @@ pub struct LaunchProjectSection {
 impl LaunchProjectSection {
     pub fn action_target(&self) -> LaunchTableRow {
         LaunchTableRow {
+            run_id: None,
             group: self.group.clone(),
             project_id: self.project_id,
             project_name: self.project_name.clone(),
@@ -1207,6 +1209,97 @@ impl Service {
         Ok(LaunchTableContent::Projects(sections))
     }
     /// Return table rows in the requested view and sort order.
+    pub fn running_table_rows(&self, sort: LaunchSort) -> Vec<LaunchTableRow> {
+        let mut seen = std::collections::HashSet::new();
+        let mut rows = Vec::new();
+        for run in self
+            .runtime
+            .runs
+            .iter()
+            .rev()
+            .filter(|r| !r.superseded && matches!(r.state, State::Starting | State::Running))
+        {
+            // PID identifies live external processes; managed preflight has no PID yet.
+            let key = if run.pid != 0 {
+                (true, run.pid as u64)
+            } else {
+                (false, run.console_id)
+            };
+            if !seen.insert(key) {
+                continue;
+            }
+            let script = if run.external.is_none() {
+                self.script(run.script_id)
+            } else if run.associated_scripts.len() == 1 {
+                self.script(run.associated_scripts[0])
+            } else {
+                None
+            };
+            let project = script
+                .and_then(|script| {
+                    self.catalog
+                        .projects
+                        .iter()
+                        .find(|p| p.scripts.iter().any(|s| s.id == script.id))
+                })
+                .or_else(|| self.catalog.projects.iter().find(|p| p.path == run.cwd));
+            let group = project
+                .and_then(|p| self.catalog.groups.iter().find(|g| g.id == p.group))
+                .cloned()
+                .unwrap_or(Group {
+                    id: 0,
+                    name: String::new(),
+                });
+            rows.push(LaunchTableRow {
+                run_id: Some(run.id),
+                group,
+                project_id: project.map_or(0, |p| p.id),
+                project_name: project
+                    .map_or_else(|| run.title.clone(), |p| p.display_label().to_owned()),
+                project_path: project.map_or_else(|| run.cwd.clone(), |p| p.path.clone()),
+                project_favorite: project.is_some_and(|p| p.favorite),
+                script: script.cloned(),
+            });
+        }
+        rows.sort_by(|a, b| {
+            let run = |row: &LaunchTableRow| {
+                self.runtime
+                    .runs
+                    .iter()
+                    .find(|r| Some(r.id) == row.run_id)
+                    .unwrap()
+            };
+            let cmp = match sort.column {
+                LaunchSortColumn::Group => a
+                    .group
+                    .name
+                    .to_lowercase()
+                    .cmp(&b.group.name.to_lowercase()),
+                LaunchSortColumn::Project => a
+                    .project_name
+                    .to_lowercase()
+                    .cmp(&b.project_name.to_lowercase()),
+                LaunchSortColumn::Status => run(a).state.label().cmp(run(b).state.label()),
+                LaunchSortColumn::Port => run(a)
+                    .listening_ports
+                    .first()
+                    .or(run(a).expected_port.as_ref())
+                    .cmp(
+                        &run(b)
+                            .listening_ports
+                            .first()
+                            .or(run(b).expected_port.as_ref()),
+                    ),
+            };
+            let cmp = if sort.direction == SortDirection::Descending {
+                cmp.reverse()
+            } else {
+                cmp
+            };
+            cmp.then_with(|| a.run_id.cmp(&b.run_id))
+        });
+        rows
+    }
     pub fn launch_table_rows(
         &self,
         filter: Filter,
@@ -1233,6 +1326,7 @@ impl Service {
             if project.scripts.is_empty() {
                 if filter == Filter::All {
                     rows.push(LaunchTableRow {
+                        run_id: None,
                         group,
                         project_id: project.id,
                         project_name: project.display_label().to_owned(),
@@ -1245,6 +1339,7 @@ impl Service {
             }
             let project_name = project.display_label().to_owned();
             rows.extend(project.scripts.into_iter().map(|script| LaunchTableRow {
+                run_id: None,
                 group: group.clone(),
                 project_id: project.id,
                 project_name: project_name.clone(),
