@@ -499,5 +499,6 @@
   "选择文件": "Select file",
   "查看修改": "View changes",
   "忽略文件": "Ignore file",
-  "仅忽略未跟踪文件或目录，向 .gitignore 添加精确路径；已跟踪文件不会取消跟踪。": "Ignore an untracked file or directory using an exact .gitignore rule. Tracked files remain tracked."
+  "仅忽略未跟踪文件或目录，向 .gitignore 添加精确路径；已跟踪文件不会取消跟踪。": "Ignore an untracked file or directory using an exact .gitignore rule. Tracked files remain tracked.",
+  "返回": "Back"
 }

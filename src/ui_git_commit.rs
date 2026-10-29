@@ -144,23 +144,32 @@ impl DevStart {
         busy: bool,
     ) -> Option<(String, String)> {
         let mut request = None;
-        let mut back = false;
-        ui.horizontal(|ui| {
-            ui.label(button_label(
+        let (header, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 32.0), egui::Sense::hover());
+        let back_width = 80.0_f32.min(header.width() * 0.25);
+        let back = ui
+            .put(
+                egui::Rect::from_min_size(header.min, egui::vec2(back_width, header.height())),
+                egui::Button::new(button_label(
+                    ui,
+                    &format!("{} {}", icon::ARROW_LEFT, tr("返回")),
+                    true,
+                )),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(tr("返回工作区"))
+            .clicked();
+        // Symmetric reserved space keeps the title centered in the entire pane.
+        ui.put(
+            header.shrink2(egui::vec2(back_width + 8.0, 0.0)),
+            egui::Label::new(button_label(
                 ui,
                 &format!("{} {}", icon::LIST_BULLETS, tr("提交文件")),
                 true,
-            ));
-            back = ui
-                .button(button_label(
-                    ui,
-                    &format!("{} {}", icon::ARROW_LEFT, tr("返回工作区")),
-                    true,
-                ))
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text(tr("返回工作区"))
-                .clicked();
-        });
+            ))
+            .halign(egui::Align::Center)
+            .truncate(),
+        );
         if let (Some(inspection), Some(details)) =
             (&self.git_page.commit_files, &self.git_page.details)
         {
