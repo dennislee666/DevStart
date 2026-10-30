@@ -528,5 +528,8 @@
   "深绿": "Green",
   "灰色": "Gray",
   "米色": "Ivory",
-  "白色": "White"
+  "白色": "White",
+  "更新项目": "Update project",
+  "合并分支…": "Merge branches…",
+  "变基（Rebase）": "Rebase"
 }

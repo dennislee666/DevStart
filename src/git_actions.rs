@@ -215,6 +215,13 @@ impl Drop for CommitPathspec {
         let _ = std::fs::remove_file(&self.0);
     }
 }
+struct TemporaryIndex(PathBuf);
+impl Drop for TemporaryIndex {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+        let _ = std::fs::remove_file(self.0.with_extension("lock"));
+    }
+}
 pub fn commit(path: &Path, message: &str, files: &[String]) -> Result<String, String> {
     let _guard = mutation_guard(path)?;
     commit_unlocked(path, message, files)
@@ -235,45 +242,97 @@ pub(super) fn commit_unlocked(
     }
     let changes = changes(&root)?;
     let files = selected_from_changes(&changes, files)?;
+    // An index deletion may retain an ignored working copy after `rm --cached`.
+    // Preserve that deletion instead of staging or committing the working copy again.
+    let removed: std::collections::HashSet<_> = changes
+        .iter()
+        .filter(|c| c.status.starts_with('D'))
+        .map(|c| c.path.as_str())
+        .collect();
     let untracked: Vec<_> = files
         .iter()
-        .filter(|path| {
-            changes
-                .iter()
-                .any(|change| change.path == **path && change.status == "??")
+        .filter(|p| {
+            !removed.contains(p.as_str())
+                && changes.iter().any(|c| c.path == **p && c.status == "??")
         })
         .cloned()
         .collect();
     let untracked_set: std::collections::HashSet<_> = untracked.iter().collect();
+    let mut indexed = std::collections::HashSet::new();
+    for chunk in files.chunks(200) {
+        let mut args = vec!["ls-files", "-z", "--"];
+        args.extend(chunk.iter().map(String::as_str));
+        let output = super::git_output_raw(&root, &args)?.0;
+        indexed.extend(
+            output
+                .split('\0')
+                .filter(|p| !p.is_empty())
+                .map(str::to_owned),
+        );
+    }
     let tracked: Vec<_> = files
         .iter()
-        .filter(|path| !untracked_set.contains(path))
+        .filter(|p| {
+            indexed.contains(*p) && !removed.contains(p.as_str()) && !untracked_set.contains(p)
+        })
         .cloned()
         .collect();
-    // NUL-delimited pathspecs avoid argv limits when default-selecting large change lists.
-    if !tracked.is_empty() {
-        let pathspec = CommitPathspec::new(&tracked)?;
-        let argument = format!("--pathspec-from-file={}", pathspec.0.display());
-        git(&root, &["add", "-u", &argument, "--pathspec-file-nul"])?;
+    for (paths, mode) in [(&tracked, "-u"), (&untracked, "-A")] {
+        if !paths.is_empty() {
+            let pathspec = CommitPathspec::new(paths)?;
+            let argument = format!("--pathspec-from-file={}", pathspec.0.display());
+            git(&root, &["add", mode, &argument, "--pathspec-file-nul"])?;
+        }
     }
-    if !untracked.is_empty() {
-        let pathspec = CommitPathspec::new(&untracked)?;
-        let argument = format!("--pathspec-from-file={}", pathspec.0.display());
-        git(&root, &["add", "-A", &argument, "--pathspec-file-nul"])?;
+    // Build the commit from HEAD plus selected index entries. `commit --only`
+    // reads working files and would undo an intentional index-only removal.
+    let index_path = PathBuf::from(git(&root, &["rev-parse", "--git-path", "index"])?);
+    let index_path = if index_path.is_absolute() {
+        index_path
+    } else {
+        root.join(index_path)
+    };
+    let temporary = TemporaryIndex(index_path.with_file_name(format!(
+        "devstart-commit-index-{}",
+        crate::model::unique_id()
+    )));
+    let head = git(&root, &["rev-parse", "--verify", "--quiet", "HEAD"]).ok();
+    super::git_output_index(
+        &root,
+        if head.is_some() {
+            &["read-tree", "HEAD"]
+        } else {
+            &["read-tree", "--empty"]
+        },
+        None,
+        Some(&temporary.0),
+    )?;
+    let zero = match git(&root, &["rev-parse", "--show-object-format"])?.as_str() {
+        "sha1" => "0".repeat(40),
+        "sha256" => "0".repeat(64),
+        _ => return Err("Unsupported Git object format".into()),
+    };
+    let mut input = Vec::new();
+    for file in files.iter().filter(|p| !p.ends_with('/')) {
+        input.extend_from_slice(format!("0 {zero}\t{file}\0").as_bytes());
     }
-    let pathspec = CommitPathspec::new(&files)?;
-    let argument = format!("--pathspec-from-file={}", pathspec.0.display());
-    let args = [
-        "commit",
-        "--only",
-        "-m",
-        message,
-        &argument,
-        "--pathspec-file-nul",
-    ];
-    let (out, err) = git_output(&root, &args).map_err(|e| {
-        format!("{e}\nSelected files remain staged; inspect status before retrying.")
-    })?;
+    for chunk in files.chunks(200) {
+        let mut args = vec!["ls-files", "--stage", "-z", "--"];
+        args.extend(chunk.iter().map(String::as_str));
+        input.extend_from_slice(super::git_output_raw(&root, &args)?.0.as_bytes());
+    }
+    super::git_output_index(
+        &root,
+        &["update-index", "-z", "--index-info"],
+        Some(&input),
+        Some(&temporary.0),
+    )?;
+    let (out, err) =
+        super::git_output_index(&root, &["commit", "-m", message], None, Some(&temporary.0))
+            .map_err(|e| {
+                format!("{e}\nSelected files remain staged; inspect status before retrying.")
+            })?;
+
     Ok(format!("{out}\n{err}"))
 }
 pub fn push(path: &Path) -> Result<String, String> {

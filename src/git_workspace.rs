@@ -67,7 +67,19 @@ fn git_output_input(
     args: &[&str],
     input: Option<&[u8]>,
 ) -> Result<(String, String), String> {
+    git_output_index(path, args, input, None)
+}
+fn git_output_index(
+    path: &Path,
+    args: &[&str],
+    input: Option<&[u8]>,
+    index: Option<&Path>,
+) -> Result<(String, String), String> {
     let mut command = Command::new("git");
+    if let Some(index) = index {
+        command.env("GIT_INDEX_FILE", index);
+    }
+
     let mut verb_index = 0;
     while args.get(verb_index) == Some(&"-c") {
         verb_index += 2;

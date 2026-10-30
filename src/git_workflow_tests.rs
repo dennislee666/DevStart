@@ -481,3 +481,100 @@ fn untrack_preserves_worktree_and_respects_staged_content() {
     assert_eq!(repo.text("other.txt"), "working only");
     assert_eq!(repo.text(".gitignore"), before);
 }
+
+#[test]
+fn selected_commit_preserves_untrack_ignore_and_unselected_index_for_both_actions() {
+    for push in [false, true] {
+        let remote = Repo::new();
+        remote.commit("base.txt", "base\n");
+        let local = Repo::new();
+        let target = local.attach(&remote);
+        local.commit("verification.md", "original\n");
+        local.commit("unselected.txt", "base\n");
+        local.write("verification.md", "keep local verification\n");
+        actions::untrack(&local.0, "verification.md", true).unwrap();
+        local.write("unselected.txt", "unselected staged change\n");
+        git(&local.0, &["add", "--", "unselected.txt"]).unwrap();
+        local.write("new.txt", "selected new file\n");
+        let files = vec![
+            "verification.md".into(),
+            ".gitignore".into(),
+            "new.txt".into(),
+        ];
+        if push {
+            remotes::submit(
+                &local.0,
+                &target,
+                "main",
+                "untrack and ignore selected files",
+                &files,
+                true,
+            )
+            .unwrap();
+        } else {
+            actions::commit(&local.0, "untrack and ignore selected files", &files).unwrap();
+        }
+        assert!(git(&local.0, &["cat-file", "-e", "HEAD:verification.md"]).is_err());
+        assert_eq!(local.text("verification.md"), "keep local verification\n");
+        assert!(
+            git(&local.0, &["ls-files", "--", "verification.md"])
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            git(&local.0, &["show", "HEAD:unselected.txt"]).unwrap(),
+            "base"
+        );
+        assert_eq!(
+            git(&local.0, &["show", ":unselected.txt"]).unwrap(),
+            "unselected staged change"
+        );
+        assert_eq!(
+            git(&local.0, &["show", "HEAD:new.txt"]).unwrap(),
+            "selected new file"
+        );
+        assert!(
+            git(&local.0, &["show", "HEAD:.gitignore"])
+                .unwrap()
+                .contains("/verification.md")
+        );
+        if push {
+            assert_eq!(local.head(), remote.head());
+        }
+    }
+}
+
+#[test]
+fn commit_of_index_only_removal_keeps_unignored_local_copy() {
+    let local = Repo::new();
+    local.commit("local.txt", "original\n");
+    local.write("local.txt", "keep this version\n");
+    actions::untrack(&local.0, "local.txt", false).unwrap();
+    actions::commit(&local.0, "stop tracking local file", &["local.txt".into()]).unwrap();
+    assert_eq!(local.text("local.txt"), "keep this version\n");
+    assert!(git(&local.0, &["cat-file", "-e", "HEAD:local.txt"]).is_err());
+    assert!(
+        git(&local.0, &["ls-files", "--", "local.txt"])
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn isolated_selected_commit_supports_first_commit_and_untracked_directories() {
+    let local = Repo::new();
+    std::fs::create_dir(local.0.join("new-dir")).unwrap();
+    local.write("new-dir/one.txt", "one\n");
+    local.write("new-dir/two.txt", "two\n");
+    local.write("not-selected.txt", "keep untracked\n");
+    actions::commit(&local.0, "first selected directory", &["new-dir/".into()]).unwrap();
+    assert_eq!(
+        git(&local.0, &["show", "HEAD:new-dir/one.txt"]).unwrap(),
+        "one"
+    );
+    assert_eq!(
+        git(&local.0, &["show", "HEAD:new-dir/two.txt"]).unwrap(),
+        "two"
+    );
+    assert!(git(&local.0, &["cat-file", "-e", "HEAD:not-selected.txt"]).is_err());
+}

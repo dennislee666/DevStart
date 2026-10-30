@@ -776,7 +776,7 @@ impl DevStart {
                                                 enabled,
                                                 egui::Button::new(button_label(
                                                     ui,
-                                                    &format!("{} Update Project", icon::ARROW_DOWN),
+                                                    &format!("{} {}", icon::ARROW_DOWN,tr("更新项目")),
                                                     enabled,
                                                 )),
                                             )
@@ -791,12 +791,12 @@ impl DevStart {
                                         {
                                             action = Some(Action::Update(remote.key.clone(), r.branch.clone(), d.update_method));
                                         }
-                                        if ui.add_enabled(!busy && !operation_busy && d.branches.len() > 1, egui::Button::new("Rebase…")).clicked() {
-                                            self.git_page.rebase_picker = Some(operations_ui::RebasePicker::new(r.project_id, &r.branch, &d.branches));
-                                        }
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             let enabled = !busy && d.branches.len() > 1 && !operation_busy;
-                                            if ui.add_enabled(enabled, egui::Button::new(button_label(ui, &format!("{} {}", icon::GIT_MERGE, tr("合并分支")), enabled)))
+                                            if ui.add_enabled(enabled,egui::Button::new(tr("变基（Rebase）"))).clicked(){
+                                                self.git_page.rebase_picker=Some(operations_ui::RebasePicker::new(r.project_id,&r.branch,&d.branches));
+                                            }
+                                            if ui.add_enabled(enabled, egui::Button::new(button_label(ui, &format!("{} {}", icon::GIT_MERGE, tr("合并分支…")), enabled)))
                                                 .on_hover_text(if has_conflicts { conflict_hint.as_str() } else { tr("选择来源与目标分支，在本地仓库执行合并") })
                                                 .on_hover_cursor(if enabled { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Default }).clicked() {
                                                 self.git_page.merge_picker = Some(merge_ui::Picker::new(r.project_id, &r.branch, &d.branches));
