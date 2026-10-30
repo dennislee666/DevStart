@@ -507,5 +507,8 @@
   "请等待当前任务完成": "Wait for the current operation to finish",
   "撤销跟踪并忽略": "Untrack and ignore",
   "撤销跟踪": "Untrack",
-  "从 Git 索引移除，保留本地文件。下次提交将记录移除跟踪。": "Remove from the Git index and keep the local file. The next commit records the removal."
+  "从 Git 索引移除，保留本地文件。下次提交将记录移除跟踪。": "Remove from the Git index and keep the local file. The next commit records the removal.",
+  "新建终端": "New terminal",
+  "关闭终端": "Close terminal",
+  "终端已退出，可关闭此标签或新建终端。": "Shell exited. Close this tab or open a new terminal."
 }

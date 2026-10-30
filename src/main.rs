@@ -14,6 +14,7 @@ mod console_search;
 mod console_text;
 #[cfg(not(feature = "personal"))]
 mod demo_workspace;
+mod desktop_terminal;
 mod discovery;
 mod editor;
 mod editor_layout;

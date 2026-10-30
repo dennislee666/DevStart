@@ -132,6 +132,7 @@ fn catalog_rescan_preserves_identity_favorites_and_description() {
     let mut service = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store,
@@ -349,6 +350,7 @@ fn explicit_profile_import_is_idempotent_and_rescan_never_adds_release_commands(
     let mut s = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         catalog: Catalog::default(),
@@ -404,6 +406,7 @@ fn argument_presets_remain_distinct_and_survive_rescan() {
     let mut s = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         catalog: Catalog::default(),
@@ -511,6 +514,7 @@ fn preset_form_parsing_is_atomic_and_port_constraint_is_configurable() {
     let mut s = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         catalog: Catalog::default(),
@@ -544,6 +548,7 @@ fn default_console_is_the_last_started_entry_even_after_it_finishes() {
     let mut s = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         catalog: Catalog::default(),
@@ -568,6 +573,7 @@ fn grouped_project_projection_keeps_launch_choices_under_their_group() {
     let mut s = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         catalog: Catalog::default(),
@@ -924,6 +930,7 @@ fn stopped_console_can_restart_but_old_console_cannot_stop_a_new_instance() {
     let mut service = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store,
@@ -957,6 +964,7 @@ fn run_tabs_use_launch_names_and_short_command_tooltips() {
     let mut service = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store,
@@ -1158,6 +1166,7 @@ fn project_native_rescan_keeps_ids_and_reads_current_project_parameters() {
     let mut service = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store: Store::at(f.0.clone()).unwrap(),
@@ -1212,6 +1221,7 @@ fn custom_parameters_survive_project_native_refresh_without_an_ide() {
     let mut service = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store: Store::at(f.0.clone()).unwrap(),
@@ -1728,6 +1738,7 @@ fn api_service(f: &Fixture) -> Service {
     Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store: Store::at(f.0.clone()).unwrap(),
@@ -2434,6 +2445,7 @@ fn display_alias_changes_live_presentation_without_changing_execution() {
     let mut service = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store: Store::at(f.0.join("data")).unwrap(),
@@ -2801,6 +2813,7 @@ fn restart_reuses_console_position_and_stopped_console_can_restart_repeatedly() 
     let mut s = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store,
@@ -2859,6 +2872,7 @@ fn restart_from_old_duplicate_tab_collapses_duplicate_launch_tabs() {
     let mut s = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store,
@@ -2957,6 +2971,7 @@ fn bulk_plans_require_confirmation_reject_changes_and_restore_only_the_stopped_b
     let mut s = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store,
@@ -3026,6 +3041,7 @@ fn bulk_actions_select_current_tab_states_and_never_start_closed_history() {
     let mut s = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store: Store::at(f.0.clone()).unwrap(),
@@ -3132,6 +3148,7 @@ fn bulk_stop_during_restart_also_stops_the_retiring_generation() {
     let mut s = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store: Store::at(f.0.clone()).unwrap(),
@@ -3166,6 +3183,7 @@ fn unified_script_information_is_atomic_and_does_not_change_execution_or_sources
     let mut s = Service {
         scans: Default::default(),
         terminals: Default::default(),
+        desktop_terminals: Default::default(),
         editor: Default::default(),
         port_hints: Default::default(),
         store: Store::at(f.0.clone()).unwrap(),

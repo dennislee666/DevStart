@@ -1923,6 +1923,111 @@
         ],
         "additionalProperties": false
       }
+    },
+    "shell.list": {
+      "description": "列出独立终端标签与选中标签、配色。",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    "shell.open": {
+      "description": "在当前用户主目录打开独立登录 shell，放在最前并选中。",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    "shell.read": {
+      "description": "读取指定终端当前可见屏幕的纯文本；不是增量日志接口。",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "shell.input": {
+      "description": "向指定 PTY 写入原始文本；不自动追加换行。执行命令应显式在 text 末尾加换行。Ctrl+C 用 U+0003。",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "shell.select": {
+      "description": "选中独立终端标签。",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "shell.close": {
+      "description": "关闭指定 PTY 和标签，可能结束其中运行的进程。",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "shell.theme": {
+      "description": "切换并保存独立终端配色。",
+      "params": {
+        "type": "object",
+        "properties": {
+          "palette": {
+            "type": "string",
+            "enum": [
+              "Mac",
+              "Linux"
+            ]
+          }
+        },
+        "required": [
+          "palette"
+        ],
+        "additionalProperties": false
+      }
     }
   }
 }

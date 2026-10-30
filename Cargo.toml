@@ -11,6 +11,7 @@ default = []
 personal = []
 
 [dependencies]
+egui_term = { path = "vendor/egui_term" }
 eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "accesskit"] }
 egui_extras = { version = "0.33", default-features = false, features = ["syntect"] }
 sha2 = "0.10"

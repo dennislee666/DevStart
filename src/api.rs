@@ -3,6 +3,13 @@ use crate::{api_config as config, service::Service};
 use serde_json::{Value, json};
 
 pub const METHODS: &[&str] = &[
+    "shell.list",
+    "shell.open",
+    "shell.read",
+    "shell.input",
+    "shell.select",
+    "shell.close",
+    "shell.theme",
     "scan.start",
     "scan.get",
     "scan.cancel",
@@ -121,6 +128,49 @@ pub fn error(id: Value, code: i64, message: &str) -> Value {
 }
 pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, String> {
     match method {
+        "shell.list" => {
+            config::fields(p, &[])?;
+            Ok(s.desktop_terminals.describe())
+        }
+        "shell.open" => {
+            config::fields(p, &[])?;
+            s.desktop_terminals
+                .open(&eframe::egui::Context::default())?;
+            s.desktop_terminals.save(&s.store.root)?;
+            Ok(s.desktop_terminals.describe())
+        }
+        "shell.read" => {
+            config::fields(p, &["id"])?;
+            s.desktop_terminals.read_screen(config::id(p, "id")?)
+        }
+        "shell.input" => {
+            config::fields(p, &["id", "text"])?;
+            s.desktop_terminals
+                .write(config::id(p, "id")?, config::text(p, "text")?)?;
+            Ok(json!({"sent":true}))
+        }
+        "shell.select" | "shell.close" => {
+            config::fields(p, &["id"])?;
+            let id = config::id(p, "id")?;
+            if !s.desktop_terminals.sessions.iter().any(|v| v.id == id) {
+                return Err("终端不存在".into());
+            }
+            if method == "shell.close" {
+                s.desktop_terminals.close(id);
+            } else {
+                s.desktop_terminals.selected = Some(id);
+            }
+            s.desktop_terminals.save(&s.store.root)?;
+            Ok(s.desktop_terminals.describe())
+        }
+        "shell.theme" => {
+            config::fields(p, &["palette"])?;
+            s.desktop_terminals.palette =
+                serde_json::from_value(p["palette"].clone()).map_err(|e| e.to_string())?;
+            s.desktop_terminals.save(&s.store.root)?;
+            Ok(s.desktop_terminals.describe())
+        }
+
         "scan.start" => {
             config::fields(p, &["path"])?;
             let id = s

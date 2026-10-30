@@ -100,11 +100,13 @@ pub enum Filter {
     Favorites,
     Git,
     Running,
+    Terminal,
     Settings,
     Editor,
 }
 pub struct Service {
     pub scans: crate::project_scan::Manager,
+    pub desktop_terminals: crate::desktop_terminal::Manager,
     pub terminals: crate::project_terminal::Manager,
     pub editor: crate::editor::Workspace,
     pub catalog: Catalog,
@@ -124,6 +126,7 @@ impl Service {
         Ok(Self {
             scans: Default::default(),
             terminals: Default::default(),
+            desktop_terminals: Default::default(),
             editor,
             port_hints,
             catalog,
@@ -652,6 +655,7 @@ impl Service {
         Ok((project.id, project.path.clone()))
     }
     pub fn poll(&mut self) {
+        self.desktop_terminals.poll();
         self.terminals.retain_projects(
             &self
                 .catalog

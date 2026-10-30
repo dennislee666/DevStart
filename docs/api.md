@@ -697,3 +697,16 @@ Claude Desktop 与 Cursor 使用上文 `mcpServers` JSON。VS Code / Copilot 的
 - `scripts.preset {source_id,name,args,expected_port?}`：source_id 为已有启动项 ID；args 必须是完整字符串数组，每个元素恰好一个 argv 参数，不按空格拆分。端口省略或 null 表示无端口，否则 1–65535。返回新 Script 对象；继承源启动项的 enabled、入口、工作目录等，不执行脚本。
 - `scripts.describe {id}`：生成并保存简介，返回更新后的 Script；只使用本地源注释和已有运行证据，不启动服务、不发送外部 AI 请求。
 - `logs.clear {run_id}`：返回 `{run_id,cleared:true,process_stopped:false}`。仅清空运行时内存中的 Console 文本；不清除磁盘日志、不改变 logs.read 游标。未知 run_id 报错。
+
+## 独立终端标签与主题
+
+独立终端使用 `shell.*`，与项目范围的 `terminal.*` 区分。全部方法对应同源 Schema 的 `devstart_shell_*` MCP 工具。
+
+- `shell.list {}`：返回 `{selected,palette,sessions:[{id,name,active}]}`；列出当前进程中的终端，不自动创建 shell。
+- `shell.open {}`：在当前用户 HOME 创建登录 shell，新标签置顶并选中，返回同上完整状态。
+- `shell.read {id}`：返回 `{id,text,active,scope:"visible_screen"}`；text 为当前可见屏幕纯文本，没有字节游标，不能当作完整历史日志。
+- `shell.input {id,text}`：向 PTY 发送原始 UTF-8 文本，不自动追加换行。命令执行示例 text 为 `pwd\n`，中断为 `\u0003`。仅在用户授权的命令范围内使用。
+- `shell.select {id}` / `shell.close {id}`：切换或关闭标签并保存标签状态；关闭会关闭 PTY，可能终止其中任务，不只是隐藏。
+- `shell.theme {palette:"Mac"}` 或 `"Linux"`：切换并保存两套主题，Mac 为默认方案。返回当前标签状态。
+
+ID 为原始整数，遵守前文无损 JSON 要求。终端创建返回不代表 shell 初始化成功，执行后读取屏幕判断结果。跨应用重启只能恢复标签数量、最后选中位置和配色，会创建新 shell，不能恢复仍在执行的任务。API 不通过终端文本推测业务成功。

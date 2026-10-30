@@ -20,6 +20,8 @@ use std::{
 mod about_ui;
 #[path = "ui_console_render.rs"]
 mod console_render;
+#[path = "ui_desktop_terminal.rs"]
+mod desktop_terminal_ui;
 #[path = "ui_dialog.rs"]
 mod dialog_ui;
 #[path = "ui_editor.rs"]
@@ -317,6 +319,7 @@ impl DevStart {
                     (Filter::All, icon::STACK, tr("项目")),
                     (Filter::Git, icon::GIT_BRANCH, "Git"),
                     (Filter::Favorites, icon::STAR, tr("收藏")),
+                    (Filter::Terminal, icon::TERMINAL_WINDOW, tr("终端")),
                     (Filter::Running, icon::TERMINAL_WINDOW, tr("运行中")),
                 ] {
                     let count = self.service.as_ref().map_or(0, |s| s.active_count());
@@ -486,7 +489,7 @@ impl DevStart {
             });
     }
     fn top(&mut self, ctx: &egui::Context) {
-        if self.filter == Filter::Editor {
+        if matches!(self.filter, Filter::Editor | Filter::Terminal) {
             return;
         }
         let running = self.filter == Filter::Running;
@@ -3450,7 +3453,9 @@ impl eframe::App for DevStart {
                     }),
             )
             .show(ctx, |ui| {
-                if self.filter == Filter::Editor {
+                if self.filter == Filter::Terminal {
+                    self.desktop_terminal_page(ui);
+                } else if self.filter == Filter::Editor {
                     self.editor_page(ui);
                 } else if self.filter == Filter::Settings {
                     self.settings_page(ui);
