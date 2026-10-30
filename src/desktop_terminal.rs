@@ -45,7 +45,7 @@ impl Default for Manager {
             sessions: vec![],
             selected: None,
             palette: Palette::Mac,
-            font_size: 14.0,
+            font_size: 13.0,
             background: None,
             loaded: false,
             tiled: false,
@@ -97,7 +97,7 @@ impl Manager {
                     .as_f64()
                     .map(|v| v as f32)
                     .filter(|v| v.is_finite())
-                    .unwrap_or(14.0)
+                    .unwrap_or(13.0)
                     .clamp(10.0, 32.0);
                 self.background = value["background"]
                     .as_str()

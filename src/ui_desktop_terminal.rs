@@ -108,7 +108,7 @@ impl DevStart {
             );
             ui.separator();
             if ui.button(tr("默认字号")).clicked() {
-                manager.font_size = 14.0;
+                manager.font_size = 13.0;
             }
             if ui.button(tr("+字号")).clicked() {
                 manager.font_size = (manager.font_size + 1.0).min(32.0);
