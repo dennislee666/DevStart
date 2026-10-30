@@ -444,3 +444,40 @@ fn ignore_context_action_is_exact_and_preserves_source_and_existing_rules() {
     actions::ignore(&repo.0, "cache/").unwrap();
     assert!(repo.0.join("cache/item").exists());
 }
+
+#[test]
+fn untrack_preserves_worktree_and_respects_staged_content() {
+    let repo = Repo::new();
+    repo.commit("tracked.txt", "original");
+    repo.write("tracked.txt", "local edit");
+    actions::untrack(&repo.0, "tracked.txt", false).unwrap();
+    assert_eq!(repo.text("tracked.txt"), "local edit");
+    assert!(
+        git(&repo.0, &["ls-files", "--", "tracked.txt"])
+            .unwrap()
+            .is_empty()
+    );
+    assert!(!repo.0.join(".gitignore").exists());
+    git(&repo.0, &["add", "--", "tracked.txt"]).unwrap();
+    actions::untrack(&repo.0, "tracked.txt", true).unwrap();
+    assert_eq!(repo.text("tracked.txt"), "local edit");
+    assert!(repo.text(".gitignore").contains("/tracked.txt"));
+    assert!(
+        !actions::changes(&repo.0)
+            .unwrap()
+            .iter()
+            .any(|c| c.path == "tracked.txt" && c.status == "??")
+    );
+    repo.commit("other.txt", "base");
+    repo.write("other.txt", "staged only");
+    git(&repo.0, &["add", "--", "other.txt"]).unwrap();
+    repo.write("other.txt", "working only");
+    let before = repo.text(".gitignore");
+    assert!(actions::untrack(&repo.0, "other.txt", true).is_err());
+    assert_eq!(
+        git(&repo.0, &["show", ":other.txt"]).unwrap(),
+        "staged only"
+    );
+    assert_eq!(repo.text("other.txt"), "working only");
+    assert_eq!(repo.text(".gitignore"), before);
+}

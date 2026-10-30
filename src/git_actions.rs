@@ -426,6 +426,9 @@ pub fn ignore(path: &Path, file: &str) -> Result<String, String> {
         .into_iter()
         .find(|c| c.path == file && c.status == "??")
         .ok_or("只能忽略当前未跟踪的文件或目录，请刷新后重试")?;
+    add_ignore_rule(&path, file, entry.directory)
+}
+fn add_ignore_rule(path: &Path, file: &str, directory: bool) -> Result<String, String> {
     if file.chars().any(char::is_control)
         || Path::new(file).is_absolute()
         || Path::new(file)
@@ -452,7 +455,7 @@ pub fn ignore(path: &Path, file: &str) -> Result<String, String> {
         }
         rule.push(ch);
     }
-    if entry.directory && !rule.ends_with('/') {
+    if directory && !rule.ends_with('/') {
         rule.push('/');
     }
     let newline = if data.windows(2).any(|w| w == b"\r\n") {
@@ -487,4 +490,64 @@ pub fn ignore(path: &Path, file: &str) -> Result<String, String> {
     }
     result?;
     Ok(format!("已添加忽略规则：{rule}"))
+}
+
+/// Remove a single tracked path from the index, preserving the working file.
+/// Never force removal when Git detects unique staged content.
+pub fn untrack(path: &Path, file: &str, ignore_file: bool) -> Result<String, String> {
+    let path = root(path)?;
+    let _guard = mutation_guard(&path)?;
+    let change = changes(&path)?
+        .into_iter()
+        .find(|c| c.path == file)
+        .ok_or("文件状态已变化，请刷新后重试")?;
+    if change.status == "??"
+        || change.status == "!!"
+        || change.directory
+        || change
+            .status
+            .chars()
+            .any(|c| !matches!(c, ' ' | 'M' | 'A' | 'T'))
+    {
+        return Err("仅支持撤销跟踪已修改或新增的非冲突文件".into());
+    }
+    if file.chars().any(char::is_control)
+        || Path::new(file).is_absolute()
+        || Path::new(file)
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err("无效文件路径".into());
+    }
+    std::fs::symlink_metadata(path.join(file)).map_err(|e| format!("本地文件不可用：{e}"))?;
+    git(&path, &["rm", "--cached", "--dry-run", "--", file])?;
+    let ignore_path = path.join(".gitignore");
+    let before = if ignore_file {
+        match std::fs::read(&ignore_path) {
+            Ok(bytes) => Some(bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e.to_string()),
+        }
+    } else {
+        None
+    };
+    if ignore_file {
+        add_ignore_rule(&path, file, false)?;
+    }
+    if let Err(error) = git(&path, &["rm", "--cached", "--", file]) {
+        if ignore_file {
+            let rollback = match before {
+                Some(bytes) => std::fs::write(&ignore_path, bytes),
+                None => std::fs::remove_file(&ignore_path),
+            };
+            if let Err(rollback) = rollback {
+                return Err(format!("{error}\n恢复 .gitignore 失败：{rollback}"));
+            }
+        }
+        return Err(error);
+    }
+    Ok(format!(
+        "已撤销跟踪{}，本地文件保留：{file}",
+        if ignore_file { "并忽略" } else { "" }
+    ))
 }

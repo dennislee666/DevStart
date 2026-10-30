@@ -68,6 +68,7 @@ enum Action {
     Merge(String, String),
     Restore(String),
     Ignore(String),
+    Untrack(String, bool),
     RestoreVersion(String, String, String),
     Commit,
     Update(String, String, git::integration::Method),
@@ -261,6 +262,10 @@ impl DevStart {
                 _ => Some("Git"),
             };
             let (label, result) = match action {
+                Action::Untrack(file, ignore) => (
+                    format!("Untrack {file}"),
+                    actions::untrack(&project.path, &file, ignore),
+                ),
                 Action::Ignore(file) => (
                     format!("Ignore {file}"),
                     actions::ignore(&project.path, &file),
@@ -907,6 +912,12 @@ impl DevStart {
                                                             if ui.add_enabled(!busy && !file.directory,egui::Button::new(tr("查看修改"))).clicked() {
                                                                 preview = Some(file.path.clone()); ui.close();
                                                             }
+                                                            let can_untrack = !busy && !operation_busy && !file.directory && file.status != "??" && file.status.chars().all(|c|matches!(c,' '|'M'|'A'|'T'));
+                                                            for (label,ignore) in [(tr("撤销跟踪并忽略"),true),(tr("撤销跟踪"),false)] {
+                                                                if ui.add_enabled(can_untrack,egui::Button::new(label)).on_hover_text(tr("从 Git 索引移除，保留本地文件。下次提交将记录移除跟踪。" )).clicked() {
+                                                                    action=Some(Action::Untrack(file.path.clone(),ignore));ui.close();
+                                                                }
+                                                            }
                                                             let ignore_enabled = !busy && file.status == "??";
                                                             if ui.add_enabled(ignore_enabled,egui::Button::new(tr("忽略文件")))
                                                                 .on_hover_text(tr("仅忽略未跟踪文件或目录，向 .gitignore 添加精确路径；已跟踪文件不会取消跟踪。"))
@@ -1058,6 +1069,7 @@ impl DevStart {
             if matches!(
                 action,
                 Action::Commit
+                    | Action::Untrack(_, _)
                     | Action::Ignore(_)
                     | Action::CommitAndPush(_, _)
                     | Action::Continue
@@ -1173,7 +1185,7 @@ impl DevStart {
         if let Some(action) = self.git_page.confirm.clone() {
             let response=egui::Modal::new(egui::Id::new("git-confirm-action")).frame(dialog_ui::frame(ctx)).show(ctx,|ui|{
                 dialog_ui::content(ui);ui.set_width(420.0);
-                let title=match &action{Action::Switch(_)=>tr("切换分支"),Action::Merge(_,_)=>tr("合并分支"),Action::Restore(_)=>tr("回滚文件"),Action::Ignore(_)=>tr("忽略文件"),Action::RestoreVersion(_,_,_)=>tr("恢复到当前版本"),Action::Commit=>tr("提交本地"),Action::Update(_,_,_)=>"Update", Action::UpdateThenPush(_,_,_)=>"Update and Push",Action::CommitAndPush(_,_)=>tr("提交并推送"),Action::Rebase(_)=>"Rebase",Action::Continue=>tr("继续"),Action::FinishRecovery=>tr("结束手动恢复"),Action::SkipRebase=>tr("跳过此提交"),Action::Abort=>tr("终止操作"),Action::Resolve(_,_,_)=>tr("解决冲突")};
+                let title=match &action{Action::Switch(_)=>tr("切换分支"),Action::Merge(_,_)=>tr("合并分支"),Action::Restore(_)=>tr("回滚文件"),Action::Ignore(_)=>tr("忽略文件"),Action::Untrack(_,_)=>tr("撤销跟踪"),Action::RestoreVersion(_,_,_)=>tr("恢复到当前版本"),Action::Commit=>tr("提交本地"),Action::Update(_,_,_)=>"Update", Action::UpdateThenPush(_,_,_)=>"Update and Push",Action::CommitAndPush(_,_)=>tr("提交并推送"),Action::Rebase(_)=>"Rebase",Action::Continue=>tr("继续"),Action::FinishRecovery=>tr("结束手动恢复"),Action::SkipRebase=>tr("跳过此提交"),Action::Abort=>tr("终止操作"),Action::Resolve(_,_,_)=>tr("解决冲突")};
                 ui.heading(title);
                 if let Some(d)=&self.git_page.details{ui.label(RichText::new(format!("{} · {}",d.repository.name,d.repository.branch)).small().color(tone(self.light,MUTED)));}
                 match &action{
@@ -1187,6 +1199,7 @@ impl DevStart {
                     Action::Merge(source,target)=>{ui.label(format!("{source} → {target}"));},
                     Action::Switch(branch)=>{ui.label(branch);ui.label(tr("切换会更新实际项目文件，关联项目也会受到影响。无冲突的本地修改会保留；冲突时将取消切换并提示原因。"));},
                     Action::RestoreVersion(commit,branch,_)=>{ui.label(tr("确认要把这个版本恢复为本地最新版本吗？"));ui.label(format!("{branch} · {commit}"));ui.label(tr("将生成新的本地恢复提交，保留历史，不修改远程。之后需自行推送以同步远程。"));},
+                    Action::Untrack(file,_)=>{ui.label(file);},
                     Action::Ignore(file)=>{ui.label(file);},
                     Action::Restore(file)=>{ui.label(file);ui.label(tr("恢复到 HEAD，覆盖此文件的工作区和暂存区改动。DevStart 会先保存备份。"));},
                     Action::Commit=>{ui.label(&self.git_page.message);ui.label(tf("提交 {count} 个选中文件",&[("count",self.git_page.selection.selected.len().to_string())]));},

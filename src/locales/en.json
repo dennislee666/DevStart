@@ -504,5 +504,8 @@
   "提交备注不能为空": "Commit message required",
   "请填写提交备注或生成备注。": "Enter a commit message or generate one.",
   "知道了": "OK",
-  "请等待当前任务完成": "Wait for the current operation to finish"
+  "请等待当前任务完成": "Wait for the current operation to finish",
+  "撤销跟踪并忽略": "Untrack and ignore",
+  "撤销跟踪": "Untrack",
+  "从 Git 索引移除，保留本地文件。下次提交将记录移除跟踪。": "Remove from the Git index and keep the local file. The next commit records the removal."
 }
