@@ -60,6 +60,28 @@ pub fn fonts(p: &Preferences) -> egui::FontDefinitions {
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         ],
     );
+    let bold = load(
+        "launch-bold-latin",
+        &[
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        ],
+    );
+    let mut bold_names = bold.into_iter().collect::<Vec<_>>();
+    for (path, index) in [
+        ("/System/Library/Fonts/Hiragino Sans GB.ttc", 2),
+        ("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc", 0),
+    ] {
+        if let Ok(bytes) = std::fs::read(path) {
+            let mut data = egui::FontData::from_owned(bytes);
+            data.index = index;
+            fonts
+                .font_data
+                .insert("launch-bold-cjk".into(), data.into());
+            bold_names.push("launch-bold-cjk".into());
+            break;
+        }
+    }
     if let Some(name) = system {
         fonts
             .families
@@ -79,6 +101,16 @@ pub fn fonts(p: &Preferences) -> egui::FontDefinitions {
             fonts.families.entry(family).or_default().push(name.clone());
         }
     }
+    bold_names.extend(
+        fonts
+            .families
+            .get(&FontFamily::Proportional)
+            .cloned()
+            .unwrap_or_default(),
+    );
+    fonts
+        .families
+        .insert(FontFamily::Name("launch-bold".into()), bold_names);
     let base_mono = fonts
         .families
         .get(&FontFamily::Monospace)

@@ -1423,7 +1423,9 @@ impl DevStart {
         };
         let row = project.action_target();
         ui.push_id(("launch-project-title", project.project_id), |ui| {
-            egui::Frame::new()
+            let mut title_clicked = false;
+            let mut buttons_left = f32::INFINITY;
+            let frame = egui::Frame::new()
                 .fill(if self.light {
                     Color32::from_gray(245)
                 } else {
@@ -1456,20 +1458,20 @@ impl DevStart {
                                     );
                                     let name_clicked = ui
                                         .add(
-                                            egui::Button::new(RichText::new(&label).strong())
-                                                .frame(false)
-                                                .truncate(),
+                                            egui::Button::new(
+                                                RichText::new(&label)
+                                                    .family(egui::FontFamily::Name(
+                                                        "launch-bold".into(),
+                                                    ))
+                                                    .strong(),
+                                            )
+                                            .frame(false)
+                                            .truncate(),
                                         )
                                         .on_hover_text(&label)
                                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                                         .clicked();
-                                    if arrow_clicked || name_clicked {
-                                        if expanded {
-                                            self.expanded.remove(&project.project_id);
-                                        } else {
-                                            self.expanded.insert(project.project_id);
-                                        }
-                                    }
+                                    title_clicked = arrow_clicked || name_clicked;
                                 });
                                 ui.add(
                                     egui::Label::new(
@@ -1496,9 +1498,22 @@ impl DevStart {
                                 )
                             });
                             self.project_action_menu(ui, &row, 28.0, false);
+                            buttons_left = ui.cursor().right() + ui.spacing().item_spacing.x;
                         });
                     });
                 });
+            let mut clickable = frame.response.rect;
+            clickable.max.x = buttons_left.min(clickable.right());
+            let hovered = ui.rect_contains_pointer(clickable.intersect(ui.clip_rect()));
+            if hovered {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            // Observe a completed click once; do not overlay or intercept the action buttons.
+            if title_clicked || (hovered && ui.input(|i| i.pointer.primary_clicked())) {
+                if !self.expanded.remove(&project.project_id) {
+                    self.expanded.insert(project.project_id);
+                }
+            }
         });
     }
     fn project_group_filter_bar(&mut self, ui: &mut egui::Ui) {
@@ -1682,15 +1697,21 @@ impl DevStart {
                                         return;
                                     }
                                     if index == 1 {
-                                        let name =
-                                            ui.add(
-                                                egui::Label::new(RichText::new(value).color(tone(
-                                                    self.light,
-                                                    crate::appearance::TEXT,
-                                                )))
-                                                .halign(egui::Align::Min)
-                                                .truncate(),
-                                            );
+                                        let name = ui.add(
+                                            egui::Label::new(
+                                                RichText::new(value)
+                                                    .family(egui::FontFamily::Name(
+                                                        "launch-bold".into(),
+                                                    ))
+                                                    .strong()
+                                                    .color(tone(
+                                                        self.light,
+                                                        crate::appearance::TEXT,
+                                                    )),
+                                            )
+                                            .halign(egui::Align::Min)
+                                            .truncate(),
+                                        );
                                         name.on_hover_text(&row.project_name);
                                         let path = ui.add(
                                             egui::Label::new(
@@ -1765,6 +1786,13 @@ impl DevStart {
                                                 crate::appearance::TEXT
                                             },
                                         ))
+                                    };
+                                    let label = if matches!(index, 0 | 2) {
+                                        label
+                                            .family(egui::FontFamily::Name("launch-bold".into()))
+                                            .strong()
+                                    } else {
+                                        label
                                     };
                                     let response =
                                         ui.add(egui::Label::new(label).truncate().sense(
