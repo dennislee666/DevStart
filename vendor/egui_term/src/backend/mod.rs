@@ -31,6 +31,7 @@ pub type SelectionType = AlacrittySelectionType;
 
 #[derive(Debug, Clone)]
 pub enum BackendCommand {
+    Clear,
     Write(Vec<u8>),
     Scroll(i32),
     Resize(Size, Size),
@@ -135,6 +136,7 @@ impl From<TerminalSize> for WindowSize {
 
 pub struct TerminalBackend {
     pub id: u64,
+    pub shell_pid: u32,
     pub url_regex: RegexSearch,
     term: Arc<FairMutex<Term<EventProxy>>>,
     size: TerminalSize,
@@ -158,6 +160,7 @@ impl TerminalBackend {
         let config = term::Config::default();
         let terminal_size = TerminalSize::default();
         let pty = tty::new(&pty_config, terminal_size.into(), id)?;
+        let shell_pid = pty.child().id();
         let (event_sender, event_receiver) = mpsc::channel();
         let event_proxy = EventProxy(event_sender);
         let mut term = Term::new(config, &terminal_size, event_proxy.clone());
@@ -189,6 +192,7 @@ impl TerminalBackend {
 
         Ok(Self {
             id,
+            shell_pid,
             url_regex,
             term: term.clone(),
             size: terminal_size,
@@ -201,6 +205,11 @@ impl TerminalBackend {
         let term = self.term.clone();
         let mut term = term.lock();
         match cmd {
+            BackendCommand::Clear => {
+                use alacritty_terminal::vte::ansi::Handler;
+                term.clear_screen(alacritty_terminal::vte::ansi::ClearMode::All);
+                term.grid_mut().clear_history();
+            },
             BackendCommand::Write(input) => {
                 self.write(input);
                 term.scroll_display(Scroll::Bottom);

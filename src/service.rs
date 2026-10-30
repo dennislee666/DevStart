@@ -656,6 +656,11 @@ impl Service {
     }
     pub fn poll(&mut self) {
         self.desktop_terminals.poll();
+        if self.desktop_terminals.dirty {
+            if let Err(error) = self.desktop_terminals.save(&self.store.root) {
+                self.runtime.error = Some(error);
+            }
+        }
         self.terminals.retain_projects(
             &self
                 .catalog

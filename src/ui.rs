@@ -3387,6 +3387,7 @@ impl eframe::App for DevStart {
             ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
         }
         self.editor_quit_guard(ctx);
+        self.desktop_terminal_quit_guard(ctx);
         if let Some(s) = &mut self.service {
             let selected_console = self.selected_run.and_then(|id| {
                 s.runtime

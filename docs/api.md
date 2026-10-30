@@ -710,3 +710,6 @@ Claude Desktop 与 Cursor 使用上文 `mcpServers` JSON。VS Code / Copilot 的
 - `shell.theme {palette:"Mac"}` 或 `"Linux"`：切换并保存两套主题，Mac 为默认方案。返回当前标签状态。
 
 ID 为原始整数，遵守前文无损 JSON 要求。终端创建返回不代表 shell 初始化成功，执行后读取屏幕判断结果。跨应用重启只能恢复标签数量、最后选中位置和配色，会创建新 shell，不能恢复仍在执行的任务。API 不通过终端文本推测业务成功。
+
+
+终端视图补充：`shell.theme` 支持 `font_size`（10–32，默认14）、`background`（null 跟随风格，或 Schema 所列十六进制颜色）、`tiled`（true 平铺，false 标签）；仍需传当前或目标 palette。设置会保存。`shell.close` 现为异步安全关闭，增加 `confirmed` 可选布尔值（默认false），运行命令时 `shell.list.pending_close` 表示待确认；只有用户授权停止时传true。轮询到 session 消失才表示停止并关闭完成，`close_error` 为实际失败原因，失败保留会话。

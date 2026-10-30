@@ -150,13 +150,28 @@ pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, Strin
             Ok(json!({"sent":true}))
         }
         "shell.select" | "shell.close" => {
-            config::fields(p, &["id"])?;
+            config::fields(
+                p,
+                if method == "shell.close" {
+                    &["id", "confirmed"]
+                } else {
+                    &["id"]
+                },
+            )?;
             let id = config::id(p, "id")?;
             if !s.desktop_terminals.sessions.iter().any(|v| v.id == id) {
                 return Err("终端不存在".into());
             }
             if method == "shell.close" {
-                s.desktop_terminals.close(id);
+                let confirmed = p
+                    .get("confirmed")
+                    .map(|v| v.as_bool().ok_or("confirmed 必须为布尔值"))
+                    .transpose()?
+                    .unwrap_or(false);
+                if s.desktop_terminals.pending_close == Some(id) {
+                    s.desktop_terminals.pending_close = None;
+                }
+                s.desktop_terminals.request_close(id, confirmed);
             } else {
                 s.desktop_terminals.selected = Some(id);
             }
@@ -164,13 +179,48 @@ pub fn dispatch(s: &mut Service, method: &str, p: &Value) -> Result<Value, Strin
             Ok(s.desktop_terminals.describe())
         }
         "shell.theme" => {
-            config::fields(p, &["palette"])?;
-            s.desktop_terminals.palette =
+            config::fields(p, &["palette", "font_size", "background", "tiled"])?;
+            let palette =
                 serde_json::from_value(p["palette"].clone()).map_err(|e| e.to_string())?;
+            let font_size = p
+                .get("font_size")
+                .map(|v| {
+                    v.as_f64()
+                        .filter(|n| n.is_finite() && (10.0..=32.0).contains(n))
+                        .map(|v| v as f32)
+                        .ok_or("font_size 必须为 10–32")
+                })
+                .transpose()?;
+            let background = p
+                .get("background")
+                .map(|v| {
+                    if v.is_null() {
+                        Ok(None)
+                    } else {
+                        v.as_str()
+                            .filter(|v| crate::desktop_terminal::valid_background(v))
+                            .map(|v| Some(v.to_owned()))
+                            .ok_or("无效终端背景色")
+                    }
+                })
+                .transpose()?;
+            let tiled = p
+                .get("tiled")
+                .map(|v| v.as_bool().ok_or("tiled 必须为布尔值"))
+                .transpose()?;
+            s.desktop_terminals.palette = palette;
+            if let Some(v) = font_size {
+                s.desktop_terminals.font_size = v;
+            }
+            if let Some(v) = background {
+                s.desktop_terminals.background = v;
+            }
+            if let Some(v) = tiled {
+                s.desktop_terminals.tiled = v;
+            }
             s.desktop_terminals.save(&s.store.root)?;
             Ok(s.desktop_terminals.describe())
         }
-
         "scan.start" => {
             config::fields(p, &["path"])?;
             let id = s

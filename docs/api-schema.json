@@ -1995,13 +1995,17 @@
       }
     },
     "shell.close": {
-      "description": "关闭指定 PTY 和标签，可能结束其中运行的进程。",
+      "description": "异步关闭 PTY 标签。默认检查运行命令，存在命令时 pending_close 等待确认；confirmed=true 停止进程树后关闭。轮询 shell.list，标签消失才表示成功。",
       "params": {
         "type": "object",
         "properties": {
           "id": {
             "type": "integer",
             "minimum": 1
+          },
+          "confirmed": {
+            "type": "boolean",
+            "description": "仅在用户已确认停止终端命令时传 true；默认 false，活动命令需要确认，状态见 shell.list.pending_close。"
           }
         },
         "required": [
@@ -2021,6 +2025,31 @@
               "Mac",
               "Linux"
             ]
+          },
+          "font_size": {
+            "type": "number",
+            "minimum": 10,
+            "maximum": 32
+          },
+          "background": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              null,
+              "#080a0c",
+              "#182537",
+              "#2b1e35",
+              "#193027",
+              "#30343b",
+              "#f1eee6",
+              "#ffffff"
+            ],
+            "description": "null 跟随风格"
+          },
+          "tiled": {
+            "type": "boolean"
           }
         },
         "required": [

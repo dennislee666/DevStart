@@ -9,3 +9,21 @@
 终端引擎复用 egui_term 0.1.0 / Alacritty 0.25。从国内 rsproxy 镜像下载，vendor/egui_term 保留 MIT 许可；本地修改仅为 egui 0.33 的字体绘制接口适配与 PTY 局部环境。未回退国外依赖下载源。无法承诺复制 macOS Terminal.app 的所有偏好设置和系统集成功能。
 
 快捷键：终端页支持 ⌘T 新建标签、⌘W 关闭当前标签；终端内保留 Ctrl+C 中断、Tab 补全、方向键历史与 ⌘C/⌘V 复制粘贴。新增 shell.list/open/read/input/select/close/theme API 和独立 MCP 工具，精确契约见 api.md。实际验证包含两套主题的 ANSI 多色输出、HOME 初始目录、新标签置顶、切页保留选中标签、独立环境变量；不声称验证了 macOS Terminal 的所有系统集成。
+
+## 标签、平铺和关闭保护
+
+工具栏顺序为新建终端、标签模式、平铺模式、配色；平铺采用运行中页面相同的按宽度自适应列数、可滚动网格、当前窗格边框和切回标签按钮。新会话使用系统随机源选取固定记忆符号，配合递增三位编号，例如 ◇终端001；切换模式不改变名称、进程和顺序，重开应用恢复名称、编号计数及模式。
+
+Tab、双 Tab 直接发送给 shell（补全、候选列表由用户 shell 配置决定）；锁定终端的 Tab/方向键/Escape 焦点导航，防止被 GUI 抢走。保留 Ctrl+C/D/Z、方向键历史、Cmd+C/V 与 Cmd+T/W。
+
+关闭标签/窗格先异步读取本终端的真实进程树。空闲 shell 直接关闭；有子命令或 shell 已 exec 为其它程序时显示停止确认。取消不发停止信号；确认后按 PID 与启动时间核验身份，优雅停止并按需强制停止，核实退出后才移除会话。关闭主窗口同样检查全部终端；若有运行命令先确认，取消保留全部终端。不能用旧 cwd 判断 shell 身份，因此切换目录后也要正确检查。
+
+shell.close 新增可选 confirmed，默认 false。操作异步，shell.list 返回 closing 与 pending_close；pending_close 非空表示等用户确认。只有用户已授权停止命令时才能传 confirmed:true；标签消失才代表关闭完成，失败保留会话并报错。
+
+## 字号与背景色
+
+风格名称统一为 Mac风格、Linux风格。其后为默认字号（14px）、+字号、−字号，范围 10–32px；即时调整 PTY 网格尺寸和渲染字号。背景色块使用实心方形字体符号，当前选择有边框，提供黑、深蓝、深紫、深绿、灰、米、白。“跟随风格”清除自定义背景；浅色背景调整默认文字对比度，程序指定 ANSI 颜色保留。字号与背景和其它终端视图设置一起持久化。
+
+shell.theme 保留必填 palette，并增加可选 font_size、background（null 跟随风格）、tiled。所有字段校验通过才更新状态，允许背景值见 api-schema.json。
+
+macOS ⌘K 清空当前屏幕与滚动历史，Ctrl+L 仍交由 shell 处理。实际补全验证：Tab 先扩展公共前缀，随后连续 Tab 由 bash/readline 列出候选，与当前 shell 的补全规则一致。

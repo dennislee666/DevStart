@@ -122,6 +122,7 @@ impl<'a> TerminalView<'a> {
     fn focus(self, layout: &Response) -> Self {
         if self.has_focus {
             layout.request_focus();
+            layout.ctx.memory_mut(|m|m.set_focus_lock_filter(layout.id,egui::EventFilter {tab:true,horizontal_arrows:true,vertical_arrows:true,escape:true}));
         } else {
             layout.surrender_focus();
         }
@@ -351,6 +352,7 @@ fn process_keyboard_event(
     modifiers: Modifiers,
 ) -> InputAction {
     match event {
+        egui::Event::Key {key:egui::Key::K,pressed:true,modifiers,..} if modifiers.mac_cmd => InputAction::BackendCall(BackendCommand::Clear),
         egui::Event::Text(text) => {
             process_text_event(&text, modifiers, backend, bindings_layout)
         },
