@@ -516,6 +516,7 @@ impl DevStart {
                         self.git_page.diff_active = 0;
                         self.git_page.diff_open = true;
                         self.git_page.diff_minimized = false;
+                        self.git_page.diff_maximized = true;
                     }
                     Err(error) => self.git_page.preview_error = Some(error),
                 },
@@ -533,6 +534,7 @@ impl DevStart {
                         }
                         self.git_page.diff_open = true;
                         self.git_page.diff_minimized = false;
+                        self.git_page.diff_maximized = true;
                     }
                     Err(e) => self.git_page.error = Some(e),
                 },
@@ -1082,6 +1084,7 @@ impl DevStart {
                 self.git_page.preview_error =
                     Some(tr("请先关闭当前 Diff 窗口，再查看其他文件。").into());
                 self.git_page.diff_minimized = false;
+                self.git_page.diff_maximized = true;
             } else {
                 let path = d.repository.path.clone();
                 self.git_page.request(move || {
