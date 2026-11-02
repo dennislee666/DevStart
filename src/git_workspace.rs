@@ -615,6 +615,82 @@ mod tests {
         assert!(read(&repo.0, None, Source::Local, 0, 0, false).is_err());
     }
 
+    #[test]
+    fn update_before_submit_integrates_remote_and_stops_on_update_failure() {
+        for push in [false, true] {
+            let remote = Repo::new();
+            remote.commit("base");
+            git(
+                &remote.0,
+                &["config", "receive.denyCurrentBranch", "ignore"],
+            )
+            .unwrap();
+            let local = Repo::new();
+            git(
+                &local.0,
+                &["remote", "add", "origin", remote.0.to_str().unwrap()],
+            )
+            .unwrap();
+            git(&local.0, &["fetch", "origin"]).unwrap();
+            git(&local.0, &["reset", "--hard", "origin/main"]).unwrap();
+            git(&local.0, &["config", "user.name", "Test"]).unwrap();
+            git(&local.0, &["config", "user.email", "test@example.invalid"]).unwrap();
+            remote.commit("remote update");
+            std::fs::write(local.0.join("new.txt"), "local change").unwrap();
+            let key = remotes::list(&local.0).unwrap()[0].key.clone();
+            remotes::update_then_submit(
+                &local.0,
+                &key,
+                "main",
+                "local submission",
+                &["new.txt".into()],
+                push,
+            )
+            .unwrap();
+            assert_eq!(
+                git(&local.0, &["show", "HEAD:file.txt"]).unwrap(),
+                "remote update"
+            );
+            assert_eq!(
+                git(&local.0, &["show", "HEAD:new.txt"]).unwrap(),
+                "local change"
+            );
+            let local_head = git(&local.0, &["rev-parse", "HEAD"]).unwrap();
+            assert_eq!(
+                git(&remote.0, &["rev-parse", "HEAD"]).unwrap() == local_head,
+                push
+            );
+            git(
+                &local.0,
+                &[
+                    "remote",
+                    "set-url",
+                    "origin",
+                    "/nonexistent/devstart-remote",
+                ],
+            )
+            .unwrap();
+            std::fs::write(local.0.join("new.txt"), "must remain").unwrap();
+            let key = remotes::list(&local.0).unwrap()[0].key.clone();
+            assert!(
+                remotes::update_then_submit(
+                    &local.0,
+                    &key,
+                    "main",
+                    "should not commit",
+                    &["new.txt".into()],
+                    push
+                )
+                .is_err()
+            );
+            assert_eq!(git(&local.0, &["rev-parse", "HEAD"]).unwrap(), local_head);
+            assert_eq!(
+                std::fs::read_to_string(local.0.join("new.txt")).unwrap(),
+                "must remain"
+            );
+        }
+    }
+
     struct Repo(PathBuf);
     impl Repo {
         fn new() -> Self {

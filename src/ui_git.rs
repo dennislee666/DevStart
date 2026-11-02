@@ -246,6 +246,13 @@ impl DevStart {
             .join("git-backups");
         let message = self.git_page.message.clone();
         let files: Vec<_> = self.git_page.selection.selected.iter().cloned().collect();
+        let commit_target = self.git_page.details.as_ref().and_then(|d| {
+            let selected = self.git_page.remote_choices.get(&id)?;
+            d.remotes
+                .iter()
+                .find(|r| &r.key == selected)
+                .map(|remote| (remote.key.clone(), d.repository.branch.clone()))
+        });
         self.git_page.request(move || {
             if let Action::Resolve(file, token, resolution) = &action {
                 let result =
@@ -292,7 +299,18 @@ impl DevStart {
                 ),
                 Action::Commit => (
                     "git commit".into(),
-                    actions::commit(&project.path, &message, &files),
+                    commit_target
+                        .ok_or_else(|| tr("未配置远程仓库").to_owned())
+                        .and_then(|(key, branch)| {
+                            git::remotes::update_then_submit(
+                                &project.path,
+                                &key,
+                                &branch,
+                                &message,
+                                &files,
+                                false,
+                            )
+                        }),
                 ),
                 Action::Update(key, branch, method) => (
                     format!("Update ({}) {branch}", method.label()),
@@ -304,7 +322,14 @@ impl DevStart {
                 ),
                 Action::CommitAndPush(key, branch) => (
                     "Commit and Push".into(),
-                    git::remotes::submit(&project.path, &key, &branch, &message, &files, true),
+                    git::remotes::update_then_submit(
+                        &project.path,
+                        &key,
+                        &branch,
+                        &message,
+                        &files,
+                        true,
+                    ),
                 ),
                 Action::UpdateThenPush(key, branch, method) => (
                     "Update and retry Push".into(),

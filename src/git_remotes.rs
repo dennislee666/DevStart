@@ -165,6 +165,29 @@ pub fn submit(
     }
     Ok(output)
 }
+/// Refresh and integrate before creating a commit. A failed update never proceeds to commit.
+pub fn update_then_submit(
+    path: &Path,
+    key: &str,
+    branch: &str,
+    message: &str,
+    files: &[String],
+    push_remote: bool,
+) -> Result<String, String> {
+    if message.trim().is_empty() {
+        return Err("提交备注不能为空".into());
+    }
+    let updated = update_with_method(
+        path,
+        key,
+        branch,
+        super::integration::preferred_method(path),
+    )
+    .map_err(|e| format!("Update Project: FAILED\n{e}"))?;
+    submit(path, key, branch, message, files, push_remote)
+        .map(|result| format!("Update Project: OK\n{updated}\n{result}"))
+        .map_err(|e| format!("Update Project: OK\n{updated}\nSubmit: FAILED\n{e}"))
+}
 pub fn push_rejected(error: &str) -> bool {
     ["non-fast-forward", "fetch first", "[rejected]"]
         .iter()
