@@ -983,13 +983,6 @@ impl DevStart {
                                     });
                                     ui.horizontal_wrapped(|ui| {
                                         let enabled = !busy && !operation_busy;
-                                        if ui.add_enabled(enabled, egui::Button::new(button_label(ui,
-                                            &format!("{} {}", icon::UPLOAD_SIMPLE, tr("推送已有提交")), enabled)))
-                                            .on_hover_text(tr("推送当前分支已有的本地提交，无需新提交或备注")).clicked() {
-                                            if let Some(remote) = remote { action = Some(Action::Push(remote.key.clone(), r.branch.clone())); }
-                                            else { self.error = Some(tr("未配置远程仓库").into()); }
-                                        }
-
                                         if ui.add_enabled(enabled,egui::Button::new(button_label(ui,
                                             &format!("{} {}",icon::GIT_COMMIT,tr("提交本地")),enabled)))
                                             .on_disabled_hover_text(if has_conflicts { conflict_hint.as_str() } else { tr("请等待当前任务完成") }).clicked() {
@@ -1002,6 +995,13 @@ impl DevStart {
                                                 else if let Some(remote) = remote { action = Some(Action::CommitAndPush(remote.key.clone(),r.branch.clone())); }
                                                 else { self.error = Some(tr("未配置远程仓库").into()); }
                                         }
+                                        if ui.add_enabled(enabled, egui::Button::new(button_label(ui,
+                                            &format!("{} {}", icon::UPLOAD_SIMPLE, tr("推送已有提交")), enabled)))
+                                            .on_hover_text(tr("推送当前分支已有的本地提交，无需新提交或备注")).clicked() {
+                                            if let Some(remote) = remote { action = Some(Action::Push(remote.key.clone(), r.branch.clone())); }
+                                            else { self.error = Some(tr("未配置远程仓库").into()); }
+                                        }
+
                                     });
                                 } else if busy {
                                     if let Some(row) = self
