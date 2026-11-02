@@ -38,7 +38,7 @@ pub(super) struct GitPage {
     confirm: Option<Action>,
     remote_picker: Option<remote_ui::Picker>,
     preview_error: Option<String>,
-    notices: Vec<(bool, String)>,
+    notices: Vec<(bool, String, std::time::Instant)>,
     merge_picker: Option<merge_ui::Picker>,
     rebase_picker: Option<operations_ui::RebasePicker>,
     conflict_editor: Option<operations_ui::ConflictEditor>,
@@ -113,7 +113,8 @@ impl GitPage {
 }
 impl GitPage {
     pub(super) fn push_notice(&mut self, success: bool, message: String) {
-        self.notices.push((success, message));
+        self.notices
+            .push((success, message, std::time::Instant::now()));
     }
 }
 impl DevStart {
@@ -379,7 +380,7 @@ impl DevStart {
                 Reply::Resolved(id, snapshot, result) => match result {
                     Ok(output) => {
                         self.git_page.conflict_editor = None;
-                        self.git_page.notices.push((true, output.clone()));
+                        self.git_page.push_notice(true, output.clone());
                         Reply::Selected(id, snapshot, Some(output))
                     }
                     Err(error) => {
@@ -391,7 +392,7 @@ impl DevStart {
                     }
                 },
                 Reply::Submitted(id, snapshot, success, output) => {
-                    self.git_page.notices.push((success, output.clone()));
+                    self.git_page.push_notice(success, output.clone());
                     Reply::Selected(id, snapshot, Some(output))
                 }
                 other => other,
@@ -432,10 +433,10 @@ impl DevStart {
                                         }
                                     }
                                     Ok(false) => {}
-                                    Err(error) => self.git_page.notices.push((
+                                    Err(error) => self.git_page.push_notice(
                                         false,
                                         format!("{}: {error}", tr("生成工具设置保存失败")),
-                                    )),
+                                    ),
                                 }
                             }
                             if self.git_page.selected == Some(id)
@@ -443,20 +444,19 @@ impl DevStart {
                             {
                                 self.git_page.message = generated.message;
                             } else {
-                                self.git_page.notices.push((
+                                self.git_page.push_notice(
                                     false,
                                     format!(
                                         "{}\n{}",
                                         tr("备注已被修改，生成结果未覆盖当前内容"),
                                         generated.message
                                     ),
-                                ));
+                                );
                             }
                         }
                         Err(error) => self
                             .git_page
-                            .notices
-                            .push((false, format!("{}\n{error}", tr("生成提交备注失败")))),
+                            .push_notice(false, format!("{}\n{error}", tr("生成提交备注失败"))),
                     }
                 }
                 Reply::Submitted(..) | Reply::Resolved(..) => {
@@ -1085,6 +1085,11 @@ impl DevStart {
     }
     pub(super) fn git_notifications(&mut self, ctx: &egui::Context) {
         self.git_poll();
+        // Each result expires independently; new notices never extend older results.
+        let now = std::time::Instant::now();
+        self.git_page
+            .notices
+            .retain(|(_, _, created)| now.duration_since(*created) < Duration::from_secs(6));
         if self.git_page.notices.is_empty() {
             return;
         }
@@ -1094,7 +1099,7 @@ impl DevStart {
             .anchor(egui::Align2::RIGHT_BOTTOM, [-18.0, -18.0])
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                for (index, (success, message)) in self.git_page.notices.iter().enumerate() {
+                for (index, (success, message, _)) in self.git_page.notices.iter().enumerate() {
                     let mut frame = egui::Frame::popup(ui.style());
                     if !success {
                         frame = frame
