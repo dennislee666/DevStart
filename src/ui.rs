@@ -64,6 +64,7 @@ pub struct DevStart {
     scan_ui: scan_ui::ScanUi,
     groups_ui: groups_ui::GroupsUi,
     git_page: git_ui::GitPage,
+    browser_links: crate::browser_links::Pending,
     console_terminal_tabs: HashSet<u64>,
     console_terminals: HashMap<u64, terminal_ui::TerminalView>,
     brand_icon: egui::TextureHandle,
@@ -149,6 +150,7 @@ impl DevStart {
             scan_ui: Default::default(),
             groups_ui: Default::default(),
             git_page: git_ui::GitPage::default(),
+            browser_links: Default::default(),
             console_terminal_tabs: Default::default(),
             console_terminals: Default::default(),
             brand_icon,
@@ -693,15 +695,26 @@ impl DevStart {
             self.report(Err(error));
             return;
         }
+        if let Some(console_id) = self
+            .service
+            .as_ref()
+            .and_then(|s| s.runtime.runs.iter().find(|r| r.id == run_id))
+            .map(|r| r.console_id)
+        {
+            self.console_terminal_tabs.remove(&console_id);
+        }
         self.selected_run = Some(run_id);
         self.tiled = false;
         self.running_list = false;
         self.filter = Filter::Running;
     }
     fn open_launch_in_tabs(&mut self, script_id: u64, active: Option<u64>) {
-        let run = active.or_else(|| self.launch(script_id));
+        let run = active.or_else(|| self.service.as_ref()?.launch_console_run(script_id));
         if let Some(run) = run {
             self.activate_run_tab(run);
+        } else {
+            self.git_page
+                .push_notice(false, tr("此启动项暂无运行日志，请先启动").into());
         }
     }
     fn run_tabs(&mut self, ui: &mut egui::Ui) {
@@ -1848,14 +1861,22 @@ impl DevStart {
                                                 .on_hover_text(address)
                                                 .on_hover_cursor(egui::CursorIcon::PointingHand);
                                             if link.clicked() {
-                                                ui.ctx().open_url(egui::OpenUrl::new_tab(address));
+                                                self.browser_links.request(
+                                                    address.clone(),
+                                                    row.project_path.clone(),
+                                                );
                                             }
                                         }
                                     }
                                     match index {
                                         0 => {
                                             if let Some(id) = row.run_id {
-                                                if response.double_clicked() {
+                                                let response = response
+                                                    .on_hover_text(tr("点击查看 Console 日志"))
+                                                    .on_hover_cursor(
+                                                        egui::CursorIcon::PointingHand,
+                                                    );
+                                                if response.clicked() {
                                                     self.activate_run_tab(id);
                                                 }
                                             } else if let Some(script) = &row.script {
@@ -1863,9 +1884,9 @@ impl DevStart {
                                                     "{}\n{}\n{}",
                                                     script.display_label(),
                                                     script.description,
-                                                    tr("双击在标签视图中打开")
+                                                    tr("点击查看 Console 日志")
                                                 ));
-                                                if response.double_clicked() {
+                                                if response.clicked() {
                                                     self.open_launch_in_tabs(script.id, active);
                                                 }
                                             } else {
@@ -2489,9 +2510,9 @@ impl DevStart {
                                             .on_hover_text(format!(
                                                 "{}\n{}",
                                                 crate::i18n::run_title(run),
-                                                tr("双击在标签视图中打开")
+                                                tr("点击查看 Console 日志")
                                             ));
-                                        if response.double_clicked() {
+                                        if response.clicked() {
                                             self.open_console_as_tab = Some(id);
                                         }
                                     } else {
@@ -2824,9 +2845,8 @@ impl DevStart {
                         self.light,
                         true,
                         jump,
-                    ) && let Err(e) = crate::console_text::open(&target, &run.cwd)
-                    {
-                        self.error = Some(e);
+                    ) {
+                        self.browser_links.request(target, run.cwd.clone());
                     }
                 });
         }
@@ -3535,6 +3555,9 @@ impl eframe::App for DevStart {
         self.dialogs(ctx);
         self.show_console_windows(ctx);
         self.about_dialog(ctx);
+        for error in self.browser_links.errors() {
+            self.git_page.push_notice(false, error);
+        }
         self.git_notifications(ctx);
         ctx.request_repaint_after(Duration::from_millis(100));
     }

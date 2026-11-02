@@ -953,6 +953,16 @@ impl Service {
             .collect()
     }
     /// Keep editor output attached to the latest generation of its launch item.
+    /// Resolve the latest session without starting a process; closed tabs can be reopened.
+    pub fn launch_console_run(&self, script_id: u64) -> Option<u64> {
+        self.runtime
+            .runs
+            .iter()
+            .rev()
+            .find(|run| !run.superseded && run.associated_scripts.contains(&script_id))
+            .map(|run| run.id)
+    }
+
     pub fn editor_console_run(&self, script_id: u64) -> Option<u64> {
         self.runtime
             .runs

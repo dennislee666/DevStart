@@ -89,10 +89,11 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>CFBundleVersion</key><string>$version</string>
 <key>CFBundleIconFile</key><string>DevStart.icns</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSAppleEventsUsageDescription</key><string>在默认浏览器中复用已有网址标签，避免重复打开页面。</string>
 <key>LSMinimumSystemVersion</key><string>12.0</string>
 </dict></plist>
 PLIST
-codesign --force --sign - "$app"
+codesign --force --entitlements assets/macos.entitlements --sign - "$app"
 # Update an existing legacy bundle in place so pinned Dock shortcuts also receive the next launch.
 legacy='dist/Dev Start.app'
 if [[ "$edition" == "personal" && -d "$legacy" && ! -L "$legacy" ]]; then
@@ -106,7 +107,7 @@ if [[ "$edition" == "personal" && -d "$legacy" && ! -L "$legacy" ]]; then
   fi
   cp "$app/Contents/MacOS/dev-start" "$legacy/Contents/MacOS/dev-start.next"
   mv -f "$legacy/Contents/MacOS/dev-start.next" "$legacy/Contents/MacOS/dev-start"
-  codesign --force --sign - "$legacy"
+  codesign --force --entitlements assets/macos.entitlements --sign - "$legacy"
 fi
 /usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Contents/Info.plist"
 printf 'Built %s\n' "$PWD/$app"

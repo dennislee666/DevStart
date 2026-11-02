@@ -132,7 +132,7 @@ def build(app, assets):
                 authentication = ['--apple-id', env['APPLE_ID'], '--password', env['APPLE_APP_SPECIFIC_PASSWORD'], '--team-id', env['APPLE_TEAM_ID']]
             identity = env['MACOS_SIGNING_IDENTITY']
             # Rust bundle has one executable and no nested frameworks or helpers to sign first.
-            run(['codesign', '--force', '--options', 'runtime', '--timestamp', '--keychain', keychain, '--sign', identity, app])
+            run(['codesign', '--force', '--options', 'runtime', '--entitlements', Path(__file__).resolve().parent.parent / 'assets/macos.entitlements', '--timestamp', '--keychain', keychain, '--sign', identity, app])
             run(['codesign', '--verify', '--deep', '--strict', app])
             signature = run(['codesign', '-d', '--verbose=4', app]).stderr
             if 'Authority=Developer ID Application:' not in signature or f'TeamIdentifier={env["APPLE_TEAM_ID"]}' not in signature or 'runtime' not in signature:

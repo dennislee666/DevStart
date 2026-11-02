@@ -285,10 +285,12 @@ fn running_table_tracks_exact_sessions_and_ambiguous_external_once() {
     server.project.scripts.push(alternative);
     let mut service = api_service(&fixture);
     service.catalog.projects.push(server.project.clone());
+    assert_eq!(service.launch_console_run(server.script.id), None);
     let id = service
         .runtime
         .adopt(server.candidate(), &fixture.0.join("logs"))
         .unwrap();
+    assert_eq!(service.launch_console_run(server.script.id), Some(id));
     let rows = service.running_table_rows(crate::service::LaunchSort::default());
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].run_id, Some(id));
@@ -324,4 +326,12 @@ fn running_table_tracks_exact_sessions_and_ambiguous_external_once() {
             .running_table_rows(crate::service::LaunchSort::default())
             .is_empty()
     );
+    service
+        .runtime
+        .runs
+        .iter_mut()
+        .find(|r| r.id == id)
+        .unwrap()
+        .tab_open = false;
+    assert_eq!(service.launch_console_run(server.script.id), Some(id));
 }

@@ -6,6 +6,7 @@ mod app_identity;
 mod app_info;
 mod appearance;
 mod application_menu;
+mod browser_links;
 mod bulk;
 mod config_transaction;
 mod configured_ports;

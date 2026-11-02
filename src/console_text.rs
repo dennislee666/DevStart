@@ -229,16 +229,7 @@ pub fn open(target: &str, cwd: &Path) -> Result<(), String> {
         return Err("链接包含控制字符".into());
     }
     if target.starts_with("http://") || target.starts_with("https://") {
-        #[cfg(target_os = "macos")]
-        let mut cmd = std::process::Command::new("open");
-        #[cfg(not(target_os = "macos"))]
-        let mut cmd = std::process::Command::new("xdg-open");
-        let status = cmd.arg(target).status().map_err(|e| e.to_string())?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!("打开链接失败: {status}"))
-        }
+        crate::browser_links::open(target)
     } else if target.starts_with("file://")
         || target.starts_with('/')
         || target.starts_with("~/")

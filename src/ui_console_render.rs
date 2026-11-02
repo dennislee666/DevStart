@@ -213,8 +213,8 @@ pub(super) fn show(
                             .selectable(true)
                             .sense(egui::Sense::click_and_drag()),
                     );
-                    if response.hovered()
-                        && let Some(pos) = response.hover_pos()
+                    if ui.rect_contains_pointer(response.rect)
+                        && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
                     {
                         let cursor = galley.cursor_from_pos(pos - response.rect.min);
                         let byte = text
@@ -225,19 +225,29 @@ pub(super) fn show(
                             .into_iter()
                             .find(|l| l.range.contains(&byte))
                         {
+                            let web = link.target.starts_with("http://")
+                                || link.target.starts_with("https://");
                             response
                                 .clone()
                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                                 .on_hover_text(tf(
-                                    "Control + 点击打开\n{0}",
+                                    if web {
+                                        "点击打开\n{0}"
+                                    } else {
+                                        "Control + 点击打开\n{0}"
+                                    },
                                     &[(
                                         "0",
                                         (crate::presentation::command_preview(&link.target))
                                             .to_string(),
                                     )],
                                 ));
-                            if ui.input(|i| i.modifiers.ctrl)
-                                && (response.clicked() || response.secondary_clicked())
+                            // Selectable labels consume click responses for text selection;
+                            // use the clipped row's pointer click, which excludes drag selection.
+                            let primary = ui.input(|i| i.pointer.primary_clicked());
+                            let secondary = ui.input(|i| i.pointer.secondary_clicked());
+                            if (web && primary)
+                                || (ui.input(|i| i.modifiers.ctrl) && (primary || secondary))
                             {
                                 target = Some(link.target);
                             }
