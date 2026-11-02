@@ -536,5 +536,7 @@
   "点击查看 Console 日志": "Click to view Console logs",
   "此启动项暂无运行日志，请先启动": "No logs yet. Start this launch item first.",
   "远程": "Remote",
-  "本地": "Local"
+  "本地": "Local",
+  "推送已有提交": "Push commits",
+  "推送当前分支已有的本地提交，无需新提交或备注": "Push existing commits without creating a new commit or requiring a message"
 }
