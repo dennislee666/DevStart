@@ -18,6 +18,7 @@ pub(super) struct GitPage {
     pub(super) selected: Option<u64>,
     details: Option<Box<Details>>,
     detail_cache: HashMap<u64, Box<Details>>,
+    history: commit_ui::HistoryView,
     pending: Option<std::sync::mpsc::Receiver<Reply>>,
     loaded: bool,
     repaint: Option<egui::Context>,
@@ -81,8 +82,8 @@ enum Action {
     Abort,
     Resolve(String, String, git::conflicts::Resolution),
 }
-fn details(project: &crate::model::Project, offset: usize) -> Result<Box<Details>, String> {
-    git::snapshot(project, offset)
+fn details(project: &crate::model::Project) -> Result<Box<Details>, String> {
+    git::snapshot(project)
 }
 impl GitPage {
     fn request(&mut self, work: impl FnOnce() -> Reply + Send + 'static) {
@@ -130,7 +131,7 @@ impl DevStart {
         self.git_page
             .request(move || Reply::List(git::list(&projects)));
     }
-    pub(super) fn git_select(&mut self, id: u64, offset: usize) {
+    pub(super) fn git_select(&mut self, id: u64) {
         let Some(project) = self
             .service
             .as_ref()
@@ -151,16 +152,17 @@ impl DevStart {
                 .git_page
                 .detail_cache
                 .get(&id)
-                .filter(|d| d.repository.path == project.path && d.offset == offset)
+                .filter(|d| d.repository.path == project.path)
                 .cloned();
             if let Some(details) = &self.git_page.details {
                 self.git_page.selection.update(&details.files);
             }
         }
         self.git_page.selected = Some(id);
+        self.git_page.history.invalidate();
         let directory = project.path.clone();
         self.git_page
-            .request(move || Reply::Selected(id, details(&project, offset), None));
+            .request(move || Reply::Selected(id, details(&project), None));
         if let Some(service) = &mut self.service {
             match service.terminals.open(id, &directory) {
                 Ok(session) => {
@@ -247,7 +249,7 @@ impl DevStart {
             if let Action::Resolve(file, token, resolution) = &action {
                 let result =
                     git::conflicts::resolve(&project.path, file, token, resolution.clone());
-                return Reply::Resolved(id, details(&project, 0), result);
+                return Reply::Resolved(id, details(&project), result);
             }
             let push_target = match &action {
                 Action::CommitAndPush(key, branch) | Action::UpdateThenPush(key, branch, _) => {
@@ -354,12 +356,12 @@ impl DevStart {
             if let Some(operation) = notification {
                 Reply::Submitted(
                     id,
-                    details(&project, 0),
+                    details(&project),
                     success,
                     format!("{} · {operation}\n{output}", project.name),
                 )
             } else {
-                Reply::Selected(id, details(&project, 0), Some(output))
+                Reply::Selected(id, details(&project), Some(output))
             }
         });
     }
@@ -417,7 +419,7 @@ impl DevStart {
                         branch,
                         error,
                     });
-                    self.git_select(id, 0);
+                    self.git_select(id);
                 }
                 Reply::Generated(id, preference, previous, result) => {
                     self.git_page.generating_message = false;
@@ -467,7 +469,7 @@ impl DevStart {
                     self.git_page.loaded = true;
                     if let Some(id) = self.git_page.selected {
                         if self.git_page.rows.iter().any(|r| r.project_id == id) {
-                            self.git_select(id, 0);
+                            self.git_select(id);
                         } else {
                             self.git_page.selected = None;
                             self.git_page.details = None;
@@ -546,6 +548,7 @@ impl DevStart {
                             };
                             let path = d.repository.path.clone();
                             self.git_page.details = Some(d);
+                            self.git_page.history.invalidate();
                             if let Some(file) = conflict {
                                 self.git_page.request(move || {
                                     Reply::Conflict(id, git::conflicts::inspect(&path, &file))
@@ -572,7 +575,7 @@ impl DevStart {
         let mut action = None;
         let mut preview = None;
         let mut conflict_preview = None;
-        let mut page = None;
+
         let mut inspect = None;
         let mut historical_diff = None;
         let mut generate_message = false;
@@ -676,7 +679,6 @@ impl DevStart {
                     .show_inside(ui, |ui| {
                         let event = self.git_history_contents(ui, height, busy);
                         inspect = event.commit;
-                        page = event.offset;
                     });
                 egui::CentralPanel::default()
                     .frame(egui::Frame::new().inner_margin(10.0))
@@ -692,7 +694,6 @@ impl DevStart {
                     .show_inside(ui, |ui| {
                         let event = self.git_history_contents(ui, height, busy);
                         inspect = event.commit;
-                        page = event.offset;
                     });
                 egui::CentralPanel::default()
                     .frame(egui::Frame::new().inner_margin(10.0))
@@ -1024,15 +1025,10 @@ impl DevStart {
         }
         if let Some(id) = selection {
             if let Some(id) = id {
-                self.git_select(id, 0);
+                self.git_select(id);
             } else {
                 self.git_refresh();
             }
-        }
-        if let Some(offset) = page
-            && let Some(id) = self.git_page.selected
-        {
-            self.git_select(id, offset);
         }
         if let Some(file) = conflict_preview
             && let Some(d) = &self.git_page.details

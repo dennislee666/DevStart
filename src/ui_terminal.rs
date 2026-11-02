@@ -215,7 +215,7 @@ impl DevStart {
                     && !self.git_request_pending()
                     && let Some(project) = self.git_page.selected
                 {
-                    self.git_select(project, 0);
+                    self.git_select(project);
                 }
             }
         }

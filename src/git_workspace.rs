@@ -9,6 +9,8 @@ pub mod ai_message;
 pub mod commits;
 #[path = "git_conflicts.rs"]
 pub mod conflicts;
+#[path = "git_history.rs"]
+pub mod history_page;
 #[path = "git_integration.rs"]
 pub mod integration;
 #[path = "git_merge.rs"]
@@ -275,8 +277,6 @@ pub struct Snapshot {
     pub remotes: Vec<remotes::Remote>,
     pub branches: Vec<String>,
     pub files: Vec<actions::Change>,
-    pub history: Vec<Commit>,
-    pub offset: usize,
 }
 impl Snapshot {
     /// Group porcelain changes centrally; UI only renders the ordered, non-empty groups.
@@ -299,7 +299,7 @@ impl Snapshot {
             .collect()
     }
 }
-pub fn snapshot(project: &crate::model::Project, offset: usize) -> Result<Box<Snapshot>, String> {
+pub fn snapshot(project: &crate::model::Project) -> Result<Box<Snapshot>, String> {
     let started = Instant::now();
     let result = std::thread::scope(|scope| {
         let path = &project.path;
@@ -314,27 +314,15 @@ pub fn snapshot(project: &crate::model::Project, offset: usize) -> Result<Box<Sn
         let branches = scope.spawn(|| branches(path));
         let remotes = scope.spawn(|| remotes::list(path));
         let files = scope.spawn(|| actions::changes(path));
-        // Keep HEAD metadata correct while browsing later history pages.
-        let history = scope.spawn(|| history(path, offset, 50));
-        let latest = scope.spawn(|| {
-            if offset == 0 {
-                Ok(vec![])
-            } else {
-                self::history(path, 0, 1)
-            }
-        });
+        // Workspace summary always describes local HEAD, independently of the history view.
+        let latest = scope.spawn(|| self::history(path, 0, 1));
         let join_error = |_| "Git snapshot worker interrupted".to_owned();
         let (root, branch) = metadata.join().map_err(join_error)??;
         let branches = branches.join().map_err(join_error)??;
         let remotes = remotes.join().map_err(join_error)??;
         let files = files.join().map_err(join_error)??;
-        let history = history.join().map_err(join_error)??;
         let latest = latest.join().map_err(join_error)??;
-        let head = if offset == 0 {
-            history.first()
-        } else {
-            latest.first()
-        };
+        let head = latest.first();
         let repository = Repository {
             project_id: project.id,
             name: project.name.clone(),
@@ -357,14 +345,11 @@ pub fn snapshot(project: &crate::model::Project, offset: usize) -> Result<Box<Sn
             branches,
             remotes,
             files,
-            history,
-            offset,
         }))
     });
     eprintln!(
-        "[dev start git] snapshot project={} offset={} elapsed_ms={} success={}",
+        "[dev start git] snapshot project={} elapsed_ms={} success={}",
         project.id,
-        offset,
         started.elapsed().as_millis(),
         result.is_ok()
     );
@@ -409,6 +394,9 @@ pub fn history(path: &Path, offset: usize, limit: usize) -> Result<Vec<Commit>, 
             &format!("--max-count={limit}"),
         ],
     )?;
+    parse_history(&text)
+}
+fn parse_history(text: &str) -> Result<Vec<Commit>, String> {
     text.lines()
         .map(|line| {
             let f: Vec<_> = line.splitn(4, '\0').collect();
@@ -459,7 +447,7 @@ mod tests {
             explicit_scripts: false,
             description: String::new(),
         };
-        assert!(snapshot(&project, 0).unwrap().history.is_empty());
+        assert!(snapshot(&project).unwrap().repository.version.is_empty());
         repo.commit("first");
         repo.commit("second");
         std::fs::write(repo.0.join("new.txt"), "untracked").unwrap();
@@ -471,7 +459,7 @@ mod tests {
         let old_history = history(&repo.0, 0, 50).unwrap();
         let sequential_ms = start.elapsed().as_millis();
         let start = Instant::now();
-        let fresh = snapshot(&project, 0).unwrap();
+        let fresh = snapshot(&project).unwrap();
         eprintln!(
             "snapshot benchmark sequential_ms={sequential_ms} parallel_ms={}",
             start.elapsed().as_millis()
@@ -481,12 +469,152 @@ mod tests {
         assert_eq!(fresh.branches, old_branches);
         assert_eq!(fresh.remotes.len(), old_remotes.len());
         assert_eq!(fresh.files.len(), old_files.len());
-        assert_eq!(fresh.history[0].id, old_history[0].id);
-        let page = snapshot(&project, 1).unwrap();
-        assert_eq!(page.repository.version, fresh.repository.version);
-        assert_eq!(page.history[0].id, fresh.history[1].id);
+        assert_eq!(fresh.repository.version, old_history[0].id[..10]);
+        let page = history_page::read(
+            &repo.0,
+            Some("main"),
+            history_page::Source::Local,
+            1,
+            50,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            snapshot(&project).unwrap().repository.version,
+            fresh.repository.version
+        );
+        assert_eq!(page.commits[0].id, old_history[1].id);
         assert_eq!(git(&repo.0, &["branch", "--show-current"]).unwrap(), "main");
     }
+    #[test]
+    fn remote_history_uses_current_upstream_and_never_changes_local_work() {
+        use history_page::{Source, read};
+        let storage = Repo::new();
+        let remote = storage.0.join("remote.git");
+        git(&storage.0, &["init", "--bare", remote.to_str().unwrap()]).unwrap();
+        let publisher = Repo::new();
+        publisher.commit("base");
+        git(
+            &publisher.0,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        )
+        .unwrap();
+        git(&publisher.0, &["push", "origin", "main:published"]).unwrap();
+        let local = Repo::new();
+        git(
+            &local.0,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        )
+        .unwrap();
+        git(&local.0, &["fetch", "origin"]).unwrap();
+        git(
+            &local.0,
+            &["reset", "--hard", "refs/remotes/origin/published"],
+        )
+        .unwrap();
+        git(
+            &local.0,
+            &["branch", "--set-upstream-to=origin/published", "main"],
+        )
+        .unwrap();
+        publisher.commit("remote only");
+        git(&publisher.0, &["push", "origin", "main:published"]).unwrap();
+        local.commit("local only");
+        std::fs::write(local.0.join("staged.txt"), "preserve staged").unwrap();
+        git(&local.0, &["add", "staged.txt"]).unwrap();
+        std::fs::write(local.0.join("untracked.txt"), "preserve untracked").unwrap();
+        let head = git(&local.0, &["rev-parse", "HEAD"]).unwrap();
+        let status = git(&local.0, &["status", "--porcelain=v1"]).unwrap();
+        let index = std::fs::read(local.0.join(".git/index")).unwrap();
+        let fetch_head = std::fs::read(local.0.join(".git/FETCH_HEAD")).unwrap();
+        let remote_page = read(&local.0, Some("main"), Source::Remote, 0, 50, true).unwrap();
+        assert_eq!(remote_page.reference, "refs/remotes/origin/published");
+        assert_eq!(remote_page.commits[0].subject, "remote only");
+        assert_eq!(
+            read(&local.0, Some("main"), Source::Remote, 1, 1, false)
+                .unwrap()
+                .commits[0]
+                .subject,
+            "base"
+        );
+        assert_eq!(
+            read(&local.0, Some("main"), Source::Local, 0, 50, false)
+                .unwrap()
+                .commits[0]
+                .subject,
+            "local only"
+        );
+        assert_eq!(git(&local.0, &["rev-parse", "HEAD"]).unwrap(), head);
+        assert_eq!(
+            git(&local.0, &["status", "--porcelain=v1"]).unwrap(),
+            status
+        );
+        assert_eq!(std::fs::read(local.0.join(".git/index")).unwrap(), index);
+        assert_eq!(
+            std::fs::read(local.0.join(".git/FETCH_HEAD")).unwrap(),
+            fetch_head
+        );
+        assert_eq!(
+            std::fs::read_to_string(local.0.join("staged.txt")).unwrap(),
+            "preserve staged"
+        );
+        assert_eq!(
+            std::fs::read_to_string(local.0.join("untracked.txt")).unwrap(),
+            "preserve untracked"
+        );
+        // A missing/deleted upstream reports the fetch failure, never substitutes local HEAD.
+        git(&publisher.0, &["push", "origin", ":published"]).unwrap();
+        assert!(read(&local.0, Some("main"), Source::Remote, 0, 50, true).is_err());
+        assert_eq!(
+            read(&local.0, Some("main"), Source::Local, 0, 50, false)
+                .unwrap()
+                .commits[0]
+                .subject,
+            "local only"
+        );
+        assert!(
+            read(
+                &local.0,
+                Some("another-branch"),
+                Source::Local,
+                0,
+                50,
+                false
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn history_source_handles_unborn_untracked_and_detached_branches() {
+        use history_page::{Source, read};
+        assert_eq!(Source::default(), Source::Remote);
+        let repo = Repo::new();
+        assert!(
+            read(&repo.0, Some("main"), Source::Local, 0, 50, false)
+                .unwrap()
+                .commits
+                .is_empty()
+        );
+        assert!(
+            read(&repo.0, Some("main"), Source::Remote, 0, 50, true)
+                .err()
+                .unwrap()
+                .contains("上游")
+        );
+        repo.commit("local commit");
+        git(&repo.0, &["checkout", "--detach"]).unwrap();
+        assert_eq!(
+            read(&repo.0, None, Source::Local, 0, 50, false)
+                .unwrap()
+                .commits[0]
+                .subject,
+            "local commit"
+        );
+        assert!(read(&repo.0, None, Source::Remote, 0, 50, true).is_err());
+        assert!(read(&repo.0, None, Source::Local, 0, 0, false).is_err());
+    }
+
     struct Repo(PathBuf);
     impl Repo {
         fn new() -> Self {

@@ -534,5 +534,7 @@
   "变基（Rebase）": "Rebase",
   "点击打开\n{0}": "Click to open\n{0}",
   "点击查看 Console 日志": "Click to view Console logs",
-  "此启动项暂无运行日志，请先启动": "No logs yet. Start this launch item first."
+  "此启动项暂无运行日志，请先启动": "No logs yet. Start this launch item first.",
+  "远程": "Remote",
+  "本地": "Local"
 }

@@ -3,7 +3,70 @@ use super::*;
 #[derive(Default)]
 pub(super) struct HistoryEvent {
     pub commit: Option<String>,
-    pub offset: Option<usize>,
+}
+#[derive(Default)]
+pub(super) struct HistoryView {
+    pub source: git::history_page::Source,
+    target: Option<(u64, std::path::PathBuf, String)>,
+    pending: Option<std::sync::mpsc::Receiver<Result<git::history_page::Page, String>>>,
+    pub page: Option<git::history_page::Page>,
+    pub error: Option<String>,
+}
+impl HistoryView {
+    pub fn invalidate(&mut self) {
+        self.target = None;
+        self.pending = None;
+        self.page = None;
+        self.error = None;
+    }
+    fn poll(&mut self) {
+        if let Some(rx) = &self.pending {
+            match rx.try_recv() {
+                Ok(result) => {
+                    self.pending = None;
+                    match result {
+                        Ok(page) => {
+                            self.page = Some(page);
+                            self.error = None;
+                        }
+                        Err(error) => {
+                            self.page = None;
+                            self.error = Some(error);
+                        }
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.pending = None;
+                    self.error = Some("历史查询任务意外中断".into());
+                }
+            }
+        }
+    }
+    fn ensure(&mut self, id: u64, path: &std::path::Path, branch: &str, ctx: &egui::Context) {
+        self.poll();
+        let target = (id, path.to_owned(), branch.to_owned());
+        if self.target.as_ref() != Some(&target) {
+            self.target = Some(target);
+            self.request(0, true, ctx);
+        }
+    }
+    fn request(&mut self, offset: usize, refresh: bool, ctx: &egui::Context) {
+        let Some((_, path, branch)) = self.target.clone() else {
+            return;
+        };
+        let source = self.source;
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pending = Some(rx);
+        self.error = None;
+        self.page = None;
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = git::history_page::read(&path, Some(&branch), source, offset, 50, refresh);
+            let _ = tx.send(result);
+            ctx.request_repaint();
+        });
+    }
 }
 impl DevStart {
     pub(super) fn git_history_contents(
@@ -13,16 +76,62 @@ impl DevStart {
         busy: bool,
     ) -> HistoryEvent {
         let mut event = HistoryEvent::default();
-        ui.strong(tr("提交历史"));
+        if !busy
+            && let Some(details) = &self.git_page.details
+            && self.git_page.selected == Some(details.repository.project_id)
+        {
+            self.git_page.history.ensure(
+                details.repository.project_id,
+                &details.repository.path,
+                &details.repository.branch,
+                ui.ctx(),
+            );
+        }
+        let mut source = None;
+        ui.horizontal(|ui| {
+            ui.strong(tr("提交历史"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                for (mode, label) in [
+                    (git::history_page::Source::Local, "本地"),
+                    (git::history_page::Source::Remote, "远程"),
+                ] {
+                    if ui
+                        .add_enabled(
+                            !busy,
+                            egui::Button::new(tr(label))
+                                .selected(self.git_page.history.source == mode),
+                        )
+                        .clicked()
+                    {
+                        source = Some(mode);
+                    }
+                }
+            });
+        });
+        if let Some(source) = source {
+            self.git_page.history.source = source;
+            self.git_page.browsing_commit = None;
+            self.git_page.commit_files = None;
+            self.git_page.selected_commit_file = None;
+            self.git_page.history.request(0, true, ui.ctx());
+        }
+        self.git_page.history.poll();
+        let history_busy = self.git_page.history.pending.is_some();
+        if history_busy {
+            ui.spinner();
+        }
+        if let Some(error) = &self.git_page.history.error {
+            ui.add(egui::Label::new(RichText::new(error).color(tone(self.light, RED))).wrap());
+        }
         egui::ScrollArea::vertical()
             .id_salt("git-history-list")
-            .max_height(height - 54.0)
+            .max_height((height - 72.0).max(0.0))
             .show(ui, |ui| {
-                if let Some(d) = &self.git_page.details {
-                    if d.history.is_empty() {
+                if let Some(d) = &self.git_page.history.page {
+                    if d.commits.is_empty() {
                         ui.label(tr("暂无提交"));
                     }
-                    for (index, commit) in d.history.iter().enumerate() {
+                    for (index, commit) in d.commits.iter().enumerate() {
                         let fill = if self.light {
                             if index % 2 == 0 {
                                 Color32::from_gray(244)
@@ -117,24 +226,31 @@ impl DevStart {
                     }
                 }
             });
-        if let Some(d) = &self.git_page.details {
+        let mut page = None;
+        if let Some(d) = &self.git_page.history.page {
             ui.horizontal(|ui| {
                 if ui
-                    .add_enabled(!busy && d.offset > 0, egui::Button::new(tr("上一页")))
+                    .add_enabled(
+                        !busy && !history_busy && d.offset > 0,
+                        egui::Button::new(tr("上一页")),
+                    )
                     .clicked()
                 {
-                    event.offset = Some(d.offset.saturating_sub(50));
+                    page = Some(d.offset.saturating_sub(50));
                 }
                 if ui
                     .add_enabled(
-                        !busy && d.history.len() == 50,
+                        !busy && !history_busy && d.commits.len() == 50,
                         egui::Button::new(tr("下一页")),
                     )
                     .clicked()
                 {
-                    event.offset = Some(d.offset + 50);
+                    page = Some(d.offset + 50);
                 }
             });
+        }
+        if let Some(offset) = page {
+            self.git_page.history.request(offset, false, ui.ctx());
         }
         event
     }
