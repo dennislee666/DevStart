@@ -727,20 +727,32 @@ impl DevStart {
                                 ))
                                 .selected(selected)
                                 .fill(if selected {
-                                    if self.light { Color32::WHITE } else { SURFACE }
+                                    if self.light {
+                                        Color32::from_rgb(225, 238, 243)
+                                    } else {
+                                        Color32::from_rgb(40, 58, 65)
+                                    }
                                 } else {
                                     Color32::TRANSPARENT
                                 })
                                 .stroke(egui::Stroke::new(
                                     1.0_f32,
                                     if selected {
-                                        tone(self.light, BORDER)
+                                        tone(self.light, ACCENT)
                                     } else {
                                         Color32::TRANSPARENT
                                     },
                                 ))
                                 .min_size(Vec2::new(110.0, self.preferences().row_height())),
                             );
+                            if selected {
+                                let rect = response.rect;
+                                ui.painter().hline(
+                                    rect.left() + 10.0..=rect.right() - 10.0,
+                                    rect.bottom() - 2.0,
+                                    egui::Stroke::new(2.0, tone(self.light, ACCENT)),
+                                );
+                            }
                             let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
                             if std::env::var_os("DEV_START_TRACE_TABS").is_some() {
                                 eprintln!(
@@ -1581,7 +1593,12 @@ impl DevStart {
     ) {
         let script_id = row.script.as_ref().map(|script| script.id).unwrap_or(0);
         ui.push_id((row.project_id, script_id, row.run_id), |ui| {
-            let row_height = self.preferences().row_height().max(44.0);
+            let addresses = row
+                .run_id
+                .and_then(|id| self.service.as_ref().map(|s| s.run_access_addresses(id)))
+                .unwrap_or_default();
+            let row_height =
+                self.preferences().row_height().max(44.0) + addresses.len() as f32 * 17.0;
             let active = row.run_id.or_else(|| {
                 row.script
                     .as_ref()
@@ -1816,6 +1833,24 @@ impl DevStart {
                                             .truncate(),
                                         )
                                         .on_hover_text(&text[3]);
+                                        for address in &addresses {
+                                            let link = ui
+                                                .add(
+                                                    egui::Label::new(
+                                                        RichText::new(address)
+                                                            .size(11.0)
+                                                            .color(tone(self.light, ACCENT))
+                                                            .underline(),
+                                                    )
+                                                    .truncate()
+                                                    .sense(egui::Sense::click()),
+                                                )
+                                                .on_hover_text(address)
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                            if link.clicked() {
+                                                ui.ctx().open_url(egui::OpenUrl::new_tab(address));
+                                            }
+                                        }
                                     }
                                     match index {
                                         0 => {

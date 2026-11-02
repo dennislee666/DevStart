@@ -304,7 +304,18 @@ fn running_table_tracks_exact_sessions_and_ambiguous_external_once() {
             .len(),
         2
     );
+    let run = service
+        .runtime
+        .runs
+        .iter_mut()
+        .find(|r| r.id == id)
+        .unwrap();
+    let address = format!("http://localhost:{}/app/", run.listening_ports[0]);
+    run.addresses.observe(&address);
+    run.lines = Default::default(); // Clearing Console must retain the session's entry point.
+    assert_eq!(service.run_access_addresses(id), vec![address]);
     service.runtime.stop(id);
+    assert!(service.run_access_addresses(id).is_empty());
     wait(&mut service.runtime, |r| {
         r.runs.iter().any(|r| r.id == id && !r.state.active())
     });

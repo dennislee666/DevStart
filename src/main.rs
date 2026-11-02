@@ -41,6 +41,7 @@ mod project_terminal;
 mod runtime;
 mod runtime_ports;
 mod service;
+mod service_addresses;
 mod store;
 mod system_language;
 mod terminal_style;

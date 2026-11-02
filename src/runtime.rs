@@ -57,6 +57,7 @@ pub struct Run {
     pub cwd: PathBuf,
     pub expected_port: Option<u16>,
     pub listening_ports: Vec<u16>,
+    pub addresses: crate::service_addresses::Addresses,
     pub external: Option<crate::external::Process>,
     pub associated_scripts: Vec<u64>,
     pub state: State,
@@ -92,6 +93,7 @@ pub struct Runtime {
     scanned: Option<Instant>,
     ports: crate::runtime_ports::Monitor,
     pub error: Option<String>,
+    pub address_cache: crate::service_addresses::Cache,
 }
 impl Default for Runtime {
     fn default() -> Self {
@@ -107,6 +109,7 @@ impl Default for Runtime {
             scanned: None,
             ports: Default::default(),
             error: None,
+            address_cache: Default::default(),
         }
     }
 }
@@ -202,6 +205,7 @@ impl Runtime {
             elapsed: Duration::ZERO,
             exit: None,
             log_path: path,
+            addresses: Default::default(),
             lines: Default::default(),
             control: control.clone(),
         });
@@ -510,6 +514,7 @@ impl Runtime {
                 elapsed: Duration::ZERO,
                 exit: None,
                 log_path,
+                addresses: Default::default(),
                 lines: Default::default(),
                 control: control.clone(),
             });
@@ -759,7 +764,20 @@ impl Runtime {
             match event {
                 Event::Output(id, err, text) => {
                     if let Some(r) = self.runs.iter_mut().find(|r| r.id == id) {
+                        let previous_len = r.lines.len();
+                        let previous_dropped = r.lines.dropped;
                         r.lines.append(err, &text);
+                        // Include the previous partial line and account for bounded-buffer eviction.
+                        let first_changed = previous_len
+                            .saturating_sub(1)
+                            .saturating_sub(r.lines.dropped.saturating_sub(previous_dropped));
+                        for index in first_changed..r.lines.len() {
+                            if let Some((_, line)) = r.lines.get(index) {
+                                if line.ends_with('\n') {
+                                    r.addresses.observe(line);
+                                }
+                            }
+                        }
                     }
                 }
                 Event::Error(id, text) => {
@@ -980,6 +998,7 @@ impl Runtime {
             elapsed: Duration::ZERO,
             exit: None,
             log_path: log_path.clone(),
+            addresses: Default::default(),
             lines: {
                 let mut buffer = crate::console_buffer::ConsoleBuffer::default();
                 buffer.append(false, &message);

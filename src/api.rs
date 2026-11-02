@@ -860,7 +860,7 @@ fn run_value(run: &crate::runtime::Run) -> Value {
     json!({"id":run.id,"script_id":run.script_id,"associated_scripts":run.associated_scripts,
         "console_id":run.console_id,"superseded":run.superseded,"tab_open":run.tab_open,"close_requested":run.close_requested,"title":run.title,"launch_name":run.launch_name,"display_command":run.display_command,
         "state":match run.state { crate::runtime::State::Starting=>"starting",crate::runtime::State::Running=>"running",crate::runtime::State::Stopping=>"stopping",crate::runtime::State::Succeeded=>"succeeded",crate::runtime::State::Stopped=>"stopped",crate::runtime::State::Failed=>"failed" },
-        "state_display":crate::presentation::run_state_display(run),"pid":run.pid,"listening_ports":if run.state.active(){run.listening_ports.clone()}else{vec![]},"active":run.state.active(),"external":run.external.is_some(),"exit_code":run.exit,
+        "state_display":crate::presentation::run_state_display(run),"pid":run.pid,"listening_ports":if run.state.active(){run.listening_ports.clone()}else{vec![]},"access_urls":if run.state == crate::runtime::State::Running {run.addresses.listening(&run.listening_ports)}else{vec![]},"active":run.state.active(),"external":run.external.is_some(),"exit_code":run.exit,
         "elapsed_seconds":timing.elapsed_seconds,"started_at":timing.started_at,"started_at_unix_ms":timing.started_at_unix_ms,
         "elapsed_display":timing.elapsed_display,"timing_display":timing.display,
         "log_path":run.log_path,"cwd":run.cwd})

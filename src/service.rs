@@ -673,6 +673,13 @@ impl Service {
             self.runtime.error = Some(format!("日志保留策略维护失败: {error}"));
         }
         self.runtime.poll();
+        if let Err(error) = self
+            .runtime
+            .address_cache
+            .sync(&self.store.root, &mut self.runtime.runs)
+        {
+            self.runtime.error = Some(error);
+        }
         self.runtime
             .refresh_external(&self.catalog.projects, self.store.root.join("logs"));
     }
@@ -1218,6 +1225,16 @@ impl Service {
         Ok(LaunchTableContent::Projects(sections))
     }
     /// Return table rows in the requested view and sort order.
+    /// Only the exact active session can supply browser entry points; never infer HTTP from a port.
+    pub fn run_access_addresses(&self, run_id: u64) -> Vec<String> {
+        self.runtime
+            .runs
+            .iter()
+            .find(|r| r.id == run_id && !r.superseded && r.state == State::Running)
+            .map(|r| r.addresses.listening(&r.listening_ports))
+            .unwrap_or_default()
+    }
+
     pub fn running_table_rows(&self, sort: LaunchSort) -> Vec<LaunchTableRow> {
         let mut seen = std::collections::HashSet::new();
         let mut rows = Vec::new();

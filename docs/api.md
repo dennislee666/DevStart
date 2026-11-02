@@ -713,3 +713,5 @@ ID 为原始整数，遵守前文无损 JSON 要求。终端创建返回不代�
 
 
 终端视图补充：`shell.theme` 支持 `font_size`（10–32，默认13）、`background`（null 跟随风格，或 Schema 所列十六进制颜色）、`tiled`（true 平铺，false 标签）；仍需传当前或目标 palette。设置会保存。`shell.close` 现为异步安全关闭，增加 `confirmed` 可选布尔值（默认false），运行命令时 `shell.list.pending_close` 表示待确认；只有用户授权停止时传true。轮询到 session 消失才表示停止并关闭完成，`close_error` 为实际失败原因，失败保留会话。
+
+`runs.list` / `runs.get` 返回的 `access_urls` 为当前运行实例已从日志识别、且与其实际监听端口匹配的 HTTP/HTTPS 本机或局域网入口（最多四个）。保留路径，通配绑定主机转为 localhost；没有已识别或记住的入口、无本次已确认监听端口或非运行状态返回空数组。后续启动可复用已记住的入口，本次输出新入口时自动更新。该字段不表示 HTTP 健康检查通过。
