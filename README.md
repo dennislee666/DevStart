@@ -182,7 +182,19 @@ python3 scripts/verify-api.py
 python3 scripts/verify-editor-java.py
 ```
 
-验证脚本只使用临时目录和示例进程，不依赖个人项目。依赖锁定在 `Cargo.lock`，当前默认使用 RsProxy 国内镜像；来源与覆盖方法见[依赖说明](docs/dependency-sources.md)。
+验证脚本只使用临时目录和示例进程，不依赖个人项目。依赖锁定在 `Cargo.lock`；仓库默认走 crates.io（及 Cargo 官方 registry），保证 GitHub Actions 等环境不依赖国内镜像。更多来源说明见[依赖说明](docs/dependency-sources.md)。
+
+**可选（国内网络）：** 若本机访问 crates.io 较慢，可在**用户级** `~/.cargo/config.toml`（勿提交到本仓库）启用 RsProxy 等镜像，例如：
+
+```toml
+[source.crates-io]
+replace-with = "rsproxy-sparse"
+
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"
+```
+
+也可选用其他可用的 crates 镜像。项目内 `.cargo/config.toml` 刻意不强制镜像，以免 CI 因镜像 504 等失败。
 
 ## 文档与参与
 
