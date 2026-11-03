@@ -112,6 +112,7 @@ fn main() -> eframe::Result {
                 .expect("embedded DevStart icon is valid PNG"),
             )
             .with_inner_size([1280.0, 800.0])
+            .with_maximized(true)
             .with_min_inner_size([960.0, 640.0]),
         ..Default::default()
     };
