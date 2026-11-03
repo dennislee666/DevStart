@@ -2679,16 +2679,13 @@ impl DevStart {
                                             let command = crate::presentation::command_preview(
                                                 &run.display_command,
                                             );
+                                            let command_font = egui::TextStyle::Monospace.resolve(ui.style());
                                             let command_width = ui
                                                 .fonts_mut(|fonts| {
                                                     fonts
                                                         .layout_no_wrap(
                                                             command.to_string(),
-                                                            egui::FontId::monospace(
-                                                                ui.text_style_height(
-                                                                    &egui::TextStyle::Body,
-                                                                ),
-                                                            ),
+                                                            command_font,
                                                             tone(self.light, MUTED),
                                                         )
                                                         .size()
