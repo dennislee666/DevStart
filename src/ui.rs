@@ -2457,6 +2457,7 @@ impl DevStart {
         let mut toggle_favorite = false;
         let run_script_id = s.runtime.runs[index].script_id;
         let favorite_state = s.script(run_script_id).map(|script| script.favorite);
+        let access_addresses = s.run_access_addresses(id);
         let run = &s.runtime.runs[index];
         egui::Frame::new()
             .fill(if self.light {
@@ -2674,21 +2675,65 @@ impl DevStart {
                                     if compact {
                                         ui.horizontal_wrapped(|ui| run_status(ui, run, self.light));
                                     } else {
-                                        ui.add(
-                                            egui::Label::new(
-                                                RichText::new(
-                                                    crate::presentation::command_preview(
-                                                        &run.display_command,
-                                                    ),
+                                        ui.horizontal_wrapped(|ui| {
+                                            let command = crate::presentation::command_preview(
+                                                &run.display_command,
+                                            );
+                                            let command_width = ui
+                                                .fonts_mut(|fonts| {
+                                                    fonts
+                                                        .layout_no_wrap(
+                                                            command.to_string(),
+                                                            egui::FontId::monospace(
+                                                                ui.text_style_height(
+                                                                    &egui::TextStyle::Body,
+                                                                ),
+                                                            ),
+                                                            tone(self.light, MUTED),
+                                                        )
+                                                        .size()
+                                                        .x
+                                                })
+                                                .min(if access_addresses.is_empty() {
+                                                    width
+                                                } else {
+                                                    width * 0.4
+                                                });
+                                            ui.add_sized(
+                                                Vec2::new(
+                                                    command_width,
+                                                    ui.text_style_height(&egui::TextStyle::Body),
+                                                ),
+                                                egui::Label::new(
+                                                    RichText::new(command)
+                                                        .monospace()
+                                                        .color(tone(self.light, MUTED)),
                                                 )
-                                                .monospace()
-                                                .color(tone(self.light, MUTED)),
+                                                .truncate(),
                                             )
-                                            .truncate(),
-                                        )
-                                        .on_hover_text(
-                                            crate::presentation::command_preview(&run.command),
-                                        );
+                                            .on_hover_text(crate::presentation::command_preview(
+                                                &run.command,
+                                            ));
+                                            for address in &access_addresses {
+                                                if ui
+                                                    .add(
+                                                        egui::Label::new(
+                                                            RichText::new(address)
+                                                                .size(11.0)
+                                                                .color(tone(self.light, ACCENT))
+                                                                .underline(),
+                                                        )
+                                                        .sense(egui::Sense::click()),
+                                                    )
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .on_hover_text(address)
+                                                    .clicked()
+                                                {
+                                                    self.browser_links
+                                                        .request(address.clone(), run.cwd.clone());
+                                                }
+                                            }
+                                        });
                                     }
                                 },
                             );
