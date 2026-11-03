@@ -65,6 +65,7 @@ pub struct DevStart {
     groups_ui: groups_ui::GroupsUi,
     git_page: git_ui::GitPage,
     browser_links: crate::browser_links::Pending,
+    copy_feedback: Option<(std::time::Instant, egui::Pos2)>,
     console_terminal_tabs: HashSet<u64>,
     console_terminals: HashMap<u64, terminal_ui::TerminalView>,
     brand_icon: egui::TextureHandle,
@@ -151,6 +152,7 @@ impl DevStart {
             groups_ui: Default::default(),
             git_page: git_ui::GitPage::default(),
             browser_links: Default::default(),
+            copy_feedback: None,
             console_terminal_tabs: Default::default(),
             console_terminals: Default::default(),
             brand_icon,
@@ -279,6 +281,52 @@ impl DevStart {
             eprintln!("[dev start] {e}");
             self.error = Some(e);
         }
+    }
+    fn copy_access_url(
+        feedback: &mut Option<(std::time::Instant, egui::Pos2)>,
+        ctx: &egui::Context,
+        address: &str,
+    ) {
+        ctx.copy_text(address.to_owned());
+        let pointer = ctx.input(|input| input.pointer.hover_pos());
+        let position = pointer.unwrap_or_else(|| ctx.content_rect().center());
+        *feedback = Some((std::time::Instant::now(), position));
+    }
+    fn copy_access_feedback(&mut self, ctx: &egui::Context) {
+        let Some((created, pointer)) = self.copy_feedback else {
+            return;
+        };
+        let age = created.elapsed().as_secs_f32();
+        if age >= 1.25 {
+            self.copy_feedback = None;
+            return;
+        }
+        let opacity = ((1.25 - age) / 0.35).clamp(0.0, 1.0);
+        egui::Area::new(egui::Id::new("copied-url-feedback"))
+            .fixed_pos(pointer + Vec2::new(12.0, 12.0))
+            .constrain_to(ctx.content_rect())
+            .interactable(false)
+            .order(egui::Order::Tooltip)
+            .show(ctx, |ui| {
+                ui.set_opacity(opacity);
+                egui::Frame::popup(ui.style())
+                    .inner_margin(egui::Margin::symmetric(8, 4))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(icon::CHECK)
+                                    .size(12.0)
+                                    .color(tone(self.light, ACCENT)),
+                            );
+                            ui.label(
+                                RichText::new(tr("已复制"))
+                                    .small()
+                                    .color(tone(self.light, MUTED)),
+                            );
+                        });
+                    });
+            });
+        ctx.request_repaint_after(Duration::from_millis(16));
     }
     fn sidebar(&mut self, ctx: &egui::Context) {
         let collapsed = self.preferences().sidebar_collapsed;
@@ -1870,9 +1918,11 @@ impl DevStart {
                                                     );
                                                 }
                                                 if small(ui, icon::COPY, tr("复制网址")) {
-                                                    ui.ctx().copy_text(address.clone());
-                                                    self.git_page
-                                                        .push_notice(true, tr("已复制").into());
+                                                    Self::copy_access_url(
+                                                        &mut self.copy_feedback,
+                                                        ui.ctx(),
+                                                        address,
+                                                    );
                                                 }
                                             });
                                         }
@@ -2746,9 +2796,11 @@ impl DevStart {
                                                         );
                                                     }
                                                     if small(ui, icon::COPY, tr("复制网址")) {
-                                                        ui.ctx().copy_text(address.clone());
-                                                        self.git_page
-                                                            .push_notice(true, tr("已复制").into());
+                                                        Self::copy_access_url(
+                                                            &mut self.copy_feedback,
+                                                            ui.ctx(),
+                                                            address,
+                                                        );
                                                     }
                                                 });
                                             }
@@ -3623,6 +3675,7 @@ impl eframe::App for DevStart {
             self.git_page.push_notice(false, error);
         }
         self.git_notifications(ctx);
+        self.copy_access_feedback(ctx);
         ctx.request_repaint_after(Duration::from_millis(100));
     }
 }
