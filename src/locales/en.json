@@ -538,5 +538,6 @@
   "远程": "Remote",
   "本地": "Local",
   "推送已有提交": "Push commits",
-  "推送当前分支已有的本地提交，无需新提交或备注": "Push existing commits without creating a new commit or requiring a message"
+  "推送当前分支已有的本地提交，无需新提交或备注": "Push existing commits without creating a new commit or requiring a message",
+  "复制网址": "Copy URL"
 }

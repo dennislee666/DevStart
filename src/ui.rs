@@ -1847,25 +1847,34 @@ impl DevStart {
                                         )
                                         .on_hover_text(&text[3]);
                                         for address in &addresses {
-                                            let link = ui
-                                                .add(
-                                                    egui::Label::new(
-                                                        RichText::new(address)
-                                                            .size(11.0)
-                                                            .color(tone(self.light, ACCENT))
-                                                            .underline(),
+                                            ui.horizontal(|ui| {
+                                                let link = ui
+                                                    .add(
+                                                        egui::Label::new(
+                                                            RichText::new(address)
+                                                                .size(11.0)
+                                                                .color(tone(self.light, ACCENT))
+                                                                .underline(),
+                                                        )
+                                                        .truncate()
+                                                        .sense(egui::Sense::click()),
                                                     )
-                                                    .truncate()
-                                                    .sense(egui::Sense::click()),
-                                                )
-                                                .on_hover_text(address)
-                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                            if link.clicked() {
-                                                self.browser_links.request(
-                                                    address.clone(),
-                                                    row.project_path.clone(),
-                                                );
-                                            }
+                                                    .on_hover_text(address)
+                                                    .on_hover_cursor(
+                                                        egui::CursorIcon::PointingHand,
+                                                    );
+                                                if link.clicked() {
+                                                    self.browser_links.request(
+                                                        address.clone(),
+                                                        row.project_path.clone(),
+                                                    );
+                                                }
+                                                if small(ui, icon::COPY, tr("复制网址")) {
+                                                    ui.ctx().copy_text(address.clone());
+                                                    self.git_page
+                                                        .push_notice(true, tr("已复制").into());
+                                                }
+                                            });
                                         }
                                     }
                                     match index {
@@ -2679,7 +2688,8 @@ impl DevStart {
                                             let command = crate::presentation::command_preview(
                                                 &run.display_command,
                                             );
-                                            let command_font = egui::TextStyle::Monospace.resolve(ui.style());
+                                            let command_font =
+                                                egui::TextStyle::Monospace.resolve(ui.style());
                                             let command_width = ui
                                                 .fonts_mut(|fonts| {
                                                     fonts
@@ -2712,23 +2722,35 @@ impl DevStart {
                                                 &run.command,
                                             ));
                                             for address in &access_addresses {
-                                                if ui
-                                                    .add(
-                                                        egui::Label::new(
-                                                            RichText::new(address)
-                                                                .size(11.0)
-                                                                .color(tone(self.light, ACCENT))
-                                                                .underline(),
+                                                ui.horizontal(|ui| {
+                                                    if ui
+                                                        .add(
+                                                            egui::Label::new(
+                                                                RichText::new(address)
+                                                                    .size(11.0)
+                                                                    .color(tone(self.light, ACCENT))
+                                                                    .underline(),
+                                                            )
+                                                            .truncate()
+                                                            .sense(egui::Sense::click()),
                                                         )
-                                                        .sense(egui::Sense::click()),
-                                                    )
-                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                    .on_hover_text(address)
-                                                    .clicked()
-                                                {
-                                                    self.browser_links
-                                                        .request(address.clone(), run.cwd.clone());
-                                                }
+                                                        .on_hover_cursor(
+                                                            egui::CursorIcon::PointingHand,
+                                                        )
+                                                        .on_hover_text(address)
+                                                        .clicked()
+                                                    {
+                                                        self.browser_links.request(
+                                                            address.clone(),
+                                                            run.cwd.clone(),
+                                                        );
+                                                    }
+                                                    if small(ui, icon::COPY, tr("复制网址")) {
+                                                        ui.ctx().copy_text(address.clone());
+                                                        self.git_page
+                                                            .push_notice(true, tr("已复制").into());
+                                                    }
+                                                });
                                             }
                                         });
                                     }
@@ -3402,9 +3424,9 @@ impl DevStart {
                 });
                 ui.horizontal(|ui| {
                     ui.label(tr("项目名"));
-                    let response=ui.add(egui::TextEdit::singleline(&mut draft.project_name).desired_width(270.0));
-                    if response.changed(){draft.reset_project_name=false;}
-                    if ui.button(tr("恢复默认")).on_hover_cursor(egui::CursorIcon::PointingHand).clicked(){draft.project_name=draft.default_project_name.clone();draft.reset_project_name=true;}
+                    let response = ui.add(egui::TextEdit::singleline(&mut draft.project_name).desired_width(270.0));
+                    if response.changed() { draft.reset_project_name = false; }
+                    if ui.button(tr("恢复默认")).clicked() { draft.project_name = draft.default_project_name.clone(); draft.reset_project_name = true; }
                 });
                 ui.label(tr("简介"));
                 ui.add(egui::TextEdit::multiline(&mut draft.description).desired_width(f32::INFINITY).desired_rows(4));
