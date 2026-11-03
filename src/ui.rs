@@ -4044,8 +4044,8 @@ fn launch_table_column_widths(
     let data_width = (width - operation_width - item_spacing * gaps).max(650.0);
     if combined {
         return [
-            data_width * 0.44,
-            data_width * 0.34,
+            data_width * 0.53,
+            data_width * 0.25,
             0.0,
             0.0,
             data_width * 0.10,
@@ -4055,8 +4055,8 @@ fn launch_table_column_widths(
     }
     if grouped {
         return [
-            data_width * 0.49,
-            data_width * 0.28,
+            data_width * 0.52,
+            data_width * 0.25,
             0.0,
             0.0,
             data_width * 0.10,
