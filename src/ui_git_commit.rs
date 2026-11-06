@@ -1,5 +1,35 @@
 //! Shared history list and read-only commit-file browser. Repository operations stay in git_commit.
 use super::*;
+
+pub(super) fn history_source_label(
+    ui: &egui::Ui,
+    label: &str,
+    show_dot: bool,
+) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let button_font = ui.style().text_styles[&egui::TextStyle::Button].clone();
+    if show_dot {
+        job.append(
+            "● ",
+            0.0,
+            egui::TextFormat {
+                font_id: egui::FontId::proportional(button_font.size * 0.72),
+                color: egui::Color32::from_rgb(67, 190, 130),
+                ..Default::default()
+            },
+        );
+    }
+    job.append(
+        label,
+        0.0,
+        egui::TextFormat {
+            font_id: button_font,
+            color: ui.visuals().text_color(),
+            ..Default::default()
+        },
+    );
+    job
+}
 #[derive(Default)]
 pub(super) struct HistoryEvent {
     pub commit: Option<String>,
@@ -38,7 +68,7 @@ impl HistoryView {
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.pending = None;
-                    self.error = Some("历史查询任务意外中断".into());
+                    self.error = Some(tr("历史查询任务意外中断").to_owned());
                 }
             }
         }
@@ -91,16 +121,40 @@ impl DevStart {
         ui.horizontal(|ui| {
             ui.strong(tr("提交历史"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                for (mode, label) in [
-                    (git::history_page::Source::Local, "本地"),
-                    (git::history_page::Source::Remote, "远程"),
+                let divergence = self
+                    .git_page
+                    .history
+                    .page
+                    .as_ref()
+                    .map(|page| (page.local_ahead, page.remote_ahead))
+                    .unwrap_or_default();
+                for (mode, label, has_newer, hint) in [
+                    (
+                        git::history_page::Source::Local,
+                        tr("本地"),
+                        divergence.0 > 0,
+                        tf(
+                            "本地领先远程 {count} 个提交",
+                            &[("count", divergence.0.to_string())],
+                        ),
+                    ),
+                    (
+                        git::history_page::Source::Remote,
+                        tr("远程"),
+                        divergence.1 > 0,
+                        tf(
+                            "远程领先本地 {count} 个提交",
+                            &[("count", divergence.1.to_string())],
+                        ),
+                    ),
                 ] {
                     if ui
                         .add_enabled(
                             !busy,
-                            egui::Button::new(tr(label))
+                            egui::Button::new(history_source_label(ui, label, has_newer))
                                 .selected(self.git_page.history.source == mode),
                         )
+                        .on_hover_text(if has_newer { hint } else { label.to_owned() })
                         .clicked()
                     {
                         source = Some(mode);

@@ -804,21 +804,56 @@ impl DevStart {
                                         let enabled = !busy
                                             && remote.is_some()
                                             && !r.branch.starts_with("detached ") && !operation_busy;
+                                        let divergence = self
+                                            .git_page
+                                            .history
+                                            .page
+                                            .as_ref()
+                                            .filter(|page| page.branch == r.branch)
+                                            .map(|page| page.remote_ahead)
+                                            .unwrap_or_default();
+                                        let update_hint = if divergence > 0 {
+                                            tf(
+                                                "远程有新更新，大于本地 {count} 个提交",
+                                                &[("count", divergence.to_string())],
+                                            )
+                                        } else {
+                                            tr("从当前远程仓库当前分支获取最新版本与本地合并代码")
+                                                .to_owned()
+                                        };
+                                        let mut update_label = egui::text::LayoutJob::default();
+                                        let button_font = ui.style().text_styles[&egui::TextStyle::Button].clone();
+                                        if divergence > 0 {
+                                            update_label.append(
+                                                "● ",
+                                                0.0,
+                                                egui::TextFormat {
+                                                    font_id: egui::FontId::proportional(button_font.size * 0.72),
+                                                    color: egui::Color32::from_rgb(67, 190, 130),
+                                                    ..Default::default()
+                                                },
+                                            );
+                                        }
+                                        update_label.append(
+                                            &format!("{} {}", icon::ARROW_DOWN, tr("更新项目")),
+                                            0.0,
+                                            egui::TextFormat {
+                                                font_id: button_font,
+                                                color: ui.visuals().text_color(),
+                                                ..Default::default()
+                                            },
+                                        );
                                         if ui
                                             .add_enabled(
                                                 enabled,
-                                                egui::Button::new(button_label(
-                                                    ui,
-                                                    &format!("{} {}", icon::ARROW_DOWN,tr("更新项目")),
-                                                    enabled,
-                                                )),
+                                                egui::Button::new(update_label),
                                             )
                                             .on_hover_cursor(if enabled {
                                                 egui::CursorIcon::PointingHand
                                             } else {
                                                 egui::CursorIcon::Default
                                             })
-                                            .on_hover_text(if has_conflicts { tr("请先解决冲突并完成当前操作") } else { tr("从当前远程仓库当前分支获取最新版本与本地合并代码") })
+                                            .on_hover_text(if has_conflicts { tr("请先解决冲突并完成当前操作").to_owned() } else { update_hint })
                                             .clicked()
                                             && let Some(remote) = remote
                                         {

@@ -32,6 +32,38 @@ impl ConsoleBuffer {
             .search
             .dirty_from
             .min(self.lines.len().saturating_sub(1));
+        let mut start = 0;
+        for (index, character) in text.char_indices() {
+            if character == '\r' {
+                self.append_text(error, &text[start..index], style);
+                self.rewrite_current_line(error);
+                start = index + character.len_utf8();
+            }
+        }
+        self.append_text(error, &text[start..], style);
+    }
+    fn rewrite_current_line(&mut self, error: bool) {
+        // Carriage-return progress updates replace their visual row instead of accumulating.
+        if self
+            .lines
+            .back()
+            .is_none_or(|(_, line)| line.ends_with('\n'))
+        {
+            self.lines.push_back((error, String::new()));
+            self.styles.push_back(Vec::new());
+            return;
+        }
+        if let Some((stream_error, line)) = self.lines.back_mut() {
+            self.bytes -= line.len();
+            line.clear();
+            *stream_error |= error;
+        }
+        if let Some(spans) = self.styles.back_mut() {
+            self.style_bytes -= spans.len() * std::mem::size_of::<crate::console_text::Span>();
+            spans.clear();
+        }
+    }
+    fn append_text(&mut self, error: bool, text: &str, style: crate::console_text::Style) {
         for part in text.split_inclusive('\n') {
             if self.lines.back().is_none_or(|(_, s)| s.ends_with('\n')) {
                 self.lines.push_back((error, String::new()));

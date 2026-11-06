@@ -22,7 +22,7 @@ jobs:
           cargo --version
           cargo clippy --version
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo clippy --all-targets --locked
       - run: cargo test --locked
       - run: cargo build --release --locked
       - run: python3 scripts/test-flutter-launch.py

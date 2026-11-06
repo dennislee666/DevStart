@@ -537,7 +537,11 @@
   "此启动项暂无运行日志，请先启动": "No logs yet. Start this launch item first.",
   "远程": "Remote",
   "本地": "Local",
+  "本地领先远程 {count} 个提交": "Local is ahead of remote by {count} commits",
+  "远程领先本地 {count} 个提交": "Remote is ahead of local by {count} commits",
+  "远程有新更新，大于本地 {count} 个提交": "Remote has {count} new commits",
   "推送已有提交": "Push commits",
   "推送当前分支已有的本地提交，无需新提交或备注": "Push existing commits without creating a new commit or requiring a message",
-  "复制网址": "Copy URL"
+  "复制网址": "Copy URL",
+  "历史查询任务意外中断": "The history query task ended unexpectedly"
 }

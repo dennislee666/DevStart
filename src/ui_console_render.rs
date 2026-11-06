@@ -230,18 +230,15 @@ pub(super) fn show(
                             response
                                 .clone()
                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .on_hover_text(tf(
+                                .on_hover_text({
+                                    let target = crate::presentation::command_preview(&link.target)
+                                        .to_string();
                                     if web {
-                                        "点击打开\n{0}"
+                                        tf("点击打开\n{0}", &[("0", target)])
                                     } else {
-                                        "Control + 点击打开\n{0}"
-                                    },
-                                    &[(
-                                        "0",
-                                        (crate::presentation::command_preview(&link.target))
-                                            .to_string(),
-                                    )],
-                                ));
+                                        tf("Control + 点击打开\n{0}", &[("0", target)])
+                                    }
+                                });
                             // Selectable labels consume click responses for text selection;
                             // use the clipped row's pointer click, which excludes drag selection.
                             let primary = ui.input(|i| i.pointer.primary_clicked());

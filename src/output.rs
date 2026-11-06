@@ -3,6 +3,8 @@
 #[derive(Default)]
 pub struct Decoder {
     pending: Vec<u8>,
+    // Delay CR until the next character so CRLF remains a newline across read boundaries.
+    pending_cr: bool,
     escape: u8,
     csi: String,
 }
@@ -36,10 +38,20 @@ impl Decoder {
         self.pending.drain(..consumed);
         let mut out = String::new();
         for c in decoded.chars() {
+            if self.pending_cr {
+                self.pending_cr = false;
+                if c == '\n' {
+                    out.push('\n');
+                    continue;
+                }
+                // A bare CR is terminal progress output; the display buffer redraws its row.
+                out.push('\r');
+            }
             match self.escape {
                 0 => match c {
                     '\u{1b}' => self.escape = 1,
-                    '\r' | '\0' => {}
+                    '\r' => self.pending_cr = true,
+                    '\0' => {}
                     _ => out.push(c),
                 },
                 1 => {
@@ -79,11 +91,15 @@ impl Decoder {
         out
     }
     pub fn finish(&mut self) -> String {
-        if self.pending.is_empty() {
-            String::new()
-        } else {
-            self.pending.clear();
-            "\u{fffd}".into()
+        let mut tail = String::new();
+        if self.pending_cr {
+            self.pending_cr = false;
+            tail.push('\r');
         }
+        if !self.pending.is_empty() {
+            self.pending.clear();
+            tail.push('\u{fffd}');
+        }
+        tail
     }
 }

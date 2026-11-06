@@ -864,6 +864,44 @@ impl DevStart {
                                 self.tiled = false;
                                 self.running_list = false;
                             }
+                            let close_requested = self.service.as_ref().is_some_and(|service| {
+                                service
+                                    .runtime
+                                    .runs
+                                    .iter()
+                                    .find(|run| run.id == tab.id)
+                                    .is_some_and(|run| run.close_requested)
+                            });
+                            let close = ui.add_enabled(
+                                !close_requested,
+                                egui::Button::new(
+                                    RichText::new(icon::X).color(tone(self.light, MUTED)),
+                                )
+                                .frame(false)
+                                .min_size(Vec2::new(22.0, self.preferences().row_height())),
+                            );
+                            let close = close
+                                .on_hover_text(if close_requested {
+                                    tr("正在停止并关闭")
+                                } else {
+                                    tr("关闭标签")
+                                })
+                                .on_hover_cursor(if close_requested {
+                                    egui::CursorIcon::Default
+                                } else {
+                                    egui::CursorIcon::PointingHand
+                                });
+                            if close.clicked() {
+                                if tab.state.active() {
+                                    self.close_run = Some(CloseRunRequest {
+                                        id: tab.id,
+                                        target: CloseRunTarget::Tab,
+                                    });
+                                } else if let Some(service) = &mut self.service {
+                                    let result = service.runtime.close_tab(tab.id, false);
+                                    self.report(result);
+                                }
+                            }
                         });
                     }
                 });
@@ -1658,8 +1696,22 @@ impl DevStart {
                 .run_id
                 .and_then(|id| self.service.as_ref().map(|s| s.run_access_addresses(id)))
                 .unwrap_or_default();
-            let row_height =
-                self.preferences().row_height().max(44.0) + addresses.len() as f32 * 17.0;
+            let transition_line = row.run_id.and_then(|id| {
+                let service = self.service.as_ref()?;
+                let run = service.runtime.runs.iter().find(|run| run.id == id)?;
+                if !matches!(run.state, State::Starting | State::Stopping) {
+                    return None;
+                }
+                run.lines
+                    .get(run.lines.len().checked_sub(1)?)
+                    .map(|(_, text)| text.trim_end_matches('\n').to_owned())
+            });
+            let row_height = self.preferences().row_height().max(44.0)
+                + if transition_line.is_some() {
+                    17.0
+                } else {
+                    addresses.len() as f32 * 17.0
+                };
             let active = row.run_id.or_else(|| {
                 row.script
                     .as_ref()
@@ -1894,37 +1946,50 @@ impl DevStart {
                                             .truncate(),
                                         )
                                         .on_hover_text(&text[3]);
-                                        for address in &addresses {
-                                            ui.horizontal(|ui| {
-                                                let link = ui
-                                                    .add(
-                                                        egui::Label::new(
-                                                            RichText::new(address)
-                                                                .size(11.0)
-                                                                .color(tone(self.light, ACCENT))
-                                                                .underline(),
+                                        if let Some(line) = &transition_line {
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(line)
+                                                        .monospace()
+                                                        .size(10.5)
+                                                        .color(tone(self.light, MUTED)),
+                                                )
+                                                .truncate(),
+                                            )
+                                            .on_hover_text(line);
+                                        } else {
+                                            for address in &addresses {
+                                                ui.horizontal(|ui| {
+                                                    let link = ui
+                                                        .add(
+                                                            egui::Label::new(
+                                                                RichText::new(address)
+                                                                    .size(11.0)
+                                                                    .color(tone(self.light, ACCENT))
+                                                                    .underline(),
+                                                            )
+                                                            .truncate()
+                                                            .sense(egui::Sense::click()),
                                                         )
-                                                        .truncate()
-                                                        .sense(egui::Sense::click()),
-                                                    )
-                                                    .on_hover_text(address)
-                                                    .on_hover_cursor(
-                                                        egui::CursorIcon::PointingHand,
-                                                    );
-                                                if link.clicked() {
-                                                    self.browser_links.request(
-                                                        address.clone(),
-                                                        row.project_path.clone(),
-                                                    );
-                                                }
-                                                if small(ui, icon::COPY, tr("复制网址")) {
-                                                    Self::copy_access_url(
-                                                        &mut self.copy_feedback,
-                                                        ui.ctx(),
-                                                        address,
-                                                    );
-                                                }
-                                            });
+                                                        .on_hover_text(address)
+                                                        .on_hover_cursor(
+                                                            egui::CursorIcon::PointingHand,
+                                                        );
+                                                    if link.clicked() {
+                                                        self.browser_links.request(
+                                                            address.clone(),
+                                                            row.project_path.clone(),
+                                                        );
+                                                    }
+                                                    if small(ui, icon::COPY, tr("复制网址")) {
+                                                        Self::copy_access_url(
+                                                            &mut self.copy_feedback,
+                                                            ui.ctx(),
+                                                            address,
+                                                        );
+                                                    }
+                                                });
+                                            }
                                         }
                                     }
                                     match index {

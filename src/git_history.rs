@@ -16,6 +16,57 @@ pub struct Page {
     pub reference: String,
     pub commits: Vec<Commit>,
     pub offset: usize,
+    /// Commit divergence from the configured upstream: local-only, then remote-only.
+    pub local_ahead: usize,
+    pub remote_ahead: usize,
+}
+
+fn divergence(path: &Path, branch: &str) -> Result<(usize, usize), String> {
+    if branch.is_empty() {
+        return Ok((0, 0));
+    }
+    let tracking = git(
+        path,
+        &[
+            "for-each-ref",
+            "--format=%(upstream)",
+            &format!("refs/heads/{branch}"),
+        ],
+    )?;
+    if tracking.is_empty() {
+        return Ok((0, 0));
+    }
+    if git(
+        path,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{tracking}^{{commit}}"),
+        ],
+    )
+    .is_err()
+    {
+        // A local-only branch may not have fetched its upstream yet. Local history remains usable.
+        return Ok((0, 0));
+    }
+    let local = format!("refs/heads/{branch}");
+    let counts = git(
+        path,
+        &[
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("{local}...{tracking}"),
+        ],
+    )?;
+    let mut values = counts
+        .split_whitespace()
+        .filter_map(|value| value.parse::<usize>().ok());
+    match (values.next(), values.next()) {
+        (Some(local_ahead), Some(remote_ahead)) => Ok((local_ahead, remote_ahead)),
+        _ => Err(format!("无法解析本地与远程分支差异: {counts}")),
+    }
 }
 fn branch_context(path: &Path) -> Result<(String, String), String> {
     let branch = git(path, &["branch", "--show-current"])?;
@@ -26,6 +77,61 @@ fn branch_context(path: &Path) -> Result<(String, String), String> {
     };
     Ok((branch, label))
 }
+type Upstream = (String, String, String);
+
+fn upstream(path: &Path, branch: &str) -> Result<Option<Upstream>, String> {
+    if branch.is_empty() {
+        return Ok(None);
+    }
+    let tracking = git(
+        path,
+        &[
+            "for-each-ref",
+            "--format=%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream)",
+            &format!("refs/heads/{branch}"),
+        ],
+    )?;
+    if tracking.is_empty() {
+        return Ok(None);
+    }
+    let fields: Vec<_> = tracking.split('\0').collect();
+    let [remote, remote_ref, tracking_ref] = fields.as_slice() else {
+        return Ok(None);
+    };
+    if remote.is_empty()
+        || *remote == "."
+        || !remote_ref.starts_with("refs/heads/")
+        || !tracking_ref.starts_with("refs/remotes/")
+    {
+        return Ok(None);
+    }
+    Ok(Some((
+        (*remote).into(),
+        (*remote_ref).into(),
+        (*tracking_ref).into(),
+    )))
+}
+
+fn fetch_upstream(path: &Path, upstream: &Upstream) -> Result<(), String> {
+    let (remote, remote_ref, tracking_ref) = upstream;
+    let _guard = mutation_guard(path)?;
+    let refspec = format!("+{remote_ref}:{tracking_ref}");
+    git(
+        path,
+        &[
+            "fetch",
+            "--no-tags",
+            "--no-recurse-submodules",
+            "--no-write-fetch-head",
+            "--",
+            remote,
+            &refspec,
+        ],
+    )
+    .map_err(|e| format!("读取远程提交历史失败: {e}"))?;
+    Ok(())
+}
+
 pub fn read(
     path: &Path,
     expected_branch: Option<&str>,
@@ -44,6 +150,11 @@ pub fn read(
     }
     let started = std::time::Instant::now();
     let result = (|| {
+        let upstream = upstream(path, &branch)?;
+        // Refresh upstream state for both history sources so local view buttons stay current too.
+        if refresh && let Some(upstream) = &upstream {
+            fetch_upstream(path, upstream)?;
+        }
         let (reference, commits) = match source {
             Source::Local => {
                 let reference = if branch.is_empty() {
@@ -54,45 +165,13 @@ pub fn read(
                 (reference, super::history(path, offset, limit)?)
             }
             Source::Remote => {
-                if branch.is_empty() {
-                    return Err("当前 HEAD 未关联分支，无法查看远程历史".into());
-                }
-                let tracking = git(
-                    path,
-                    &[
-                        "for-each-ref",
-                        "--format=%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream)",
-                        &format!("refs/heads/{branch}"),
-                    ],
-                )?;
-                let fields: Vec<_> = tracking.split('\0').collect();
-                let [remote, remote_ref, tracking_ref] = fields.as_slice() else {
-                    return Err("当前分支未配置远程上游分支".into());
+                let Some((_, _, tracking_ref)) = &upstream else {
+                    return Err(if branch.is_empty() {
+                        "当前 HEAD 未关联分支，无法查看远程历史".into()
+                    } else {
+                        "当前分支未配置远程上游分支".into()
+                    });
                 };
-                if remote.is_empty()
-                    || *remote == "."
-                    || !remote_ref.starts_with("refs/heads/")
-                    || !tracking_ref.starts_with("refs/remotes/")
-                {
-                    return Err("当前分支未配置远程上游分支".into());
-                }
-                if refresh {
-                    let _guard = mutation_guard(path)?;
-                    let refspec = format!("+{remote_ref}:{tracking_ref}");
-                    git(
-                        path,
-                        &[
-                            "fetch",
-                            "--no-tags",
-                            "--no-recurse-submodules",
-                            "--no-write-fetch-head",
-                            "--",
-                            remote,
-                            &refspec,
-                        ],
-                    )
-                    .map_err(|e| format!("读取远程提交历史失败: {e}"))?;
-                }
                 let text = git(
                     path,
                     &[
@@ -105,9 +184,10 @@ pub fn read(
                         "--",
                     ],
                 )?;
-                ((*tracking_ref).into(), super::parse_history(&text)?)
+                (tracking_ref.clone(), super::parse_history(&text)?)
             }
         };
+        let (local_ahead, remote_ahead) = divergence(path, &branch)?;
         if branch_context(path)?.1 != label {
             return Err("查询期间当前分支已变化，请刷新项目".into());
         }
@@ -117,6 +197,8 @@ pub fn read(
             reference,
             commits,
             offset,
+            local_ahead,
+            remote_ahead,
         })
     })();
     eprintln!(
