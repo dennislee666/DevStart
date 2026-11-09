@@ -1345,7 +1345,7 @@ impl DevStart {
             });
     }
     fn launch_table(&mut self, ui: &mut egui::Ui, content: service::LaunchTableContent) {
-        egui::ScrollArea::both()
+        egui::ScrollArea::vertical()
             .id_salt("launch-table")
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -1370,7 +1370,7 @@ impl DevStart {
                             &[0, 1, 2, 4, 5, 6]
                         };
                         let widths = launch_table_column_widths(
-                            ui.available_width(),
+                            (ui.available_width() - 36.0).max(0.0),
                             spacing,
                             grouped,
                             combined,
@@ -1532,6 +1532,37 @@ impl DevStart {
         } else {
             project.project_name.clone()
         };
+        // The project heading row has no launch-item cells; let long titles use
+        // that otherwise-empty space, while launch rows keep their compact start.
+        let title_font = egui::TextStyle::Button.resolve(ui.style());
+        let path = service::path_label(&project.project_path);
+        let title_content_width = ui.fonts_mut(|fonts| {
+            fonts
+                .layout_no_wrap(
+                    label.clone(),
+                    egui::FontId::new(
+                        title_font.size,
+                        egui::FontFamily::Name("launch-bold".into()),
+                    ),
+                    tone(self.light, crate::appearance::TEXT),
+                )
+                .size()
+                .x
+        });
+        let path_content_width = ui.fonts_mut(|fonts| {
+            fonts
+                .layout_no_wrap(
+                    path.clone(),
+                    egui::FontId::proportional(11.5),
+                    tone(self.light, MUTED),
+                )
+                .size()
+                .x
+        });
+        let title_width = width.max(
+            (title_content_width.max(path_content_width) + 40.0)
+                .min((table_width - 92.0).max(width)),
+        );
         let row = project.action_target();
         ui.push_id(("launch-project-title", project.project_id), |ui| {
             let mut title_clicked = false;
@@ -1548,10 +1579,10 @@ impl DevStart {
                     ui.set_min_width(table_width);
                     ui.horizontal(|ui| {
                         ui.allocate_ui_with_layout(
-                            Vec2::new(width, 32.0),
+                            Vec2::new(title_width, 32.0),
                             egui::Layout::top_down(egui::Align::Min),
                             |ui| {
-                                ui.set_min_width(width);
+                                ui.set_min_width(title_width);
                                 ui.horizontal(|ui| {
                                     let expanded = self.expanded.contains(&project.project_id);
                                     let arrow_clicked = small(
@@ -1584,14 +1615,11 @@ impl DevStart {
                                         .clicked();
                                     title_clicked = arrow_clicked || name_clicked;
                                 });
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(service::path_label(&project.project_path))
-                                            .size(10.0)
-                                            .color(tone(self.light, MUTED)),
-                                    )
-                                    .truncate(),
-                                )
+                                ui.add(egui::Label::new(
+                                    RichText::new(&path)
+                                        .size(11.5)
+                                        .color(tone(self.light, MUTED)),
+                                ))
                                 .on_hover_text(project.project_path.display().to_string());
                             },
                         );
@@ -1640,48 +1668,69 @@ impl DevStart {
             self.project_group_filter = None;
         }
 
-        egui::ScrollArea::horizontal()
-            .id_salt("project-group-filter")
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    let mut options = Vec::with_capacity(groups.len() + 1);
-                    options.push((None, tr("全部").to_string()));
-                    options.extend(
-                        groups.iter().map(|group| {
-                            (Some(group.id), crate::i18n::group_name(group).to_string())
-                        }),
-                    );
-                    for (group_id, label) in options {
-                        let selected = self.project_group_filter == group_id;
-                        let color = tone(self.light, if selected { ACCENT } else { MUTED });
-                        let response = ui
-                            .add(
-                                egui::Button::new(RichText::new(label).small().color(color))
-                                    .fill(if selected {
-                                        tone(self.light, SURFACE)
-                                    } else {
-                                        Color32::TRANSPARENT
-                                    })
-                                    .stroke(egui::Stroke::new(
-                                        if selected { 1.0 } else { 0.0 },
-                                        if selected {
-                                            tone(self.light, ACCENT)
-                                        } else {
-                                            Color32::TRANSPARENT
-                                        },
-                                    ))
-                                    .corner_radius(6.0)
-                                    .min_size(Vec2::new(42.0, 28.0)),
-                            )
-                            .on_hover_cursor(egui::CursorIcon::PointingHand);
-                        if response.clicked() {
-                            self.project_group_filter = group_id;
-                        }
-                    }
-                });
-            });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let management_width = 86.0;
+            let scroll_width =
+                (ui.available_width() - management_width - ui.spacing().item_spacing.x).max(80.0);
+            ui.allocate_ui_with_layout(
+                Vec2::new(scroll_width, 32.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    egui::ScrollArea::horizontal()
+                        .id_salt("project-group-filter")
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                let mut options = Vec::with_capacity(groups.len() + 1);
+                                options.push((None, tr("全部").to_string()));
+                                options.extend(groups.iter().map(|group| {
+                                    (Some(group.id), crate::i18n::group_name(group).to_string())
+                                }));
+                                for (group_id, label) in options {
+                                    let selected = self.project_group_filter == group_id;
+                                    let color =
+                                        tone(self.light, if selected { ACCENT } else { MUTED });
+                                    let response = ui
+                                        .add(
+                                            egui::Button::new(
+                                                RichText::new(label).small().color(color),
+                                            )
+                                            .fill(if selected {
+                                                tone(self.light, SURFACE)
+                                            } else {
+                                                Color32::TRANSPARENT
+                                            })
+                                            .stroke(egui::Stroke::new(
+                                                if selected { 1.0 } else { 0.0 },
+                                                if selected {
+                                                    tone(self.light, ACCENT)
+                                                } else {
+                                                    Color32::TRANSPARENT
+                                                },
+                                            ))
+                                            .corner_radius(6.0)
+                                            .min_size(Vec2::new(42.0, 28.0)),
+                                        )
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    if response.clicked() {
+                                        self.project_group_filter = group_id;
+                                    }
+                                }
+                            });
+                        });
+                },
+            );
+            if ui
+                .button(tr("分组管理"))
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                self.groups_ui.manage_open = true;
+                self.groups_ui.renaming = None;
+            }
+        });
     }
     fn launch_table_row(
         &mut self,
@@ -3165,6 +3214,7 @@ impl DevStart {
     fn dialogs(&mut self, ctx: &egui::Context) {
         self.project_scan_dialog(ctx);
         self.group_dialogs(ctx);
+        self.group_management_dialog(ctx);
         if let Some(id) = self.delete_script {
             let target = self.service.as_ref().and_then(|service| {
                 service.catalog.projects.iter().find_map(|project| {
@@ -4106,11 +4156,11 @@ fn launch_table_column_widths(
     let operation_width = LAUNCH_ACTION_SLOT_WIDTH * operation_slots as f32
         + item_spacing * (operation_slots - 1) as f32;
     let gaps = if grouped { 4.0 } else { 5.0 };
-    let data_width = (width - operation_width - item_spacing * gaps).max(650.0);
+    let data_width = (width - operation_width - item_spacing * gaps).max(0.0);
     if combined {
         return [
-            data_width * 0.53,
-            data_width * 0.25,
+            data_width * 0.58,
+            data_width * 0.20,
             0.0,
             0.0,
             data_width * 0.10,
@@ -4120,8 +4170,8 @@ fn launch_table_column_widths(
     }
     if grouped {
         return [
-            data_width * 0.52,
-            data_width * 0.25,
+            data_width * 0.58,
+            data_width * 0.20,
             0.0,
             0.0,
             data_width * 0.10,

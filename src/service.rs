@@ -286,6 +286,55 @@ impl Service {
         });
         self.commit(next)
     }
+    pub fn rename_group(&mut self, id: u64, name: &str) -> Result<(), String> {
+        if id == 1 {
+            return Err("默认分组不能重命名".into());
+        }
+        let name = name.trim();
+        if name.is_empty() || name.chars().any(char::is_control) || name.chars().count() > 50 {
+            return Err("分组名称需要 1–50 个字符，且不能包含控制字符".into());
+        }
+        if self
+            .catalog
+            .groups
+            .iter()
+            .any(|group| group.id != id && group.name == name)
+        {
+            return Err("分组已存在".into());
+        }
+        let mut next = self.catalog.clone();
+        let group = next
+            .groups
+            .iter_mut()
+            .find(|group| group.id == id)
+            .ok_or("分组不存在")?;
+        group.name = name.to_owned();
+        self.commit(next)
+    }
+    /// Reorder only user-created groups; the default group stays pinned.
+    pub fn move_group(&mut self, id: u64, direction: isize) -> Result<(), String> {
+        if id == 1 || !matches!(direction, -1 | 1) {
+            return Err("只能调整自建分组顺序".into());
+        }
+        let mut next = self.catalog.clone();
+        let positions: Vec<_> = next
+            .groups
+            .iter()
+            .enumerate()
+            .filter_map(|(index, group)| (group.id != 1).then_some(index))
+            .collect();
+        let position = positions
+            .iter()
+            .position(|&index| next.groups[index].id == id)
+            .ok_or("分组不存在")?;
+        let target = position as isize + direction;
+        if !(0..positions.len() as isize).contains(&target) {
+            return Ok(());
+        }
+        next.groups
+            .swap(positions[position], positions[target as usize]);
+        self.commit(next)
+    }
     pub fn import(&mut self, path: &Path, group: u64) -> Result<u64, String> {
         self.import_configured(path, group, None, "", false)
     }
@@ -1113,8 +1162,7 @@ impl Service {
     }
     pub fn grouped_projects(&self, filter: Filter, query: &str) -> Vec<(Group, Vec<Project>)> {
         let visible = self.visible_projects(filter, query);
-        self.catalog
-            .groups
+        self.groups_for_launch_filter()
             .iter()
             .filter_map(|group| {
                 let projects: Vec<_> = visible
@@ -1200,6 +1248,12 @@ impl Service {
             }
         }
         let mut sections: Vec<_> = sections.into_values().collect();
+        let group_order: std::collections::HashMap<_, _> = self
+            .groups_for_launch_filter()
+            .into_iter()
+            .enumerate()
+            .map(|(index, group)| (group.id, index))
+            .collect();
         sections.sort_by(|left, right| {
             let names = left
                 .project_name
@@ -1213,9 +1267,9 @@ impl Service {
                 names
             };
             let groups = if group_filter.is_none() {
-                let groups = crate::i18n::group_name(&left.group)
-                    .to_lowercase()
-                    .cmp(&crate::i18n::group_name(&right.group).to_lowercase());
+                let groups = group_order
+                    .get(&left.group.id)
+                    .cmp(&group_order.get(&right.group.id));
                 if sort.column == LaunchSortColumn::Group
                     && sort.direction == SortDirection::Descending
                 {
@@ -1384,6 +1438,12 @@ impl Service {
                 script: Some(script),
             }));
         }
+        let group_order: std::collections::HashMap<_, _> = self
+            .groups_for_launch_filter()
+            .into_iter()
+            .enumerate()
+            .map(|(index, group)| (group.id, index))
+            .collect();
         rows.sort_by(|left, right| {
             let cmp_text = |a: &str, b: &str| a.to_lowercase().cmp(&b.to_lowercase());
             let left_status = left
@@ -1411,10 +1471,9 @@ impl Service {
             };
             let ports = (port_key(left), port_key(right));
             let primary = match sort.column {
-                LaunchSortColumn::Group => cmp_text(
-                    crate::i18n::group_name(&left.group),
-                    crate::i18n::group_name(&right.group),
-                ),
+                LaunchSortColumn::Group => group_order
+                    .get(&left.group.id)
+                    .cmp(&group_order.get(&right.group.id)),
                 LaunchSortColumn::Project => cmp_text(&left.project_name, &right.project_name),
                 LaunchSortColumn::Status => cmp_text(left_status, right_status),
                 LaunchSortColumn::Port => match ports {
@@ -1440,10 +1499,9 @@ impl Service {
             };
             primary
                 .then_with(|| {
-                    cmp_text(
-                        crate::i18n::group_name(&left.group),
-                        crate::i18n::group_name(&right.group),
-                    )
+                    group_order
+                        .get(&left.group.id)
+                        .cmp(&group_order.get(&right.group.id))
                 })
                 .then_with(|| cmp_text(&left.project_name, &right.project_name))
                 .then_with(|| {
@@ -1469,10 +1527,22 @@ impl Service {
         });
         Ok(rows)
     }
-    /// Return groups ordered by the names shown in the launch table filter bar.
+    /// Keep the user's saved order and pin the immutable default group last.
     pub fn groups_for_launch_filter(&self) -> Vec<Group> {
-        let mut groups = self.catalog.groups.clone();
-        groups.sort_by_cached_key(|group| crate::i18n::group_name(group).to_lowercase());
+        let mut groups: Vec<_> = self
+            .catalog
+            .groups
+            .iter()
+            .filter(|group| group.id != 1)
+            .cloned()
+            .collect();
+        groups.extend(
+            self.catalog
+                .groups
+                .iter()
+                .filter(|group| group.id == 1)
+                .cloned(),
+        );
         groups
     }
     pub fn active_count(&self) -> usize {

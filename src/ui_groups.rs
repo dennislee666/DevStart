@@ -2,6 +2,8 @@
 use super::*;
 #[derive(Default)]
 pub(super) struct GroupsUi {
+    pub manage_open: bool,
+    pub renaming: Option<(u64, String)>,
     pub delete: Option<(crate::group_service::DeletionTarget, String)>,
     phrase: String,
     success: &'static str,
@@ -14,6 +16,197 @@ impl GroupsUi {
     }
 }
 impl DevStart {
+    pub(super) fn group_management_dialog(&mut self, ctx: &egui::Context) {
+        if !self.groups_ui.manage_open {
+            return;
+        }
+        let groups = self
+            .service
+            .as_ref()
+            .map(Service::groups_for_launch_filter)
+            .unwrap_or_default();
+        let custom_count = groups.iter().filter(|group| group.id != 1).count();
+        let mut close = false;
+        let mut start_rename = None;
+        let mut save_rename = None;
+        let mut cancel_rename = false;
+        let mut move_group = None;
+        egui::Modal::new(egui::Id::new("group-management"))
+            .frame(dialog_ui::frame(ctx))
+            .show(ctx, |ui| {
+                dialog_ui::content(ui);
+                ui.set_width(500.0_f32.min(ctx.content_rect().width() - 60.0));
+                ui.horizontal(|ui| {
+                    ui.heading(tr("分组管理"));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        close |= small(ui, icon::X, tr("关闭窗口"));
+                    });
+                });
+                ui.label(
+                    RichText::new(tr("只能重命名和调整自建分组；全部和默认分组固定。"))
+                        .small()
+                        .color(tone(self.light, MUTED)),
+                );
+                ui.add_space(8.0);
+                egui::Frame::new()
+                    .fill(tone(self.light, SURFACE))
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin::symmetric(10, 8))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(tr("全部")).strong());
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        RichText::new(tr("固定"))
+                                            .small()
+                                            .color(tone(self.light, MUTED)),
+                                    );
+                                },
+                            );
+                        });
+                    });
+                ui.add_space(4.0);
+                egui::ScrollArea::vertical()
+                    .max_height(360.0)
+                    .show(ui, |ui| {
+                        let mut custom_position = 0;
+                        for group in &groups {
+                            if group.id == 1 {
+                                continue;
+                            }
+                            let editing = self
+                                .groups_ui
+                                .renaming
+                                .as_ref()
+                                .is_some_and(|(id, _)| *id == group.id);
+                            egui::Frame::new()
+                                .corner_radius(6.0)
+                                .inner_margin(egui::Margin::symmetric(10, 5))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        if editing {
+                                            if let Some((_, name)) =
+                                                self.groups_ui.renaming.as_mut()
+                                            {
+                                                ui.add_sized(
+                                                    Vec2::new(220.0, 28.0),
+                                                    egui::TextEdit::singleline(name)
+                                                        .hint_text(tr("分组名称")),
+                                                );
+                                                if ui.button(tr("保存")).clicked() {
+                                                    save_rename = Some((group.id, name.clone()));
+                                                }
+                                                if ui.button(tr("取消")).clicked() {
+                                                    cancel_rename = true;
+                                                }
+                                            }
+                                        } else {
+                                            ui.label(
+                                                RichText::new(crate::i18n::group_name(group))
+                                                    .strong(),
+                                            );
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    if ui
+                                                        .add_enabled(
+                                                            custom_position + 1 < custom_count,
+                                                            egui::Button::new("↓").frame(false),
+                                                        )
+                                                        .on_hover_text(tr("下移"))
+                                                        .clicked()
+                                                    {
+                                                        move_group = Some((group.id, 1));
+                                                    }
+                                                    if ui
+                                                        .add_enabled(
+                                                            custom_position > 0,
+                                                            egui::Button::new("↑").frame(false),
+                                                        )
+                                                        .on_hover_text(tr("上移"))
+                                                        .clicked()
+                                                    {
+                                                        move_group = Some((group.id, -1));
+                                                    }
+                                                    if ui.button(tr("重命名")).clicked() {
+                                                        start_rename =
+                                                            Some((group.id, group.name.clone()));
+                                                    }
+                                                },
+                                            );
+                                        }
+                                    });
+                                });
+                            custom_position += 1;
+                        }
+                    });
+                if let Some(default_group) = groups.iter().find(|group| group.id == 1) {
+                    ui.add_space(4.0);
+                    egui::Frame::new()
+                        .fill(tone(self.light, SURFACE))
+                        .corner_radius(6.0)
+                        .inner_margin(egui::Margin::symmetric(10, 8))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(crate::i18n::group_name(default_group)).strong(),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            RichText::new(tr("固定"))
+                                                .small()
+                                                .color(tone(self.light, MUTED)),
+                                        );
+                                    },
+                                );
+                            });
+                        });
+                }
+                ui.add_space(8.0);
+                dialog_ui::actions(ui, |ui| {
+                    close |= ui.button(tr("关闭")).clicked();
+                });
+            });
+        if let Some((id, name)) = start_rename {
+            self.groups_ui.renaming = Some((id, name));
+        }
+        if cancel_rename {
+            self.groups_ui.renaming = None;
+        }
+        if let Some((id, name)) = save_rename {
+            let result = self
+                .service
+                .as_mut()
+                .ok_or_else(|| tr("工作空间不可用").to_owned())
+                .and_then(|service| service.rename_group(id, &name));
+            match result {
+                Ok(()) => {
+                    self.groups_ui.renaming = None;
+                    self.git_page.push_notice(true, tr("分组名称已更新").into());
+                }
+                Err(error) => self.git_page.push_notice(false, error),
+            }
+        }
+        if let Some((id, direction)) = move_group {
+            let result = self
+                .service
+                .as_mut()
+                .ok_or_else(|| tr("工作空间不可用").to_owned())
+                .and_then(|service| service.move_group(id, direction));
+            if let Err(error) = result {
+                self.git_page.push_notice(false, error);
+            }
+        }
+        if close {
+            self.groups_ui.manage_open = false;
+            self.groups_ui.renaming = None;
+        }
+    }
+
     pub(super) fn refresh_group(&mut self, id: u64, ctx: &egui::Context) {
         if self.groups_ui.pending.is_some() {
             return;
